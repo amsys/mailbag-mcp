@@ -66,9 +66,11 @@ func account(args []string, env Env) int {
 // The order is the order of §3.5 and B5: check the alias pattern,
 // check that the alias is free, only then ask for the secret, save,
 // test the login, and on a failed login remove both the account block
-// and the secret. A piped stdin never reaches the prompt (B5).
+// and the secret. A piped stdin never reaches the prompt (B5). With
+// --answers-stdin, the prompts read one strict JSON document from
+// stdin instead (DS13.5).
 //
-// arch: T4.6, §3.5, §3.3, §3.4, §5.4, B5, B6, B17, B18, D15
+// arch: T4.6, §3.5, §3.3, §3.4, §5.4, B5, B6, B17, B18, D15, DS13.5, IS13.2
 func accountAdd(args []string, env Env) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return usageErrf(env, "account add needs an alias as its first argument")
@@ -90,6 +92,7 @@ func accountAdd(args []string, env Env) int {
 	sessionURL := set.String("session-url", "", "jmap only: the session URL; default https://<domain of --email>/.well-known/jmap")
 	bearer := set.Bool("bearer", false, "jmap only: sign in with an API token instead of a password")
 	privateHost := set.Bool("private-host", false, "jmap only: allow the session host to be at a private network address")
+	answersStdin := set.Bool("answers-stdin", false, `read the answers from one JSON document on stdin: {"secret": S, "use_file_store": B}`)
 	if err := set.Parse(args[1:]); err != nil {
 		return exitUsage
 	}
@@ -114,6 +117,23 @@ func accountAdd(args []string, env Env) int {
 	// command (B17). Check it before anything else happens.
 	if err := guard.ValidateAlias(alias); err != nil {
 		return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+	}
+
+	// DS13.5: with --answers-stdin the prompts read one strict JSON
+	// document, never a line of a pipe. A bad document stops here with
+	// exit 2, before a file is written. The secret never goes into argv
+	// or the environment (IS13.2).
+	if *answersStdin {
+		doc, err := readAnswers(env.Stdin)
+		if err != nil {
+			return usageErrf(env, "%v", err)
+		}
+		if doc.Secret != nil && (*reauth || *provider == "outlook" || *provider == "gmail") {
+			return usageErrf(env, `--answers-stdin: this sign-in asks for no secret, so the document must not hold "secret"; nothing was written`)
+		}
+		env.ReadSecret = doc.readSecret
+		env.Confirm = doc.confirm
+		env.ReadLine = unansweredLine
 	}
 
 	if *reauth {
@@ -173,13 +193,16 @@ func accountAdd(args []string, env Env) int {
 	}
 
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
 
 	password, err := env.ReadSecret(fmt.Sprintf("password for %s (the typing stays hidden): ", *email))
 	if err != nil {
-		if errors.Is(err, errNotTerminal) {
+		if errors.Is(err, errNotTerminal) || errors.Is(err, errUnanswered) {
 			return usageErrf(env, "%v", err)
 		}
 		return failf(env, "read the password: %v", err)
@@ -286,6 +309,9 @@ func accountAddOutlook(alias, email, tenantFlag string, paste bool, access, user
 	}
 
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
@@ -303,7 +329,7 @@ func accountAddOutlook(alias, email, tenantFlag string, paste bool, access, user
 
 	refreshToken, err := signInMicrosoft(context.Background(), env, clientID, tenant, email, paste)
 	if err != nil {
-		if errors.Is(err, errNotTerminal) {
+		if errors.Is(err, errNotTerminal) || errors.Is(err, errUnanswered) {
 			return usageErrf(env, "%v", err)
 		}
 		return failf(env, "sign in with Microsoft: %v", err)
@@ -393,6 +419,9 @@ func accountAddGmail(alias, email string, paste bool, access string, env Env) in
 	}
 
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
@@ -407,7 +436,7 @@ func accountAddGmail(alias, email string, paste bool, access string, env Env) in
 
 	refreshToken, err := signInGoogle(context.Background(), env, client, email, paste)
 	if err != nil {
-		if errors.Is(err, errNotTerminal) {
+		if errors.Is(err, errNotTerminal) || errors.Is(err, errUnanswered) {
 			return usageErrf(env, "%v", err)
 		}
 		return failf(env, "sign in with Google: %v", err)
@@ -533,6 +562,9 @@ func accountAddJMAP(alias, email, sessionURL string, bearer, privateHost bool, a
 	}
 
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
@@ -543,7 +575,7 @@ func accountAddJMAP(alias, email, sessionURL string, bearer, privateHost bool, a
 	}
 	secret, err := env.ReadSecret(prompt)
 	if err != nil {
-		if errors.Is(err, errNotTerminal) {
+		if errors.Is(err, errNotTerminal) || errors.Is(err, errUnanswered) {
 			return usageErrf(env, "%v", err)
 		}
 		return failf(env, "read the %s: %v", what, err)
@@ -653,7 +685,7 @@ func accountReauth(alias string, paste bool, env Env) int {
 		refreshToken, err = signInMicrosoft(context.Background(), env, clientID, acct.Tenant, acct.Email, paste)
 	}
 	if err != nil {
-		if errors.Is(err, errNotTerminal) {
+		if errors.Is(err, errNotTerminal) || errors.Is(err, errUnanswered) {
 			return usageErrf(env, "%v", err)
 		}
 		return failf(env, "sign in with %s: %v", who, err)

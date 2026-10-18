@@ -7,9 +7,11 @@
 // inside serve mode, where stdout carries the JSON-RPC stream alone.
 //
 // No tool adds, removes or tests an account (D15). A secret reaches
-// this program through a terminal prompt here and nowhere else (B5).
+// this program through a terminal prompt here, or through one strict
+// JSON document on stdin with --answers-stdin, and nowhere else (B5,
+// DS13.5).
 //
-// arch: T4.6, §3.5, §3.3, §3.4, §5.4, B5, B6, B17, B18, D15, A1
+// arch: T4.6, §3.5, §3.3, §3.4, §5.4, B5, B6, B17, B18, D15, A1, DS13.5
 package cli
 
 import (
@@ -41,6 +43,7 @@ const usageText = `usage: mailbag-mcp account add <alias> --provider imap|outloo
        mailbag-mcp account add <alias> --provider gmail --email E [--paste]
        mailbag-mcp account add <alias> --provider jmap --email E [--session-url U] [--bearer] [--private-host]
        mailbag-mcp account add <alias> --reauth [--paste]
+       mailbag-mcp account add <alias> ... --answers-stdin   (stdin: {"secret": S, "use_file_store": B})
        mailbag-mcp account list
        mailbag-mcp account remove <alias>
        mailbag-mcp account test <alias>
@@ -63,6 +66,11 @@ const usageText = `usage: mailbag-mcp account add <alias> --provider imap|outloo
 type Env struct {
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// Stdin is where "account add --answers-stdin" reads its one JSON
+	// document (DS13.5). A nil value means os.Stdin. No other command
+	// reads it.
+	Stdin io.Reader
 
 	// ReadSecret asks for one secret with no echo. A nil value means
 	// the terminal reader of prompt.go, which refuses a pipe (B5).
@@ -112,6 +120,9 @@ func (e Env) withDefaults() Env {
 	}
 	if e.Stderr == nil {
 		e.Stderr = os.Stderr
+	}
+	if e.Stdin == nil {
+		e.Stdin = os.Stdin
 	}
 	if e.ReadSecret == nil {
 		e.ReadSecret = readSecretFromTerminal

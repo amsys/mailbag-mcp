@@ -2036,3 +2036,213 @@ func TestCLI_AccountAddJMAPPrivateHostRefusedWithoutKey(t *testing.T) {
 		})
 	}
 }
+
+// dirNames gives the sorted names of the files in dir, for tests that
+// prove a refused command wrote no file.
+func dirNames(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return strings.Join(names, ",")
+}
+
+// TestCLI_AnswersStdin_WritesAccount proves that --answers-stdin gives
+// the secret prompt its answer from one JSON document on stdin. The
+// terminal reader is never asked, the secret goes to the store, and
+// the secret is in no output.
+//
+// arch: DS13.5, IS13.2, IS13.6
+func TestCLI_AnswersStdin_WritesAccount(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		kind string
+	}{
+		{"imap", addArgs("work"), "password"},
+		{"jmap", []string{"account", "add", "work", "--provider", "jmap", "--email", "me@example.com", "--session-url", "https://jmap.example.com/session"}, "password"},
+		{"jmap bearer", []string{"account", "add", "work", "--provider", "jmap", "--email", "me@example.com", "--session-url", "https://jmap.example.com/session", "--bearer"}, "token"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := sandbox(t)
+			var out, errOut bytes.Buffer
+			const typed = "fake-stdin-value"
+			code := Run(append(tc.args, "--answers-stdin"), Env{
+				Stdout: &out, Stderr: &errOut,
+				Stdin: strings.NewReader(`{"secret": "` + typed + `", "use_file_store": false}` + "\n"),
+				ReadSecret: func(string) (string, error) {
+					t.Error("the terminal secret reader ran although --answers-stdin was given")
+					return "", errors.New("not used")
+				},
+				Login: func(context.Context, string) (string, error) { return "login ok\n", nil },
+			})
+			if code != exitOK {
+				t.Fatalf("exit code = %d, want 0\nstderr: %s", code, errOut.String())
+			}
+			if !hasAlias(t, dir, "work") {
+				t.Fatal("no account block was written")
+			}
+			v := storedSecret(t, dir, "work")
+			if v["kind"] != tc.kind {
+				t.Errorf("secret kind = %v, want %s", v["kind"], tc.kind)
+			}
+			if v["password"] != typed && v["token"] != typed {
+				t.Errorf("the stored secret is not the one of the document: %v", v)
+			}
+			if strings.Contains(out.String()+errOut.String(), typed) {
+				t.Errorf("the secret is in the output:\n%s%s", out.String(), errOut.String())
+			}
+		})
+	}
+}
+
+// TestCLI_AnswersStdin_BadDocumentRefused proves the strict decode of
+// DS13.5: an unknown field, a second document, a value of the wrong
+// type, a document that is not an object, and a missing answer each
+// stop the command with exit 2 before a file is written. No error text
+// repeats the secret (IS13.2).
+//
+// arch: DS13.5, IS13.2, IS13.6
+func TestCLI_AnswersStdin_BadDocumentRefused(t *testing.T) {
+	const typed = "fake-refused-value"
+	imap := addArgs("work")
+	jmap := []string{"account", "add", "work", "--provider", "jmap", "--email", "me@example.com", "--session-url", "https://jmap.example.com/session"}
+	gmail := []string{"account", "add", "work", "--provider", "gmail", "--email", "me@example.com"}
+	cases := []struct {
+		name  string
+		args  []string
+		stdin string
+		want  string
+	}{
+		{"unknown field", imap, `{"secret": "` + typed + `", "use_file_store": false, "password": "` + typed + `"}`, "unknown field"},
+		{"unknown field named like the secret", imap, `{"` + typed + `": "x"}`, "unknown field"},
+		{"two documents", imap, `{"secret": "` + typed + `"} {"secret": "` + typed + `"}`, "more than one JSON document"},
+		{"trailing text", imap, `{"secret": "` + typed + `"} ` + typed, "more than one JSON document"},
+		{"secret wrong type", imap, `{"secret": 1234}`, `"secret" has the wrong type`},
+		{"use_file_store wrong type", imap, `{"secret": "` + typed + `", "use_file_store": "yes"}`, `"use_file_store" has the wrong type`},
+		{"array", imap, `["` + typed + `"]`, "one JSON object"},
+		{"null", imap, `null`, "one JSON object"},
+		{"string", imap, `"` + typed + `"`, "one JSON object"},
+		{"a line, not JSON", imap, typed + "\n", "one valid JSON document"},
+		{"broken escape in the secret", imap, `{"secret": "` + typed + `\q"}`, "one valid JSON document"},
+		{"empty stdin", imap, ``, "one valid JSON document"},
+		{"cut-off document", imap, `{"secret": "` + typed, "one valid JSON document"},
+		{"missing secret imap", imap, `{"use_file_store": false}`, "does not answer this prompt"},
+		{"missing secret jmap", jmap, `{}`, "does not answer this prompt"},
+		{"secret for gmail", gmail, `{"secret": "` + typed + `"}`, `must not hold "secret"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := sandbox(t)
+			before := dirNames(t, dir)
+			var out, errOut bytes.Buffer
+			code := Run(append(append([]string{}, tc.args...), "--answers-stdin"), Env{
+				Stdout: &out, Stderr: &errOut,
+				Stdin: strings.NewReader(tc.stdin),
+				Login: func(context.Context, string) (string, error) {
+					t.Error("login ran although the document was refused")
+					return "", nil
+				},
+			})
+			if code != exitUsage {
+				t.Errorf("exit code = %d, want %d\nstderr: %s", code, exitUsage, errOut.String())
+			}
+			if !strings.HasPrefix(errOut.String(), "usage:") {
+				t.Errorf("a usage error must start with a line that starts with \"usage:\":\n%s", errOut.String())
+			}
+			if !strings.Contains(errOut.String(), tc.want) {
+				t.Errorf("stderr does not hold %q:\n%s", tc.want, errOut.String())
+			}
+			if strings.Contains(out.String()+errOut.String(), typed) {
+				t.Errorf("the secret is in the output:\n%s%s", out.String(), errOut.String())
+			}
+			if after := dirNames(t, dir); after != before {
+				t.Errorf("a refused document wrote a file: before [%s], after [%s]", before, after)
+			}
+		})
+	}
+}
+
+// TestCLI_AnswersStdin_PasteUnanswered proves that a prompt the
+// document cannot answer is an error and never a read from stdin: the
+// --paste redirect URL stops the outlook sign-in with exit 2 and
+// writes no file.
+//
+// arch: DS13.5, IS13.2, IS13.6
+func TestCLI_AnswersStdin_PasteUnanswered(t *testing.T) {
+	dir := sandbox(t)
+	seedMicrosoftClientID(t, dir, "public-client-1")
+	before := dirNames(t, dir)
+	var out, errOut bytes.Buffer
+	code := Run([]string{
+		"account", "add", "work",
+		"--provider", "outlook",
+		"--email", "ann@contoso.com",
+		"--paste", "--answers-stdin",
+	}, Env{
+		Stdout: &out, Stderr: &errOut,
+		Stdin: strings.NewReader(`{"use_file_store": false}`),
+		ReadLine: func(string) (string, error) {
+			t.Error("the terminal line reader ran although --answers-stdin was given")
+			return "", errors.New("not used")
+		},
+		Login: func(context.Context, string) (string, error) {
+			t.Error("login ran although no redirect URL could be read")
+			return "", nil
+		},
+	})
+	if code != exitUsage {
+		t.Errorf("exit code = %d, want %d\nstderr: %s", code, exitUsage, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "does not answer this prompt") {
+		t.Errorf("stderr does not name the unanswered prompt:\n%s", errOut.String())
+	}
+	if after := dirNames(t, dir); after != before {
+		t.Errorf("a refused sign-in wrote a file: before [%s], after [%s]", before, after)
+	}
+}
+
+// TestCLI_AnswersStdin_Confirm proves that use_file_store answers the
+// file-store question of storeKind, and that a missing use_file_store
+// is an error and never a default. The question comes only when the
+// system keyring does not answer, so this test calls the Env.Confirm
+// of the document directly.
+//
+// arch: DS13.5, IS13.2, IS13.6
+func TestCLI_AnswersStdin_Confirm(t *testing.T) {
+	for _, tc := range []struct {
+		stdin string
+		want  bool
+		err   error
+	}{
+		{`{"use_file_store": true}`, true, nil},
+		{`{"use_file_store": false}`, false, nil},
+		{`{"secret": "s"}`, false, errUnanswered},
+	} {
+		doc, err := readAnswers(strings.NewReader(tc.stdin))
+		if err != nil {
+			t.Fatalf("%s: read: %v", tc.stdin, err)
+		}
+		got, err := doc.confirm("store the password in a file instead? [y/N] ")
+		if got != tc.want || !errors.Is(err, tc.err) {
+			t.Errorf("%s: confirm = %v, %v; want %v, %v", tc.stdin, got, err, tc.want, tc.err)
+		}
+	}
+}
+
+// TestCLI_AnswersStdin_OversizeRefused proves that the CLI reads at
+// most maxAnswersBytes: a longer document is not one valid document.
+//
+// arch: DS13.5, IS13.2, IS13.6
+func TestCLI_AnswersStdin_OversizeRefused(t *testing.T) {
+	big := `{"secret": "` + strings.Repeat("a", maxAnswersBytes) + `"}`
+	if _, err := readAnswers(strings.NewReader(big)); err == nil {
+		t.Error("a document longer than maxAnswersBytes was accepted")
+	}
+}

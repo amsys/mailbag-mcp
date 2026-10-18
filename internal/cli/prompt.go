@@ -5,8 +5,10 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -74,4 +76,88 @@ func readLineFromTerminal(prompt string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
+}
+
+// errUnanswered is the refusal of a prompt that the --answers-stdin
+// document does not answer. A missing answer is an error and never a
+// default (DS13.5).
+//
+// arch: DS13.5, IS13.6, B5
+var errUnanswered = errors.New("--answers-stdin: the JSON document on stdin does not answer this prompt; nothing was written")
+
+// maxAnswersBytes is the largest --answers-stdin document that the CLI
+// reads. A longer input is not one valid document.
+const maxAnswersBytes = 64 << 10
+
+// answers is the one JSON document of --answers-stdin:
+// {"secret": "...", "use_file_store": false}. A nil field is a prompt
+// that the document does not answer.
+//
+// arch: DS13.5, IS13.2
+type answers struct {
+	Secret       *string `json:"secret"`
+	UseFileStore *bool   `json:"use_file_store"`
+}
+
+// readAnswers reads one strict JSON document from r. An unknown field,
+// a second document, a value of the wrong type or a document that is
+// not an object is an error. The CLI reads no lines: the cause of B5
+// was a reader that lost lines. The error texts are fixed and hold no
+// part of the input, so a secret cannot get into them (IS13.2).
+//
+// arch: DS13.5, IS13.2, B5
+func readAnswers(r io.Reader) (answers, error) {
+	dec := json.NewDecoder(io.LimitReader(r, maxAnswersBytes))
+	dec.DisallowUnknownFields()
+	var doc *answers
+	if err := dec.Decode(&doc); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		switch {
+		case errors.As(err, &typeErr) && (typeErr.Field == "secret" || typeErr.Field == "use_file_store"):
+			return answers{}, fmt.Errorf("--answers-stdin: the field %q has the wrong type; nothing was written", typeErr.Field)
+		case errors.As(err, &typeErr):
+			return answers{}, errors.New("--answers-stdin: the document on stdin must be one JSON object; nothing was written")
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			return answers{}, errors.New(`--answers-stdin: the document holds an unknown field; the fields are "secret" and "use_file_store"; nothing was written`)
+		default:
+			return answers{}, errors.New("--answers-stdin: stdin does not hold one valid JSON document; nothing was written")
+		}
+	}
+	if doc == nil {
+		return answers{}, errors.New("--answers-stdin: the document on stdin must be one JSON object; nothing was written")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return answers{}, errors.New("--answers-stdin: stdin holds more than one JSON document; nothing was written")
+	}
+	return *doc, nil
+}
+
+// readSecret gives the secret of the document in place of the terminal
+// prompt. It is the Env.ReadSecret of --answers-stdin.
+//
+// arch: DS13.5
+func (a answers) readSecret(string) (string, error) {
+	if a.Secret == nil {
+		return "", errUnanswered
+	}
+	return *a.Secret, nil
+}
+
+// confirm gives use_file_store in place of the terminal question. It is
+// the Env.Confirm of --answers-stdin.
+//
+// arch: DS13.5
+func (a answers) confirm(string) (bool, error) {
+	if a.UseFileStore == nil {
+		return false, errUnanswered
+	}
+	return *a.UseFileStore, nil
+}
+
+// unansweredLine is the Env.ReadLine of --answers-stdin: the document
+// has no answer for a visible line, such as the --paste redirect URL.
+//
+// arch: DS13.5
+func unansweredLine(string) (string, error) {
+	return "", errUnanswered
 }

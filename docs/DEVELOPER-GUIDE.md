@@ -40,6 +40,14 @@ version` reads the version from the Go build info
 - `go run .` and some test builds have no version: the binary prints
   `mailbag-mcp (devel)`.
 
+## Lint
+
+Run `trueup lint` in the repository root before a commit. It runs
+golangci-lint, Vale and the reference checker with the settings of
+`trueup.toml`. The repository keeps no lint config files. CI does not run
+lint. CI scans the git history with gitleaks (`.github/workflows/secrets.yml`,
+config in `.github/gitleaks.toml`).
+
 ## Tests
 
 Run all tests with the race detector:

@@ -1,0 +1,11 @@
+# gitleaks config: the default rules, plus two fakes in tests.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "fake JWT, test input for the redactor"
+paths = ['''^internal/guard/redact_test\.go$''']
+
+[[allowlists]]
+description = "idempotency-key constant in a test, not a secret"
+paths = ['''^internal/server/server_test\.go$''']

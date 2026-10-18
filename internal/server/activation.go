@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+//go:build !windows
+
 // Socket activation (DS11.10): the daemon takes the listener that
 // systemd passed as fd 3. The code reads LISTEN_PID and LISTEN_FDS
 // itself and has no dependency on go-systemd (DS11.16).

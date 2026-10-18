@@ -9,7 +9,7 @@ ignore = ["docs/features/**"]   # globs left out of the survey and all findings
 protect = []                 # globs that apply never changes or removes
 
 [root]
-allow = []                   # root entries allowed beyond the base list (D5.8)
+allow = ["cmd"]              # root entries allowed beyond the base list (D5.8); cmd/ holds mailbag-setup (SQ13.2)
 
 [scratch]
 allow = []                   # paths or names the scratch rule lets through (D5.8)
@@ -37,6 +37,10 @@ reason = "runner and tierplan read PLAN.md at the root"
 [[keep]]
 id = "refcheck:scripts/coverage_gate.sh:6:malformed"
 reason = "the repo cites DS/IS design ids with arch: in every file; trueup's arch grammar takes D<n>.<n> only"
+
+[[keep]]
+id = "refcheck:scripts/release/verify-tag.sh:10:malformed"
+reason = "the repo cites DS/IS/DF design ids with arch: in every file; trueup's arch grammar takes D<n>.<n> only"
 
 [[keep]]
 id = "refcheck:docs/USER-GUIDE.md:3:misplaced"

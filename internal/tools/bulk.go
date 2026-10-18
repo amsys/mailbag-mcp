@@ -301,10 +301,11 @@ func (t *bulkTool) keepGrant(ss *mcp.ServerSession, acct config.Account, outcome
 //
 // A client with no form elicitation gives [errBulkNoElicitation],
 // unless accounts.toml has [bulk] allow_without_elicitation = true
-// (DS14.2). A full store gives [errPendingFull] and asks nobody
-// (DS14.3).
+// (DS14.2). A full store gives [errPendingFull] and a full session
+// share gives [errPendingSessionFull]; both ask nobody (DS14.3,
+// DS14.12).
 //
-// arch: DS14.2, DS14.3, DS14.6, DS14.9
+// arch: DS14.2, DS14.3, DS14.6, DS14.9, DS14.12
 func (t *bulkTool) askFirst(ss *mcp.ServerSession, acct config.Account, in BulkIn, set bulkSet, message string) (string, error) {
 	if !canElicit(ss) {
 		if acct.BulkAllowWithoutElicitation {
@@ -312,7 +313,7 @@ func (t *bulkTool) askFirst(ss *mcp.ServerSession, acct config.Account, in BulkI
 		}
 		return confirmNoElicitRefused, errBulkNoElicitation
 	}
-	state, err := t.pending.put(pendingBulk{
+	state, err := t.pending.put(ss, pendingBulk{
 		session: ss,
 		account: acct.Alias,
 		input:   bulkInput(in),

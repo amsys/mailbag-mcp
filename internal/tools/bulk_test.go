@@ -1415,14 +1415,16 @@ func TestBulk_MRTRNoElicitation(t *testing.T) {
 	})
 }
 
-// TestBulk_MRTRStoreFull holds DS14.3: when the store is full, the
-// first call gives [errPendingFull], asks nobody and changes nothing.
+// TestBulk_MRTRStoreFull holds DS14.3 and DS14.12: when four other
+// sessions fill the store with their shares of 16, the first call
+// gives [errPendingFull], asks nobody and changes nothing.
 //
-// arch: DS14.3
+// arch: DS14.3, DS14.12
 func TestBulk_MRTRStoreFull(t *testing.T) {
 	h, prov, _ := bulkFixture(t, 3)
-	for range pendingLimit {
-		if _, err := h.pending.put(pendingBulk{}); err != nil {
+	sess := shareSessions(pendingLimit / pendingPerSession)
+	for i := range pendingLimit {
+		if _, err := h.pending.put(sess[i/pendingPerSession], pendingBulk{}); err != nil {
 			t.Fatalf("fill the store: %v", err)
 		}
 	}

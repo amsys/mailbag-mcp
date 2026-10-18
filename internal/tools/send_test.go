@@ -3298,15 +3298,17 @@ func TestSend_MRTRDoneKey(t *testing.T) {
 }
 
 // TestSend_MRTRStoreFull holds DS14.3: when the store holds 64 open
-// confirmations, a first call gives [errPendingFull], asks nobody and
-// sends nothing. The key is free after the refusal.
+// confirmations of four other sessions (16 each, DS14.12), a first
+// call gives [errPendingFull], asks nobody and sends nothing. The key
+// is free after the refusal.
 //
-// arch: DS14.3
+// arch: DS14.3, DS14.12
 func TestSend_MRTRStoreFull(t *testing.T) {
 	fm, prov := confirmFixture(t)
 	h := &sendTool{mail: fm}
+	sess := shareSessions(pendingLimit / pendingPerSession)
 	for i := 0; i < pendingLimit; i++ {
-		if _, err := h.pending.put(pendingSend{}); err != nil {
+		if _, err := h.pending.put(sess[i/pendingPerSession], pendingSend{}); err != nil {
 			t.Fatalf("put %d: %v", i, err)
 		}
 	}
@@ -3376,31 +3378,112 @@ func TestSend_MRTRSameKeyReuses(t *testing.T) {
 	}
 }
 
-// TestSend_MRTROneSessionFillsStore holds DS14.3 and IS14.3: when one
-// session fills the store with first calls of different keys, the next
-// first call with a new key gives [errPendingFull] before the limit,
-// so it spends no send and the key is free. A first call that repeats
-// an open key of that session still works in the full store: it
-// reuses the place of its record and spends no send.
+// TestSend_MRTROneSessionFillsStore holds DS14.3, DS14.12 and IS14.3:
+// one session fills its share of [pendingPerSession] places, not the
+// store. Its next first call with a new key gives
+// [errPendingSessionFull] before the limit, so it spends no send and
+// the key is free. A first call that repeats an open key of that
+// session still works: it reuses the place of its record and spends no
+// send. Three more sessions fill the rest of the store, and then a
+// fifth session gets [errPendingFull] and spends no send. This is the
+// new specified behaviour of DS14.12, not a weaker test.
 //
-// arch: DS14.3, DS14.4, IS14.3
+// arch: DS14.3, DS14.4, DS14.12, IS14.3, IS14.7
 func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 	fm, prov := confirmFixture(t)
 	now := time.Unix(1700000000, 0)
 	h := &sendTool{mail: fm}
 	h.limit.now = func() time.Time { return now }
-	cs := mrtrServer(t, h)(noAutoElicit(t), false)
+	connect := mrtrServer(t, h)
+	cs := connect(noAutoElicit(t), false)
 	keyArgs := func(key string) map[string]any {
 		args := sendArgs()
 		args["idempotency_key"] = key
 		return args
 	}
-	for i := range pendingLimit {
+	refused := func(cs *mcp.ClientSession, key string, want error) {
+		t.Helper()
+		spent := len(h.limit.at["work"])
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "send", Arguments: keyArgs(key)})
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("result = %+v, want an error", res)
+		}
+		if text := textOf(t, res); text != want.Error() {
+			t.Errorf("error = %q, want the fixed text %q", text, want.Error())
+		}
+		if n := len(h.limit.at["work"]); n != spent {
+			t.Errorf("the refused call spent a send: %d sends in the window, want %d (IS14.3)", n, spent)
+		}
+		if e := h.keys.entries[keyID{account: "work", key: key}]; e != nil {
+			t.Errorf("key entry = %+v, want none after the refusal", e)
+		}
+	}
+	for i := range pendingPerSession {
 		// Each call is one window after the last, so the limit of
 		// §3.11 never refuses one of them.
 		now = now.Add(sendWindow)
 		mrtrFirst(t, cs, keyArgs(fmt.Sprintf("k-%d", i)))
 	}
+	now = now.Add(sendWindow)
+	refused(cs, "k-new", errPendingSessionFull)
+
+	spent := len(h.limit.at["work"])
+	state, _ := mrtrFirst(t, cs, keyArgs("k-0"))
+	if n := len(h.limit.at["work"]); n != spent {
+		t.Errorf("the reuse spent a send: %d sends in the window, want %d (IS14.3)", n, spent)
+	}
+	if n := len(h.pending.entries); n != pendingPerSession {
+		t.Errorf("the store holds %d records, want %d", n, pendingPerSession)
+	}
+
+	for s := 1; s < pendingLimit/pendingPerSession; s++ {
+		other := connect(noAutoElicit(t), false)
+		for i := range pendingPerSession {
+			now = now.Add(sendWindow)
+			mrtrFirst(t, other, keyArgs(fmt.Sprintf("s%d-k-%d", s, i)))
+		}
+	}
+	if n := len(h.pending.entries); n != pendingLimit {
+		t.Errorf("the store holds %d records, want %d", n, pendingLimit)
+	}
+	now = now.Add(sendWindow)
+	refused(connect(noAutoElicit(t), false), "k-fifth", errPendingFull)
+
+	if res := mrtrRetry(t, cs, keyArgs("k-0"), state, acceptSend); res.IsError {
+		t.Fatalf("retry failed: %s", textOf(t, res))
+	}
+	if len(prov.sentDrafts) != 1 {
+		t.Errorf("SendDraft ran %d times, want 1", len(prov.sentDrafts))
+	}
+}
+
+// TestSend_MRTRSessionShareSpendsNoSend holds DS14.12 and IS14.7: a
+// first call that the session share refuses gets
+// [errPendingSessionFull], asks nobody, sends nothing, spends no send
+// of the limit and leaves the key free. Another session with a free
+// share is not refused.
+//
+// arch: DS14.12, IS14.7, IS14.8
+func TestSend_MRTRSessionShareSpendsNoSend(t *testing.T) {
+	fm, prov := confirmFixture(t)
+	now := time.Unix(1700000000, 0)
+	h := &sendTool{mail: fm}
+	h.limit.now = func() time.Time { return now }
+	connect := mrtrServer(t, h)
+	cs := connect(noAutoElicit(t), false)
+	keyArgs := func(key string) map[string]any {
+		args := sendArgs()
+		args["idempotency_key"] = key
+		return args
+	}
+	for i := range pendingPerSession {
+		now = now.Add(sendWindow)
+		mrtrFirst(t, cs, keyArgs(fmt.Sprintf("k-%d", i)))
+	}
+	now = now.Add(sendWindow)
 	spent := len(h.limit.at["work"])
 
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "send", Arguments: keyArgs("k-new")})
@@ -3410,28 +3493,31 @@ func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); text != errPendingFull.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errPendingFull.Error())
+	if text := textOf(t, res); text != errPendingSessionFull.Error() {
+		t.Errorf("error = %q, want the fixed text %q", text, errPendingSessionFull.Error())
 	}
 	if n := len(h.limit.at["work"]); n != spent {
-		t.Errorf("the refused call spent a send: %d sends in the window, want %d (IS14.3)", n, spent)
+		t.Errorf("the refused call spent a send: %d sends in the window, want %d (IS14.7)", n, spent)
 	}
 	if e := h.keys.entries[keyID{account: "work", key: "k-new"}]; e != nil {
 		t.Errorf("key entry = %+v, want none after the refusal", e)
 	}
+	if n := len(h.pending.entries); n != pendingPerSession {
+		t.Errorf("the store holds %d records, want %d", n, pendingPerSession)
+	}
+	if n := h.pending.held; n != 0 {
+		t.Errorf("%d places are still held after the refusal, want 0", n)
+	}
+	if len(prov.sentDrafts) != 0 {
+		t.Errorf("SendDraft ran %d times, want 0", len(prov.sentDrafts))
+	}
 
-	state, _ := mrtrFirst(t, cs, keyArgs("k-0"))
-	if n := len(h.limit.at["work"]); n != spent {
-		t.Errorf("the reuse spent a send: %d sends in the window, want %d (IS14.3)", n, spent)
+	other := connect(noAutoElicit(t), false)
+	if state, _ := mrtrFirst(t, other, keyArgs("k-new")); state == "" {
+		t.Error("another session got no request state")
 	}
-	if n := len(h.pending.entries); n != pendingLimit {
-		t.Errorf("the store holds %d records, want %d", n, pendingLimit)
-	}
-	if res := mrtrRetry(t, cs, keyArgs("k-0"), state, acceptSend); res.IsError {
-		t.Fatalf("retry failed: %s", textOf(t, res))
-	}
-	if len(prov.sentDrafts) != 1 {
-		t.Errorf("SendDraft ran %d times, want 1", len(prov.sentDrafts))
+	if n := len(h.pending.entries); n != pendingPerSession+1 {
+		t.Errorf("the store holds %d records after the call of another session, want %d", n, pendingPerSession+1)
 	}
 }
 

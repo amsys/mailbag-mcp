@@ -358,7 +358,7 @@ func (t *sendTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in S
 		hold := func(account string) (bool, error) {
 			var reuse bool
 			var err error
-			place, reuse, err = t.pending.hold(func(r pendingSend) bool {
+			place, reuse, err = t.pending.hold(ss, func(r pendingSend) bool {
 				return r.session == ss && r.account == account && r.draftID == in.DraftID && r.idemKey == in.IdempotencyKey
 			})
 			return reuse, err
@@ -399,8 +399,8 @@ func retryOf(req *mcp.CallToolRequest) (string, mcp.InputResponseMap) {
 //
 // A client with no form elicitation gives [errNoElicitation], unless
 // accounts.toml has [send] allow_without_elicitation = true (DS14.2).
-// A full store refused the call before the limit, so it asked nobody
-// (DS14.3).
+// A full store or a full session share refused the call before the
+// limit, so it asked nobody (DS14.3, DS14.12).
 //
 // arch: DS14.2, DS14.3, DS14.4, DS14.9, D5.2
 func (t *sendTool) confirmFirst(ctx context.Context, ss *mcp.ServerSession, p Writer, acct config.Account, alias, draftID, idemKey string, place *pendingHold[pendingSend]) (string, error) {
@@ -542,12 +542,12 @@ func (t *sendTool) run(ctx context.Context, in SendIn, check checkFunc, confirm 
 //
 // hold is nil on every call except the first call of the MRTR path.
 // On that call, hold runs after the check step and immediately before
-// the limit, so a full store refuses before the call spends a send
-// (DS14.3). When hold reuses an open record of the same send, the
-// limit does not run: the first call of that record spent it (DS14.4,
-// IS14.3).
+// the limit, so a full store or a full session share refuses before
+// the call spends a send (DS14.3, DS14.12). When hold reuses an open
+// record of the same send, the limit does not run: the first call of
+// that record spent it (DS14.4, IS14.3).
 //
-// arch: DS14.3, DS14.4, DS14.5, IS14.3, D8.3
+// arch: DS14.3, DS14.4, DS14.5, DS14.12, IS14.3, D8.3
 func (t *sendTool) runClaim(ctx context.Context, in SendIn, claim func(account string) error, hold func(account string) (reuse bool, err error), check checkFunc, confirm confirmFunc) (out SendOut, err error) {
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {

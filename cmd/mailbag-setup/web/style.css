@@ -1,0 +1,15 @@
+/* style.css: layout of the setup page. No external font or image. */
+:root { color-scheme: light dark; --gap: 0.75rem; }
+body { font: 16px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 48rem; padding: 0 1rem 3rem; }
+header h1 { margin-bottom: 0; }
+section { border-top: 1px solid #8884; padding: var(--gap) 0; }
+label { display: block; margin: 0.4rem 0; }
+input:not([type=radio]):not([type=file]) { width: 100%; max-width: 28rem; box-sizing: border-box; }
+button { margin: 0.25rem 0.25rem 0.25rem 0; padding: 0.4rem 0.9rem; cursor: pointer; }
+#cards { display: flex; flex-wrap: wrap; gap: var(--gap); }
+#cards button { min-width: 11rem; }
+pre { background: #8882; padding: var(--gap); overflow-x: auto; white-space: pre-wrap; }
+.drop { border: 2px dashed #888; padding: 1.5rem; text-align: center; }
+.drop.over { background: #8882; }
+.msg.err, #banner { color: #b00020; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }

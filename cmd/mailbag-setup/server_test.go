@@ -421,7 +421,8 @@ func TestSetup_SecurityHeadersOnEveryResponse(t *testing.T) {
 		}
 	}
 	_, hdr, body := h.do(request{method: http.MethodGet, path: "/"})
-	if strings.Contains(string(body), "<script") {
+	if strings.Contains(string(body), "<script>") || strings.Contains(string(body), "<script type") ||
+		strings.Count(string(body), "<script") != strings.Count(string(body), "<script src=\"/app.js\"></script>") {
 		t.Errorf("the page holds an inline script: %s", body)
 	}
 	if !strings.HasPrefix(hdr.Get("Content-Type"), "text/html") {
@@ -833,5 +834,30 @@ func TestSetup_FindCLI(t *testing.T) {
 
 	if _, err := findCLI(filepath.Join(link, setupName), "relative/dir"); err == nil {
 		t.Error("no binary anywhere: no error")
+	}
+}
+
+// TestSetup_PageFilesServedWithHeaders checks that "/", /app.js,
+// /style.css and /presets.json come from the embedded web files with
+// the DS13.6 headers and no token.
+//
+// arch: DS13.4, DS13.6, DS13.8
+func TestSetup_PageFilesServedWithHeaders(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	for path, typ := range map[string]string{
+		"/": "text/html", "/app.js": "text/javascript",
+		"/style.css": "text/css", "/presets.json": "application/json",
+	} {
+		code, hdr, body := h.do(request{method: http.MethodGet, path: path})
+		if code != http.StatusOK || len(body) == 0 {
+			t.Errorf("GET %s = %d, %d bytes", path, code, len(body))
+		}
+		if !strings.HasPrefix(hdr.Get("Content-Type"), typ) {
+			t.Errorf("GET %s Content-Type = %q", path, hdr.Get("Content-Type"))
+		}
+		if hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Content-Security-Policy") == "" ||
+			hdr.Get("Cache-Control") != "no-store" || hdr.Get("Referrer-Policy") != "no-referrer" {
+			t.Errorf("GET %s lacks the DS13.6 headers: %v", path, hdr)
+		}
 	}
 }

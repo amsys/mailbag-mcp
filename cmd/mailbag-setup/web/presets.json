@@ -1,0 +1,12 @@
+{
+  "gmail": {"label": "Gmail", "provider": "gmail"},
+  "outlook": {"label": "Outlook / Microsoft 365", "provider": "outlook"},
+  "fastmail": {"label": "Fastmail (JMAP)", "provider": "jmap", "session_url": "https://api.fastmail.com/jmap/session",
+    "help": "Make an API token", "help_url": "https://app.fastmail.com/settings/security/tokens"},
+  "icloud": {"label": "iCloud (IMAP)", "provider": "imap", "imap": "imap.mail.me.com:993", "smtp": "smtp.mail.me.com:587",
+    "help": "Make an app-specific password", "help_url": "https://account.apple.com/account/manage"},
+  "yahoo": {"label": "Yahoo (IMAP)", "provider": "imap", "imap": "imap.mail.yahoo.com:993", "smtp": "smtp.mail.yahoo.com:465",
+    "help": "Make an app password", "help_url": "https://login.yahoo.com/account/security"},
+  "imap": {"label": "Other IMAP", "provider": "imap"},
+  "jmap": {"label": "Other JMAP", "provider": "jmap"}
+}

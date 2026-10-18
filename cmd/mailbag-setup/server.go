@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net"
 	"net/http"
@@ -158,6 +159,9 @@ func versionsMatch(setupLine, cliLine string) bool {
 func (s *server) routes() {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /{$}", s.handlePage)
+	m.HandleFunc("GET /app.js", s.handlePage)
+	m.HandleFunc("GET /style.css", s.handlePage)
+	m.HandleFunc("GET /presets.json", s.handlePage)
 	m.HandleFunc("GET /api/state", s.handleState)
 	m.HandleFunc("POST /api/oauth/google", s.writeAction(s.handleOAuthGoogle))
 	m.HandleFunc("POST /api/oauth/microsoft", s.writeAction(s.handleOAuthMicrosoft))
@@ -272,17 +276,30 @@ func (s *server) writeAction(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// pageHTML is the page until the web files of DS13.8 exist. It holds
-// no script.
-const pageHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>mailbag setup</title></head>
-<body><p>The mailbag setup page is not in this build. The API is at /api/.</p></body></html>
-`
+// pageTypes maps each served web file to its Content-Type.
+var pageTypes = map[string]string{
+	"/":             "text/html; charset=utf-8",
+	"/app.js":       "text/javascript; charset=utf-8",
+	"/style.css":    "text/css; charset=utf-8",
+	"/presets.json": "application/json",
+}
 
-// handlePage serves the page.
-func (s *server) handlePage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, pageHTML)
+// handlePage serves the embedded page, script, style sheet and presets
+// from webFiles(). The security headers come from ServeHTTP.
+//
+// arch: DS13.4, DS13.6, DS13.8
+func (s *server) handlePage(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name == "" {
+		name = "index.html"
+	}
+	b, err := fs.ReadFile(webFiles(), name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", pageTypes[r.URL.Path])
+	_, _ = w.Write(b)
 }
 
 // stateAccount is one account in the state of GET /api/state.

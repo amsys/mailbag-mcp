@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mailbag setup</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><h1>mailbag setup</h1><p id="banner" hidden></p></header>
+<main>
+<section id="overview"><h2>Overview</h2>
+  <dl id="facts"></dl>
+  <ul id="accounts"></ul>
+  <button id="b-add">Add an account</button>
+  <button id="b-clients">Connect a client</button>
+  <button id="b-checks">Run checks</button>
+</section>
+
+<section id="provider" hidden><h2>Add an account: provider</h2>
+  <div id="cards"></div>
+</section>
+
+<section id="access" hidden><h2>Access level</h2>
+  <label><input type="radio" name="access" value="read"> read: read and search only</label>
+  <label><input type="radio" name="access" value="draft" checked> draft: also make drafts (default)</label>
+  <label><input type="radio" name="access" value="send"> send: also send, after a confirmation in the client</label>
+</section>
+
+<section id="gmail" hidden><h2>Gmail: Google client</h2>
+  <p>Do each step in a new tab. "Testing" mode ends the sign-in after 7 days. "In production" keeps it.</p>
+  <ol id="gmail-steps"></ol>
+  <p id="drop" class="drop" tabindex="0">Drop the downloaded client JSON here, or</p>
+  <input type="file" id="gfile" accept=".json,application/json">
+  <p id="gmsg" class="msg"></p>
+</section>
+
+<section id="outlook" hidden><h2>Outlook: Microsoft client</h2>
+  <p>Register an app in the Entra admin center with these values.</p>
+  <ul id="outlook-vals"></ul>
+  <label>Client id <input id="msid" size="40" autocomplete="off"></label>
+  <button id="b-msid">Save client id</button>
+  <p id="mmsg" class="msg"></p>
+</section>
+
+<section id="form" hidden><h2>Account</h2>
+  <label>Alias <input id="f-alias" autocomplete="off"></label>
+  <label>Address <input id="f-email" type="email" autocomplete="off"></label>
+  <div id="pw-fields">
+    <label>User name <input id="f-user" autocomplete="off"></label>
+    <label>IMAP host:port <input id="f-imap" autocomplete="off"></label>
+    <label>SMTP host:port <input id="f-smtp" autocomplete="off"></label>
+    <label>JMAP session URL <input id="f-jmap" autocomplete="off"></label>
+    <label>Password or API token <input id="f-secret" type="password" autocomplete="off"></label>
+    <p id="f-help"></p>
+  </div>
+  <button id="b-signin">Sign in</button>
+  <button id="b-cancel" hidden>Cancel</button>
+  <p id="signin-note" hidden>Finish the sign-in in the new tab.</p>
+</section>
+
+<section id="result" hidden><h2>Result</h2>
+  <pre id="out"></pre>
+  <button id="b-retry" hidden>Try again</button>
+</section>
+
+<section id="clients" hidden><h2>Connect a client</h2>
+  <div id="client-list"></div>
+  <p>After a change, reconnect mailbag in the client (in Claude Code: /mcp).</p>
+</section>
+
+<section id="daemon" hidden><h2>Daemon (Linux with systemd)</h2>
+  <button id="b-service">Install the service</button>
+  <p>Then copy and run: <code>systemctl --user enable --now mailbag-mcp</code></p>
+</section>
+
+<section id="checks" hidden><h2>Checks</h2>
+  <pre id="doctor"></pre>
+</section>
+
+<section id="finish"><h2>Finish</h2>
+  <button id="b-finish">Stop the server</button>
+  <p id="closed" hidden>You can close this tab.</p>
+</section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@ id: developer-guide
 type: how-to
 audience: [maintainer, agent]
 status: current
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-19
 ---
 
 # mailbag-mcp developer guide
@@ -175,12 +175,61 @@ change a package that it names.
 
 ## Release
 
-A tag `v*` starts `.github/workflows/release.yml`. It runs GoReleaser
-with `.goreleaser.yaml` and publishes six archives (Linux, macOS and
-Windows, each on amd64 and arm64) and `checksums.txt` as a GitHub
-release. Each archive holds the binary, `LICENSE`, `README.md`,
-`SUPPORT.md`, `CHANGELOG.md`, the guides in `docs/` and the systemd
-units in `contrib/systemd/`.
+A tag `v*` starts `.github/workflows/release.yml`. It has four jobs. A
+job starts only when the job before it passes:
+
+1. **verify** runs `scripts/release/verify-tag.sh`. The tag must have a
+   good SSH signature from a key in `.github/allowed_signers`, the name
+   in the signed tag object must be the tag name, the tag must point to
+   the commit that the job checked out, its commit must be on `main`,
+   and `CHANGELOG.md` must have a section `## [<version>]` with text in
+   it. That section becomes the release notes. The job reads the script
+   and `.github/allowed_signers` from `origin/main`, not from the tag,
+   because a tag can hold any tree. So a tag that a leaked token pushes
+   stops here. The build job runs the same checks again.
+2. **test** calls `test.yml` with `workflow_call`.
+3. **build** runs GoReleaser with `.goreleaser.yaml` and makes a
+   **draft** release (`release.draft: true`) with six archives (Linux,
+   macOS and Windows, each on amd64 and arm64) and `checksums.txt`. It
+   attests each file in `checksums.txt`, and `checksums.txt` itself,
+   with `actions/attest-build-provenance`.
+4. **publish** runs in the GitHub environment `release`. It waits until
+   the owner approves, then makes the draft public with
+   `gh release edit <tag> --draft=false`.
+
+Each archive holds the binary, `LICENSE`, `README.md`, `SUPPORT.md`,
+`CHANGELOG.md`, the guides in `docs/` and the systemd units in
+`contrib/systemd/`.
+
+### Signed tags
+
+`.github/allowed_signers` holds the public key of
+`~/.ssh/id_ed25519_amsys_sign` with the principal `dev@amsys.cz`. An
+unsigned tag, a lightweight tag or a tag from another key fails the
+verify job. Make the tag on `main` with git signing in SSH format:
+
+```
+git -c gpg.format=ssh -c user.signingkey="$HOME/.ssh/id_ed25519_amsys_sign.pub" tag -s v1.2.0 -m v1.2.0
+sh scripts/release/verify-tag.sh --main main --notes /tmp/dist-notes.md v1.2.0
+```
+
+The second command runs the checks of the verify job on your clone and
+writes the notes to `/tmp/dist-notes.md`, outside the work tree, so a
+snapshot stays clean. `sh scripts/release/verify-tag.sh --selftest` tests the
+script with throwaway keys.
+
+To change the signing key, change `.github/allowed_signers` in a commit
+on `main` before you push the next tag.
+
+The gate has limits. A token that can push to `main`, or a token with
+the `workflow` permission, can change the gate itself. Protect `main`
+with a ruleset, so that only the owner can push to it. The owner
+approval of the `release` environment is the last stop.
+
+The environment `release`, with the owner as required reviewer, is a
+setting of the GitHub repository, not a file. Make it before the first
+tag. If it does not exist, GitHub makes it with no reviewer, and the
+publish job runs with no approval.
 
 Make a local snapshot before you push a tag:
 
@@ -198,7 +247,8 @@ tag with `git ls-remote` and change the hash and the comment together.
 ## CI
 
 `.github/workflows/test.yml` runs on a push to `main` and on each pull
-request, on `ubuntu-latest`, `macos-latest` and `windows-latest`:
+request, and when `release.yml` calls it for a tag. It runs on
+`ubuntu-latest`, `macos-latest` and `windows-latest`:
 `go vet`, staticcheck, `go test -race -coverprofile=cover.out ./...`,
 `go tool cover -func`, the coverage gate (Linux only) and govulncheck.
 

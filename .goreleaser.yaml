@@ -1,7 +1,7 @@
 # GoReleaser configuration for the mailbag-mcp release archives.
 # The release build sets no version with the linker. The binary reads its
 # version from the Go build info (IS10.5).
-# arch: DS10.1, DS10.7, IS10.5
+# arch: DS10.1, DS10.7, IS10.5, DS12.7, IS12.5
 version: 2
 
 # The project name is fixed, so the archive names do not depend on the
@@ -50,8 +50,10 @@ changelog:
   use: git
 
 # The release target is fixed, so the check and a snapshot run also work
-# in a clone with no GitHub remote.
+# in a clone with no GitHub remote. The release is a draft: the publish
+# job of release.yml makes it public after the owner approves (IS12.5).
 release:
+  draft: true
   github:
     owner: amsys
     name: mailbag-mcp

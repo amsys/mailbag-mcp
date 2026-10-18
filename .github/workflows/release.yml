@@ -1,6 +1,22 @@
-# Release workflow: a v* tag builds the archives with GoReleaser and
-# publishes them as a GitHub release.
-# arch: DS10.1, DS10.7, IS10.6
+# Release workflow: a v* tag goes through four jobs, and each job starts
+# only when the job before it passes.
+#
+#   verify -> test -> build (draft) -> publish (environment "release")
+#
+# verify stops a tag that has no good SSH signature from a key in
+# .github/allowed_signers, a tag whose commit is not on main, and a tag
+# with no CHANGELOG.md section. The gate script and the allowed signers
+# file come from origin/main, not from the tree of the tag: a token that
+# can push a tag can put any tree on the tag, but it cannot change main
+# when main is protected. So a tag that a leaked token pushes does not get
+# a build. A token that can push to main, or that has the workflow
+# permission, can still change the gate. test runs test.yml. build makes a
+# draft release with GoReleaser and attests the archives and
+# checksums.txt. publish makes the
+# draft public, and only after the owner approves the "release"
+# environment (IS12.5). There is no Homebrew step, no notarization and no
+# install smoke job (DF.1).
+# arch: DS10.1, DS10.7, IS10.6, DS12.7, IS12.5, DF.1, DF.3
 name: release
 
 on:
@@ -11,14 +27,67 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
+      # The checkout of a tag event can write the tag as a lightweight tag.
+      # Fetch the tag object again, so verify-tag sees the signature.
+      - name: fetch the tag object
+        run: git fetch --force origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      # Read the gate from origin/main, not from the tag tree, so a tag
+      # cannot replace the script or the keys. --commit makes sure that the
+      # tag still points to the commit that this job checked out.
+      - name: check signature, main and CHANGELOG
+        run: |
+          git show origin/main:scripts/release/verify-tag.sh >"$RUNNER_TEMP/verify-tag.sh"
+          git show origin/main:.github/allowed_signers >"$RUNNER_TEMP/allowed_signers"
+          sh "$RUNNER_TEMP/verify-tag.sh" \
+            --allowed-signers "$RUNNER_TEMP/allowed_signers" \
+            --main origin/main \
+            --commit "$GITHUB_SHA" \
+            --notes "$RUNNER_TEMP/dist-notes.md" \
+            "$GITHUB_REF_NAME"
+
+  test:
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: fetch the tag object
+        run: git fetch --force origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      # Run the checks again on this checkout, which is the tree that is
+      # built. The notes go outside the work tree, so the tree stays clean
+      # for GoReleaser.
+      # Read the gate from origin/main, not from the tag tree, so a tag
+      # cannot replace the script or the keys. --commit makes sure that the
+      # tag still points to the commit that this job checked out.
+      - name: check signature, main and CHANGELOG
+        run: |
+          git show origin/main:scripts/release/verify-tag.sh >"$RUNNER_TEMP/verify-tag.sh"
+          git show origin/main:.github/allowed_signers >"$RUNNER_TEMP/allowed_signers"
+          sh "$RUNNER_TEMP/verify-tag.sh" \
+            --allowed-signers "$RUNNER_TEMP/allowed_signers" \
+            --main origin/main \
+            --commit "$GITHUB_SHA" \
+            --notes "$RUNNER_TEMP/dist-notes.md" \
+            "$GITHUB_REF_NAME"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: stable
@@ -26,6 +95,26 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.18.2
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/dist-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The action takes one kind of subject per step: the archives by
+      # checksums.txt, then checksums.txt itself.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/checksums.txt
+
+  publish:
+    needs: [verify, test, build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: make the draft release public
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

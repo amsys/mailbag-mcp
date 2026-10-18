@@ -40,6 +40,27 @@ archives:
         dst: contrib/systemd
         strip_parent: true
 
+nfpms:
+  - id: mailbag-mcp
+    ids: [mailbag-mcp]
+    package_name: mailbag-mcp
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    maintainer: "Martin <dev@amsys.cz>"
+    license: MIT
+    homepage: https://github.com/amsys/mailbag-mcp
+    description: Mail access for AI agents over MCP.
+    formats: [deb, rpm, archlinux]
+    # arch: DS12.2, DS12.7, DF.2, DF.6
+    # No systemd units and no scripts. The service install command writes
+    # the units with the path of the running binary (DF.2).
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/mailbag-mcp/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/mailbag-mcp/README.md
+      - src: docs/USER-GUIDE.md
+        dst: /usr/share/doc/mailbag-mcp/USER-GUIDE.md
+
 checksum:
   name_template: checksums.txt
 

@@ -27,6 +27,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/amsys/mailbag-mcp/internal/guard"
@@ -387,6 +388,11 @@ func (c *Client) Call(ctx context.Context, calls ...Invocation) (*Response, erro
 	return resp, err
 }
 
+// limitRetries counts the requests that postCapped sent again after the
+// request error limitType. A live test reads it through LimitRetries
+// (arch: DS14.15, DF.4).
+var limitRetries atomic.Int64
+
 // postCapped sends body with post. It waits for a free slot first, so
 // that the client has at most maxConcurrentRequests of the session in
 // flight (RFC 8620 §2). When the answer is the request error limitType
@@ -415,6 +421,7 @@ func (c *Client) postCapped(ctx context.Context, s *Session, body []byte) (*Resp
 		if try == limitTries || !errors.As(err, &se) || se.typ != limitType {
 			return resp, status, err
 		}
+		limitRetries.Add(1)
 		t := time.NewTimer(wait)
 		select {
 		case <-t.C:

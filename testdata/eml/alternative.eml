@@ -1,0 +1,22 @@
+Content-Type: multipart/alternative;
+ boundary=BOUNDARY
+Mime-Version: 1.0
+Message-Id: <abcdabcdabcdabcdabcdabcdabcdabcd@example.com>
+Date: Sat, 19 Sep 2026 10:00:00 +0000
+Subject: two formats
+To: <a@example.com>
+From: <work@example.com>
+
+--BOUNDARY
+Content-Transfer-Encoding: quoted-printable
+Content-Disposition: inline
+Content-Type: text/plain; charset=utf-8
+
+Hello there
+--BOUNDARY
+Content-Transfer-Encoding: quoted-printable
+Content-Disposition: inline
+Content-Type: text/html; charset=utf-8
+
+<p>Hello <b>there</b></p>
+--BOUNDARY--

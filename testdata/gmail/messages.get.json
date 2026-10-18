@@ -1,0 +1,17 @@
+{
+  "id": "18f0a1b2c3d4e5f6",
+  "threadId": "18f0a1b2c3d4e5f6",
+  "labelIds": ["IMPORTANT", "CATEGORY_UPDATES", "INBOX", "UNREAD", "Label_1"],
+  "snippet": "Tom &amp; Jerry said &quot;see you at 5&quot; &lt;not a tag&gt; &#39;ok&#39; &mdash; bye",
+  "sizeEstimate": 4321,
+  "internalDate": "1791892800000",
+  "payload": {
+    "headers": [
+      {"name": "From", "value": "Alice Example <alice@example.com>"},
+      {"name": "To", "value": "me@example.com"},
+      {"name": "Subject", "value": "=?UTF-8?Q?Caf=C3=A9_plans?="},
+      {"name": "Date", "value": "Mon, 1 Jan 2001 00:00:00 +0000"},
+      {"name": "Message-ID", "value": "<snip-1@example.com>"}
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=mailbag-mcp daemon
+Requires=mailbag.socket
+After=mailbag.socket
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mailbag-mcp serve
+KillSignal=SIGTERM
+TimeoutStopSec=620

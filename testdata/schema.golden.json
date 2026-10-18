@@ -1,0 +1,609 @@
+[
+  {
+    "annotations": {
+      "idempotentHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List configured mail accounts: alias, provider, access level and identities, and the active secrets store. Takes no arguments.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "accounts"
+  },
+  {
+    "description": "Save one attachment to disk, never its content.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ref": {
+          "description": "file name or part id from read",
+          "type": "string"
+        },
+        "save_dir": {
+          "description": "default ~/Downloads/mailbag-mcp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "id",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "name": "attachment"
+  },
+  {
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Change every message that matches a query, after the human confirms (one time, or for this account until reconnect); or undo.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "action": {
+          "description": "read unread star unstar archive trash move",
+          "type": "string"
+        },
+        "folder": {
+          "type": "string"
+        },
+        "max": {
+          "description": "default 500, at most 5000",
+          "type": "integer"
+        },
+        "move_to": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "undo": {
+          "description": "token, or list",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "type": "object"
+    },
+    "name": "bulk"
+  },
+  {
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    },
+    "description": "Decrypt one message with gpg.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "id": {
+          "description": "from search",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "decrypt"
+  },
+  {
+    "description": "Save a new, reply or forward draft. mailbag adds the signature.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "attachments": {
+          "description": "absolute paths",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "bcc": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "body": {
+          "type": "string"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "draft_id": {
+          "description": "replace this draft",
+          "type": "string"
+        },
+        "forward_id": {
+          "description": "with its attachments",
+          "type": "string"
+        },
+        "from": {
+          "description": "an account identity",
+          "type": "string"
+        },
+        "html": {
+          "type": "string"
+        },
+        "quote": {
+          "description": "default true",
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "reply_all": {
+          "type": "boolean"
+        },
+        "reply_to_id": {
+          "description": "fills to, subject",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "type": "object"
+    },
+    "name": "draft"
+  },
+  {
+    "description": "Save a message or conversation to disk.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "format": {
+          "description": "eml (default) or md",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "save_dir": {
+          "description": "default ~/Downloads/mailbag-mcp",
+          "type": "string"
+        },
+        "thread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "account",
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "export"
+  },
+  {
+    "description": "List folders, or create, rename or delete one (draft level). The server delimiter and personal namespace prefix set the real path. Delete refuses INBOX, a role folder and a folder that holds mail; INBOX cannot be renamed. Each action answers with the list after it.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "type": "object"
+    },
+    "name": "folders"
+  },
+  {
+    "description": "Read or change Gmail filters, vacation reply and signature.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "action": {
+          "description": "list_filters create_filter delete_filter get_vacation set_vacation get_signature set_signature",
+          "type": "string"
+        },
+        "add_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "body": {
+          "description": "vacation or signature",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "vacation on or off",
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "end": {
+          "description": "date",
+          "type": "string"
+        },
+        "filter_id": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "has_attachment": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "mark_read": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string"
+        },
+        "remove_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "send_as": {
+          "description": "default primary",
+          "type": "string"
+        },
+        "star": {
+          "type": "boolean"
+        },
+        "start": {
+          "description": "date",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "action"
+      ],
+      "type": "object"
+    },
+    "name": "gmail_settings"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Change flags, labels or folder, or undo a change. A move out of junk marks the messages not junk.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "add_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "archive": {
+          "type": "boolean"
+        },
+        "ids": {
+          "description": "max 500",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "move_to": {
+          "type": "string"
+        },
+        "read": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "remove_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "starred": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "trash": {
+          "type": "boolean"
+        },
+        "undo": {
+          "description": "token, or list",
+          "type": "string"
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "type": "object"
+    },
+    "name": "modify"
+  },
+  {
+    "annotations": {
+      "idempotentHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read one message; sender text is fenced.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "format": {
+          "description": "text (default) or html",
+          "type": "string"
+        },
+        "id": {
+          "description": "from search",
+          "type": "string"
+        },
+        "mark_read": {
+          "type": "boolean"
+        },
+        "max_chars": {
+          "description": "default 20000, max 100000",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "continue a truncated body",
+          "type": "integer"
+        },
+        "thread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "account",
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "read"
+  },
+  {
+    "annotations": {
+      "idempotentHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Search one account, or all when account is omitted. Newest first; preview fenced.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "cursor": {
+          "description": "next_cursor; one account only",
+          "type": "string"
+        },
+        "folder": {
+          "description": "default INBOX",
+          "type": "string"
+        },
+        "limit": {
+          "description": "default 20, max 100",
+          "type": "integer"
+        },
+        "query": {
+          "description": "from: to: cc: subject: body: has:attachment is:unread|read|starred in:FOLDER before:|after:YYYY-MM-DD newer_than:7d larger:5M -term \"phrase\". Terms join with AND. Empty = newest.",
+          "type": "string"
+        },
+        "since": {
+          "description": "RFC 3339; newer only",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "search"
+  },
+  {
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    },
+    "description": "Send a saved draft.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "draft_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "draft_id",
+        "idempotency_key"
+      ],
+      "type": "object"
+    },
+    "name": "send"
+  },
+  {
+    "description": "List, save or delete mail templates, or fill one into a draft.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "action": {
+          "description": "list save delete draft",
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "name": {
+          "description": "alias pattern",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "vars": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "fills {{name}}",
+          "type": "object"
+        }
+      },
+      "required": [
+        "account",
+        "action"
+      ],
+      "type": "object"
+    },
+    "name": "templates"
+  },
+  {
+    "description": "Unsubscribe from the lists of messages by id: a one-click POST, a draft, or the link.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "ids": {
+          "description": "max 50",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "account",
+        "ids"
+      ],
+      "type": "object"
+    },
+    "name": "unsubscribe"
+  }
+]

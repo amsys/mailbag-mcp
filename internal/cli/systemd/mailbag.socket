@@ -1,0 +1,10 @@
+[Unit]
+Description=mailbag-mcp daemon socket
+
+[Socket]
+ListenStream=%t/mailbag/mailbag.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

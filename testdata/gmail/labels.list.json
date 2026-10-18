@@ -1,0 +1,21 @@
+{
+  "labels": [
+    {"id": "CHAT", "name": "CHAT", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system"},
+    {"id": "SENT", "name": "SENT", "type": "system"},
+    {"id": "INBOX", "name": "INBOX", "type": "system"},
+    {"id": "IMPORTANT", "name": "IMPORTANT", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system"},
+    {"id": "TRASH", "name": "TRASH", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system"},
+    {"id": "DRAFT", "name": "DRAFT", "type": "system"},
+    {"id": "SPAM", "name": "SPAM", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system"},
+    {"id": "CATEGORY_FORUMS", "name": "CATEGORY_FORUMS", "type": "system"},
+    {"id": "CATEGORY_UPDATES", "name": "CATEGORY_UPDATES", "type": "system"},
+    {"id": "CATEGORY_PERSONAL", "name": "CATEGORY_PERSONAL", "type": "system"},
+    {"id": "CATEGORY_PROMOTIONS", "name": "CATEGORY_PROMOTIONS", "type": "system"},
+    {"id": "CATEGORY_SOCIAL", "name": "CATEGORY_SOCIAL", "type": "system"},
+    {"id": "STARRED", "name": "STARRED", "type": "system"},
+    {"id": "UNREAD", "name": "UNREAD", "type": "system"},
+    {"id": "Label_1", "name": "Receipts", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user"},
+    {"id": "Label_2", "name": "Projects/Alpha", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user", "color": {"textColor": "#000000", "backgroundColor": "#cfe2f3"}},
+    {"id": "Label_3", "name": "Trash", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user"}
+  ]
+}

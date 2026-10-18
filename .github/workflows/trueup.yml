@@ -1,0 +1,53 @@
+# Managed by trueup. Edit trueup.toml, then run the trueup skill.
+# GitHub Actions workflow: `check` runs the enabled hooks on every push
+# and pull request, never on the schedule; `nightly` runs the strict-only
+# commands, and only on the schedule, and only when a language is strict.
+# Each action is pinned to a full commit SHA; the comment gives its tag.
+name: trueup
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install pre-commit
+      - name: install gitleaks 8.30.1
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          sudo tar -xzf gitleaks.tar.gz -C /usr/local/bin gitleaks
+      # install the tools of your languages here, one line per family
+      # the ref-check hook runs trueup refs: install trueup here, from its git source
+      - run: 'go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest'
+      - run: 'pip install vale'
+      - run: pre-commit run --all-files
+      - run: gitleaks git . --redact --no-banner --config lint/gitleaks/gitleaks.toml
+      # the dependency scan runs here when a lockfile is tracked
+      - uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        with:
+          scan-args: |-
+            --recursive
+            ./
+      # When osv-scanner cannot run, use the audit tool of the ecosystem:
+      # python: pip-audit
+      # rust: cargo audit
+      # typescript: npm audit --audit-level=high
+      # go: govulncheck ./...
+      # php: composer audit
+

@@ -1,0 +1,125 @@
+{
+  "id": "18f0a1b2c3d4e5f7",
+  "threadId": "18f0a1b2c3d4e5f6",
+  "labelIds": [
+    "INBOX",
+    "UNREAD",
+    "Label_1"
+  ],
+  "snippet": "Hello Bob, see you at 5.",
+  "sizeEstimate": 9876,
+  "internalDate": "1791892800000",
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/mixed",
+    "filename": "",
+    "headers": [
+      {
+        "name": "From",
+        "value": "Alice Example <alice@example.com>"
+      },
+      {
+        "name": "To",
+        "value": "me@example.com"
+      },
+      {
+        "name": "Reply-To",
+        "value": "Team <team@example.com>"
+      },
+      {
+        "name": "Subject",
+        "value": "Plans"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 1 Jan 2001 00:00:00 +0000"
+      },
+      {
+        "name": "Message-ID",
+        "value": "<full-1@example.com>"
+      },
+      {
+        "name": "References",
+        "value": "<root-1@example.com> <full-0@example.com>"
+      },
+      {
+        "name": "Authentication-Results",
+        "value": "mx.example.com; dkim=pass header.d=example.com"
+      },
+      {
+        "name": "Content-Type",
+        "value": "multipart/mixed; boundary=\"b1\""
+      }
+    ],
+    "body": {
+      "size": 0
+    },
+    "parts": [
+      {
+        "partId": "0",
+        "mimeType": "multipart/alternative",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "multipart/alternative; boundary=\"b2\""
+          }
+        ],
+        "body": {
+          "size": 0
+        },
+        "parts": [
+          {
+            "partId": "0.0",
+            "mimeType": "text/plain",
+            "filename": "",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain; charset=\"UTF-8\""
+              }
+            ],
+            "body": {
+              "size": 27,
+              "data": "SGVsbG8gQm9iLA0Kc2VlIHlvdSBhdCA1Lg0K"
+            }
+          },
+          {
+            "partId": "0.1",
+            "mimeType": "text/html",
+            "filename": "",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=\"UTF-8\""
+              }
+            ],
+            "body": {
+              "size": 37,
+              "data": "PHA-SGVsbG8gQm9iLDwvcD48cD5zZWUgeW91IGF0IDUuPC9wPg"
+            }
+          }
+        ]
+      },
+      {
+        "partId": "1",
+        "mimeType": "application/pdf",
+        "filename": "report.pdf",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/pdf; name=\"report.pdf\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"report.pdf\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ATTACHMENT_ID",
+          "size": 11
+        }
+      }
+    ]
+  }
+}

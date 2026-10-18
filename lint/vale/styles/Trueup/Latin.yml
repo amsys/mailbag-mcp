@@ -1,0 +1,13 @@
+# Managed by trueup. Edit trueup.toml, then run the trueup skill.
+# A suggestion: an English phrase reads faster than the Latin abbreviation
+# it stands for (S6).
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: suggestion
+ignorecase: true
+swap:
+  e\.g\.: for example
+  i\.e\.: that is
+  etc\.: and so on
+  via: through
+  vs\.: against

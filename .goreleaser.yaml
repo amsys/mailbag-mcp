@@ -1,0 +1,57 @@
+# GoReleaser configuration for the mailbag-mcp release archives.
+# The release build sets no version with the linker. The binary reads its
+# version from the Go build info (IS10.5).
+# arch: DS10.1, DS10.7, IS10.5
+version: 2
+
+# The project name is fixed, so the archive names do not depend on the
+# name of the directory that holds the clone.
+project_name: mailbag-mcp
+
+builds:
+  - id: mailbag-mcp
+    main: .
+    binary: mailbag-mcp
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: mailbag-mcp
+    ids: [mailbag-mcp]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "mailbag-mcp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - SUPPORT.md
+      - CHANGELOG.md
+      - docs/*.md
+      # The systemd user units of DS11.11 go into contrib/systemd/.
+      - src: internal/cli/systemd/*
+        dst: contrib/systemd
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Version }}-snapshot"
+
+changelog:
+  use: git
+
+# The release target is fixed, so the check and a snapshot run also work
+# in a clone with no GitHub remote.
+release:
+  github:
+    owner: amsys
+    name: mailbag-mcp

@@ -1,0 +1,9 @@
+# Managed by trueup. Edit trueup.toml, then run the trueup skill.
+# A suggestion, not an error: a sentence over 25 words is a candidate for
+# splitting, not a failure (S6).
+extends: occurrence
+message: "This sentence is %s words long; keep sentences to 25 words or fewer."
+level: suggestion
+scope: sentence
+max: 25
+token: '\w+'

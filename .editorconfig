@@ -1,0 +1,25 @@
+# Managed by trueup. Edit trueup.toml, then run the trueup skill.
+# Editor settings for every file: UTF-8, LF line ends, a final newline, no
+# trailing spaces, and indent by spaces. Go files and makefiles indent by
+# tabs, and a Markdown line keeps its trailing spaces (a hard line break).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,md,mjs,ts,tsx,js,jsx,vue}]
+indent_size = 2
+
+[*.go]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,11 @@
+/mailbag-mcp
+graphify-out/
+memory/
+/dist/
+.scratch/
+
+# Private build records: a separate git dir over the same paths (docs/README.md).
+/.git-private/
+/docs/features/
+/.state/
+/PLAN.md

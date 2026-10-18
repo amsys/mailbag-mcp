@@ -1,0 +1,52 @@
+{
+  "id": "18f0b0000000000a",
+  "historyId": "4242",
+  "messages": [
+    {
+      "id": "18f0b0000000000a",
+      "threadId": "18f0b0000000000a",
+      "labelIds": ["SENT"],
+      "snippet": "Shall we meet on Friday?",
+      "sizeEstimate": 1200,
+      "internalDate": "1791806400000",
+      "payload": {"headers": [
+        {"name": "From", "value": "Me <me@example.com>"},
+        {"name": "To", "value": "Bob Example <bob@example.com>"},
+        {"name": "Cc", "value": "carol@example.com"},
+        {"name": "Subject", "value": "Friday"},
+        {"name": "Date", "value": "Sun, 11 Oct 2026 12:00:00 +0000"},
+        {"name": "Message-ID", "value": "<t1-a@example.com>"}
+      ]}
+    },
+    {
+      "id": "18f0b0000000000b",
+      "threadId": "18f0b0000000000a",
+      "labelIds": ["INBOX", "STARRED", "CATEGORY_PERSONAL"],
+      "snippet": "Yes &amp; I will bring the notes",
+      "sizeEstimate": 2400,
+      "internalDate": "1791810000000",
+      "payload": {"headers": [
+        {"name": "From", "value": "Bob Example <bob@example.com>"},
+        {"name": "To", "value": "Me <me@example.com>"},
+        {"name": "Subject", "value": "Re: Friday"},
+        {"name": "Date", "value": "Sun, 11 Oct 2026 13:00:00 +0000"},
+        {"name": "Message-ID", "value": "<t1-b@example.com>"}
+      ]}
+    },
+    {
+      "id": "18f0b0000000000c",
+      "threadId": "18f0b0000000000a",
+      "labelIds": ["Label_2", "UNREAD"],
+      "snippet": "Moved to the Alpha label",
+      "sizeEstimate": 3600,
+      "internalDate": "1791813600000",
+      "payload": {"headers": [
+        {"name": "From", "value": "carol@example.com"},
+        {"name": "To", "value": "me@example.com, bob@example.com"},
+        {"name": "Subject", "value": "Re: Friday"},
+        {"name": "Date", "value": "Sun, 11 Oct 2026 14:00:00 +0000"},
+        {"name": "Message-ID", "value": "<t1-c@example.com>"}
+      ]}
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+# accounts.example.toml — every key accounts.toml accepts, with its
+# default and a one-line comment. Copy this file to accounts.toml and
+# edit it; mailbag-mcp reads accounts.toml, never this file.
+#
+# arch: DR1G.13
+
+# secrets picks the token store: "keyring" (the OS keyring) or "file"
+# (an on-disk store under the state directory). Default: "keyring".
+secrets = "keyring"
+
+# extras turns on tool groups that are off by default. Known names:
+# modify, send, decrypt, gmail_settings, templates, unsubscribe, bulk.
+# Default: no extras on.
+extras = []
+
+# download_dirs adds directories to the default save directory for
+# mailbag_export. Default: none added.
+download_dirs = []
+
+# attach_dirs, when set, is the only directories a send tool may read
+# an attachment from. Default: none, so any readable path is allowed.
+attach_dirs = []
+
+# tool_timeout is the deadline each tool call gets, as a Go duration
+# string between 5s and 10m. Default: "45s".
+tool_timeout = "45s"
+
+[send]
+# allow_without_elicitation lets send send mail to a client that
+# cannot ask the human to confirm (D5.2). Default: false.
+allow_without_elicitation = false
+
+[bulk]
+# allow_without_elicitation lets bulk change mail for a client that
+# cannot ask the human to confirm (DS9.4). Default: false.
+allow_without_elicitation = false
+
+[verify]
+# authserv_id is the only Authentication-Results authority whose DKIM
+# result counts. Default: "", so no DKIM result counts.
+authserv_id = ""
+
+# pgp_keys_dir is an absolute path to a directory of OpenPGP public
+# keys the human controls. Default: "", so no key is trusted.
+pgp_keys_dir = ""
+
+# smime_ca_file is an absolute path to a PEM bundle of S/MIME trust
+# roots (it may also hold CRLs). Default: "", so trust is unknown.
+smime_ca_file = ""
+
+# smime_crl_check adds a revocation check; it needs a CRL in
+# smime_ca_file. Default: false.
+smime_crl_check = false
+
+# openssl_path is an absolute path to the openssl binary. Default: "",
+# so the openssl on PATH is used.
+openssl_path = ""
+
+# D7.1 WARNING: the three keys below gate the decrypt toolset. All
+# three must be set, or mailbag-mcp sends no plaintext to the model
+# provider through it. Read 03-design-R1.md D7.1 before you turn this
+# on; a decrypt tool that exists by mistake leaks plaintext (I13).
+[decrypt]
+# enabled is one of the three D7.1 gate keys. Default: false.
+enabled = false
+
+# ack_plaintext_reaches_model_provider is the human's written
+# confirmation that they read the D7.1 warning. Default: false.
+ack_plaintext_reaches_model_provider = false
+
+# One account block per mailbox. The key under [accounts] is the
+# alias: a keyring key, a file name and part of a printed command
+# (B17), so it is limited to letters, digits, "_" and "-".
+[accounts.example]
+# provider is one of: imap, outlook, gmail, jmap.
+provider = "imap"
+
+# email is the account's address. Required, no default.
+email = "user@example.com"
+
+# access is the ceiling this account allows: read, draft or send.
+# Default: "draft".
+access = "draft"
+
+# imap is the IMAP server, "host:port". Required for provider = imap.
+imap = "imap.example.com:993"
+
+# smtp is the SMTP server, "host:port". Required to send from this
+# account.
+smtp = "smtp.example.com:587"
+
+# username logs in as, when it differs from email. Default: email.
+username = "user@example.com"
+
+# identities lists the From addresses this account may send as.
+# Default: none beyond email itself.
+identities = []
+
+# save_sent is "auto", "always" or "never". Default: "" (kept as the
+# "auto" default).
+save_sent = "auto"
+
+# tls_ca is an absolute path to a PEM bundle this account trusts for
+# its IMAP and SMTP TLS, besides the system roots. Default: "", so
+# only the system roots are trusted.
+tls_ca = ""
+
+# tenant is the Microsoft tenant id or domain. Only outlook uses it.
+tenant = ""
+
+# session_url is the JMAP session endpoint. Only jmap uses it.
+session_url = ""
+
+# private_host (jmap only) allows its one host on a private network. Default: false.
+private_host = false
+
+# default_identity is the identity that a new draft uses when the
+# caller names none. Set it to the account email, the email of an
+# identity table below, or an address of identities above. Setting it,
+# or adding an identity table, turns on identity mode for this account.
+# Default: "", so the account email is the default.
+default_identity = ""
+
+# One [[accounts.<alias>.identity]] table per sender address. A table
+# sets the display name, the signature and the compose rules of that
+# address. An account with no table and no default_identity keeps the
+# plain behavior. Every key except email is optional.
+[[accounts.example.identity]]
+# email is the bare address of this identity. Required, no default.
+email = "user@example.com"
+
+# name is the display name in the From header. Default: "".
+name = ""
+
+# signature is the plain-text signature. The text part of a draft gets
+# "-- " and a new line before it. Default: "", so no signature.
+signature = ""
+
+# signature_html is the HTML form of the signature. It needs a
+# signature. Default: "", so mailbag derives it from signature.
+signature_html = ""
+
+# signature_file is the name of a file that holds the plain-text
+# signature. Use it in place of signature; setting both is an error.
+# An absolute path is used as is. "~/" starts at the home directory.
+# Any other path starts at the directory of this file. The file must be
+# a regular UTF-8 file of at most 64 KiB. Default: "", so no file.
+# Example: signature_file = "signatures/user.txt"
+signature_file = ""
+
+# signature_html_file is the same for signature_html. A final new line
+# in the file is dropped. Default: "", so no file.
+signature_html_file = ""
+
+# signature_on_new adds the signature to a new draft. Default: true.
+signature_on_new = true
+
+# signature_on_reply adds the signature to a reply. Default: true.
+signature_on_reply = true
+
+# signature_on_forward adds the signature to a forward. Default: false.
+signature_on_forward = false
+
+# reply_above_quote puts the own text above the quote in a reply.
+# Default: true.
+reply_above_quote = true
+
+# signature_below_quote puts the signature below the quote. Default:
+# false.
+signature_below_quote = false
+
+# compose_html builds the HTML part when the caller gives only a text
+# body. Default: false.
+compose_html = false
+
+# reply_match lists address patterns, such as "*@example.com". A reply
+# to a mail that came to a matching address is sent from that address
+# with this identity. Only the part before "@" may hold "*" or "?".
+# Default: none.
+reply_match = []
+
+# folders maps a logical name (inbox, sent, drafts, trash, junk) to
+# this account's real folder name, for a provider that does not use
+# the IMAP names. Default: none, so the IMAP names are used.
+[accounts.example.folders]

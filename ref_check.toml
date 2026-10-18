@@ -1,0 +1,13 @@
+# Managed by trueup. Edit trueup.toml, then run the trueup skill.
+[checks]
+registry = true
+comments = true
+links = true
+layout = true
+readme = true
+
+[keep]
+failures = ["docs/DEVELOPER-GUIDE.md:3:misplaced", "docs/USER-GUIDE.md:3:misplaced", "scripts/coverage_gate.sh:6:malformed"]
+
+[scan]
+ignore = ["docs/features/**"]

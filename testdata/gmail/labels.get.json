@@ -1,0 +1,10 @@
+[
+  {"id": "INBOX", "name": "INBOX", "messageListVisibility": "hide", "labelListVisibility": "labelShow", "type": "system", "messagesTotal": 120, "messagesUnread": 7, "threadsTotal": 98, "threadsUnread": 6},
+  {"id": "SENT", "name": "SENT", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system", "messagesTotal": 45, "messagesUnread": 0, "threadsTotal": 40, "threadsUnread": 0},
+  {"id": "DRAFT", "name": "DRAFT", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system", "messagesTotal": 2, "messagesUnread": 0, "threadsTotal": 2, "threadsUnread": 0},
+  {"id": "TRASH", "name": "TRASH", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system", "messagesTotal": 13, "messagesUnread": 1, "threadsTotal": 12, "threadsUnread": 1},
+  {"id": "SPAM", "name": "SPAM", "messageListVisibility": "hide", "labelListVisibility": "labelHide", "type": "system", "messagesTotal": 4, "messagesUnread": 4, "threadsTotal": 4, "threadsUnread": 4},
+  {"id": "Label_1", "name": "Receipts", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user", "messagesTotal": 31, "messagesUnread": 3, "threadsTotal": 30, "threadsUnread": 3},
+  {"id": "Label_2", "name": "Projects/Alpha", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user", "messagesTotal": 8, "messagesUnread": 2, "threadsTotal": 5, "threadsUnread": 1, "color": {"textColor": "#000000", "backgroundColor": "#cfe2f3"}},
+  {"id": "Label_3", "name": "Trash", "messageListVisibility": "show", "labelListVisibility": "labelShow", "type": "user", "messagesTotal": 6, "messagesUnread": 0, "threadsTotal": 6, "threadsUnread": 0}
+]

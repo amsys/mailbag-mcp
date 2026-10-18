@@ -1,0 +1,47 @@
+# trueup configuration. The trueup skill writes this file. A person can edit it.
+version = 1
+run_date = "2026-10-16"
+tier = "auto"                # auto | T0 | T1 | T2 | T3
+public = true                # true adds C1, C2 and the public health files
+docs = "auto"                # auto | full | readme
+stale_days = 180                # P8
+ignore = ["docs/features/**"]   # globs left out of the survey and all findings
+protect = []                 # globs that apply never changes or removes
+
+[root]
+allow = []                   # root entries allowed beyond the base list (D5.8)
+
+[scratch]
+allow = []                   # paths or names the scratch rule lets through (D5.8)
+
+[languages]                  # one key per language: strict | clean | off
+shell = "off"
+go = "clean"
+
+[[keep]]
+id = "secret-content:internal/guard/redact_test.go:27"
+reason = "fake JWT, test input for the redactor"
+
+[[keep]]
+id = "secret-content:internal/server/server_test.go:1632"
+reason = "idempotency-key constant in a test, not a secret"
+
+[[keep]]
+id = "prose:internal/mime/html.go"
+reason = "foster parenting is the HTML5 spec term for the tree-builder rule"
+
+[[keep]]
+id = "doc-misplaced:PLAN.md"
+reason = "runner and tierplan read PLAN.md at the root"
+
+[[keep]]
+id = "refcheck:scripts/coverage_gate.sh:6:malformed"
+reason = "the repo cites DS/IS design ids with arch: in every file; trueup's arch grammar takes D<n>.<n> only"
+
+[[keep]]
+id = "refcheck:docs/USER-GUIDE.md:3:misplaced"
+reason = "fixed path: docs_test.go, .goreleaser.yaml docs/*.md, SUPPORT.md and the skill read it; the guide mixes how-to and reference"
+
+[[keep]]
+id = "refcheck:docs/DEVELOPER-GUIDE.md:3:misplaced"
+reason = "fixed path: README, SUPPORT.md and .goreleaser.yaml docs/*.md name it"

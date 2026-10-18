@@ -213,9 +213,25 @@ func TestDecrypt_RequiresGoodMDC(t *testing.T) {
 	})
 
 	t.Run("no integrity check gives the fixed error and no text", func(t *testing.T) {
-		// --rfc2440 makes a packet with no MDC. gpg then writes the
-		// plain text and reports DECRYPTION_FAILED.
-		res, log := callDecrypt(t, decryptFor(pgpMIME(enc("--rfc2440"))))
+		// --rfc2440 makes a packet with no MDC only when the recipient
+		// key does not ask for AEAD. The gpg of Debian and Ubuntu
+		// (2.4.4) gives each new key an AEAD preference and then
+		// ignores --rfc2440, so this key has a preference list with
+		// no AEAD entry. gpg then writes the plain text and reports
+		// DECRYPTION_FAILED.
+		runGPG(t, dir, "gpg", nil, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+			"--default-preference-list", "AES256 SHA256 ZLIB",
+			"--quick-gen-key", decryptCanary+" <bob@example.org>", "default", "default", "never")
+		armored := runGPG(t, dir, "gpg", plainEntity(), "--batch", "--trust-model", "always", "--armor",
+			"--encrypt", "-r", "bob@example.org", "--rfc2440")
+		// The fixture must hold the state under test: a tag 9 packet
+		// (no MDC) and no AEAD packet. Else a pass or a fail says
+		// nothing. --list-only lists the packets and does not decrypt.
+		if pk := string(runGPG(t, dir, "gpg", armored, "--batch", "--list-only", "--list-packets")); !strings.Contains(pk, " tag=9 ") ||
+			strings.Contains(pk, "mdc_method") || strings.Contains(pk, "aead") {
+			t.Fatalf("fixture is integrity protected, want no MDC:\n%s", pk)
+		}
+		res, log := callDecrypt(t, decryptFor(pgpMIME(armored)))
 		if got := errText(t, res); got != errDecryptFailed.Error() {
 			t.Errorf("error = %q, want the fixed text %q", got, errDecryptFailed.Error())
 		}

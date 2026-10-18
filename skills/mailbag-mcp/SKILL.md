@@ -666,6 +666,13 @@ The ids in brackets are the invariants of DI8.
   `TestSend_NoElicitationRefuses`, `TestSend_IdempotentKey`.
 - R1 decrypt exists only when `extras` and both keys agree.
   `TestDecrypt_ThreeKeys`.
+- A no-MDC test fixture needs a recipient key with no AEAD preference
+  (`--default-preference-list "AES256 SHA256 ZLIB"`). The gpg of
+  Debian and Ubuntu (2.4.4) gives each new key an AEAD preference and
+  then ignores `--rfc2440`: the packet is OCB AEAD and gpg reports
+  GOODMDC, so the text comes back correctly. The fixture checks
+  `--list-only --list-packets` for a tag 9 packet.
+  `TestDecrypt_RequiresGoodMDC`.
 - DRV.10 refused logins: a local error keeps the socket; a refused
   login is not repeated for 10 minutes on any provider; a changed
   secret ends the refusal. `TestPool_NoRedialOnLocalError`,

@@ -73,7 +73,7 @@
 
 <section id="daemon" hidden><h2>Daemon (Linux with systemd)</h2>
   <button id="b-service">Install the service</button>
-  <p>Then copy and run: <code>systemctl --user enable --now mailbag-mcp</code></p>
+  <p>Then copy and run: <code>systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now mailbag.socket</code></p>
 </section>
 
 <section id="checks" hidden><h2>Checks</h2>

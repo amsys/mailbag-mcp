@@ -931,6 +931,11 @@ func (h *harness) desktopConfig(content string) string {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		h.t.Fatal(err)
 	}
+	// The tool writes the backup next to the resolved file, and on macOS
+	// the temp dir is under the /var symlink, so compare resolved paths.
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		p = filepath.Join(dir, filepath.Base(p))
+	}
 	if content != "" {
 		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 			h.t.Fatal(err)

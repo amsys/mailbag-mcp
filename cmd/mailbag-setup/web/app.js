@@ -5,6 +5,10 @@ const $ = (id) => document.getElementById(id);
 const SECTIONS = ["provider", "access", "gmail", "outlook", "form", "result", "clients", "daemon", "checks"];
 let presets = {}, preset = null, lastForm = null, job = null;
 
+/**
+ * Read the one-time token from the URL fragment. Keep it in sessionStorage.
+ * @returns The token, or an empty string.
+ */
 function token() {
   const m = /(?:^|[#&])k=([^&]+)/.exec(location.hash);
   if (m) {
@@ -15,6 +19,13 @@ function token() {
 }
 const TOKEN = token();
 
+/**
+ * Call the setup server with the token. Throw the server error text on a failed call.
+ * @param method HTTP method.
+ * @param path URL path.
+ * @param body JSON body.
+ * @returns The JSON answer.
+ */
 async function api(method, path, body) {
   const opt = { method, headers: { "X-Mailbag-Setup": TOKEN } };
   if (body !== undefined) {
@@ -27,18 +38,42 @@ async function api(method, path, body) {
   return data;
 }
 
+/**
+ * Make a DOM element. The text goes in through textContent.
+ * @param tag Tag name.
+ * @param text Text content.
+ * @param attrs Properties to set.
+ * @returns The new element.
+ */
 function el(tag, text, attrs) {
   const e = document.createElement(tag);
   if (text) e.textContent = text;
   Object.assign(e, attrs || {});
   return e;
 }
+/**
+ * Show the named sections and hide all other sections.
+ * @param ids Section ids to show.
+ */
 function show(...ids) { SECTIONS.forEach((s) => { $(s).hidden = !ids.includes(s); }); }
+/**
+ * Show an error text in the message element with this id.
+ * @param id Element id.
+ * @param err The error.
+ */
 function fail(id, err) { const e = $(id); e.textContent = err.message; e.className = "msg err"; }
+/**
+ * Open a link in a new tab. The new tab gets no access to this page.
+ * @param url The address.
+ */
 function openTab(url) { window.open(url, "_blank", "noopener,noreferrer"); }
-// The answer to the file-store question of the CLI (review M3).
+/**
+ * Answer the file-store question of the CLI (review M3).
+ * @returns True when the box is on.
+ */
 function fileStore() { return $("f-filestore").checked; }
 
+/** Load the state from the server. Fill the fact list, the account list and the version banner. */
 async function refresh() {
   try {
     const s = await api("GET", "/api/state");
@@ -57,6 +92,13 @@ async function refresh() {
   } catch (e) { $("banner").hidden = false; $("banner").textContent = e.message; }
 }
 
+/**
+ * Ask the server for the lines of a job until the job ends. Return the exit code.
+ * @param id Job id.
+ * @param sink Gets each batch of lines.
+ * @param after Index of the first line to get.
+ * @returns The exit code.
+ */
 async function poll(id, sink, after) {
   after = after || 0;
   for (;;) {
@@ -67,6 +109,11 @@ async function poll(id, sink, after) {
     await new Promise((r) => setTimeout(r, 500));
   }
 }
+/**
+ * Add a line to the output box. Make a link of the first URL in the line.
+ * @param box The output box.
+ * @param line One output line.
+ */
 function linkify(box, line) {
   const m = /https?:\/\/\S+/.exec(line);
   if (!m) { box.append(document.createTextNode(line + "\n")); return; }
@@ -74,6 +121,14 @@ function linkify(box, line) {
   box.append(el("a", m[0], { href: m[0], target: "_blank", rel: "noopener noreferrer" }));
   box.append(document.createTextNode(line.slice(m.index + m[0].length) + "\n"));
 }
+/**
+ * Start a job on the server. Show its output in the box. Return the exit code.
+ * @param method HTTP method.
+ * @param path URL path.
+ * @param body JSON body.
+ * @param box The output box.
+ * @returns The exit code.
+ */
 async function runJob(method, path, body, box) {
   box.replaceChildren();
   const r = await api(method, path, body);
@@ -83,17 +138,22 @@ async function runJob(method, path, body, box) {
   return code;
 }
 
+/** Show one card for each provider preset. */
 function pickProvider() {
   const c = $("cards");
   c.replaceChildren();
-  Object.entries(presets).forEach(([key, p]) => {
-    c.append(el("button", p.label, { onclick: () => choose(key) }));
+  Object.values(presets).forEach((p) => {
+    c.append(el("button", p.label, { onclick: () => choose(p) }));
   });
   show("provider");
 }
 
-function choose(key) {
-  preset = presets[key];
+/**
+ * Fill the form for the chosen preset. Show the steps that the provider needs.
+ * @param p The preset.
+ */
+function choose(p) {
+  preset = p;
   const pw = preset.provider === "imap" || preset.provider === "jmap";
   $("pw-fields").hidden = !pw;
   $("f-imap").parentElement.hidden = preset.provider !== "imap";
@@ -117,6 +177,7 @@ const GSTEPS = [
   ["Add yourself as a test user", "https://console.cloud.google.com/auth/audience"],
   ["Make a Desktop app client, then Download JSON", "https://console.cloud.google.com/auth/clients/create"],
 ];
+/** Show the four steps to make a Google client. */
 function gmailSteps() {
   const ol = $("gmail-steps");
   ol.replaceChildren();
@@ -131,6 +192,10 @@ function gmailSteps() {
   });
   ol.append(el("li", "Drop the downloaded file below."));
 }
+/**
+ * Check the Google client file. Send it to the server.
+ * @param file The downloaded client file.
+ */
 async function sendGoogle(file) {
   $("gmsg").className = "msg";
   try {
@@ -146,6 +211,7 @@ async function sendGoogle(file) {
 const OVALS = ["Platform: Mobile and desktop applications", "Redirect URI: http://localhost",
   "Allow public client flows: on", "Permission: IMAP.AccessAsUser.All", "Permission: SMTP.Send",
   "Permission: offline_access"];
+/** Show the values to copy into the Microsoft app registration. */
 function outlookSteps() {
   const ul = $("outlook-vals");
   ul.replaceChildren();
@@ -155,6 +221,7 @@ function outlookSteps() {
     ul.append(li);
   });
 }
+/** Check the Microsoft client id. Send it to the server. */
 async function sendMS() {
   const id = $("msid").value.trim();
   $("mmsg").className = "msg";
@@ -166,6 +233,7 @@ async function sendMS() {
   catch (e) { fail("mmsg", e); }
 }
 
+/** Send the account form to the server. Show the CLI output of the job. */
 async function signIn() {
   const pw = preset.provider === "imap" || preset.provider === "jmap";
   const body = {
@@ -196,6 +264,7 @@ async function signIn() {
   $("signin-note").hidden = true;
   refresh();
 }
+/** Show the form again with the values of the last try. The secret is not kept. */
 function retry() {
   show("access", "form");
   $("signin-note").hidden = true;
@@ -210,6 +279,11 @@ function retry() {
   if (radio) radio.checked = true;
 }
 
+/**
+ * Make the box of one client. The Apply button writes the client config.
+ * @param c The client from the server.
+ * @returns The box.
+ */
 function clientBox(c) {
   const d = el("div");
   d.append(el("h3", c.label), el("p", c.path));
@@ -228,6 +302,7 @@ function clientBox(c) {
   } }));
   return d;
 }
+/** Show the client boxes from the server list. */
 async function loadClients() {
   show("clients");
   const box = $("client-list");
@@ -236,23 +311,24 @@ async function loadClients() {
   catch (e) { box.append(el("p", e.message, { className: "msg err" })); }
 }
 
+/** Connect the buttons to their actions. Then load the state. */
 async function main() {
-  try { presets = await (await fetch("/presets.json")).json(); } catch (e) { presets = {}; }
+  try { presets = await (await fetch("/presets.json")).json(); } catch { presets = {}; }
   $("b-add").onclick = pickProvider;
   $("b-clients").onclick = loadClients;
-  $("b-checks").onclick = async () => { show("checks"); try { await runJob("POST", "/api/doctor", {}, $("doctor")); } catch (e) { $("doctor").textContent = e.message; } };
+  $("b-checks").onclick = async () => { show("checks"); try { const code = await runJob("POST", "/api/doctor", {}, $("doctor")); $("doctor").append(el("p", code === 0 ? "All checks passed." : "Exit code " + code + ": read the lines above.")); } catch (e) { $("doctor").textContent = e.message; } };
   $("b-msid").onclick = sendMS;
   $("b-signin").onclick = signIn;
   $("b-retry").onclick = retry;
   $("b-cancel").onclick = () => { if (job) api("POST", "/api/jobs/" + job + "/cancel", {}).catch(() => {}); };
   $("b-daemon").onclick = () => show("daemon");
-  $("b-service").onclick = async () => { show("daemon", "result"); try { await runJob("POST", "/api/service", {}, $("out")); } catch (e) { $("out").textContent = e.message; } };
+  $("b-service").onclick = async () => { show("daemon", "result"); try { const code = await runJob("POST", "/api/service", {}, $("out")); $("out").append(el("p", code === 0 ? "The service files are written." : "Exit code " + code + ": read the lines above.")); } catch (e) { $("out").textContent = e.message; } };
   $("gfile").onchange = (e) => e.target.files[0] && sendGoogle(e.target.files[0]);
   const drop = $("drop");
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
   drop.ondragleave = () => drop.classList.remove("over");
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) sendGoogle(e.dataTransfer.files[0]); };
-  $("b-finish").onclick = async () => { try { await api("POST", "/api/finish", {}); } catch (e) { /* the server stops */ } $("closed").hidden = false; };
+  $("b-finish").onclick = async () => { try { await api("POST", "/api/finish", {}); } catch { /* the server stops */ } $("closed").hidden = false; };
   refresh();
 }
 main();

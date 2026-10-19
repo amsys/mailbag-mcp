@@ -14,7 +14,21 @@ builds:
     binary: mailbag-mcp
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+  # The Windows build has its own id, so each archive has the same binary
+  # count on every platform (DS13.1: mailbag-setup is not built for Windows).
+  - id: mailbag-mcp-windows
+    main: .
+    binary: mailbag-mcp
+    env:
+      - CGO_ENABLED=0
+    goos: [windows]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
@@ -28,8 +42,9 @@ builds:
     binary: mailbag-setup
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
+    # DS13.1: the setup tool is for Linux and macOS only.
     flags:
       - -trimpath
     ldflags:
@@ -39,9 +54,21 @@ archives:
   - id: mailbag-mcp
     ids: [mailbag-mcp, mailbag-setup]
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
+    name_template: "mailbag-mcp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - SUPPORT.md
+      - CHANGELOG.md
+      - docs/*.md
+      # The systemd user units of DS11.11 go into contrib/systemd/.
+      - src: internal/cli/systemd/*
+        dst: contrib/systemd
+        strip_parent: true
+
+  - id: mailbag-mcp-windows
+    ids: [mailbag-mcp-windows]
+    formats: [zip]
     name_template: "mailbag-mcp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE

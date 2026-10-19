@@ -63,6 +63,18 @@ two files differ.
   docs under `/usr/share`, and no systemd units: the user runs
   `mailbag-mcp service install`, which writes the units with the path
   of the running binary (DF.2). Each archive holds both binaries.
+- CI on Windows (DF.7.4) runs build, vet, staticcheck and tests for
+  `internal/config`, `mime`, `guard`, `tools`, `undo` and `cli` only,
+  in bash, with no govulncheck. `internal/server` (no daemon),
+  `internal/verify` and the e2e tests do not run there. decrypt cannot
+  work on Windows (gpg status on fd 3) and S/MIME verify cannot either
+  (`/dev/stdin` to openssl). A test that sets HOME or TMPDIR also sets
+  USERPROFILE and TMP/TEMP. Temp roots come from `realTempDir` (macOS
+  `/var` is a symlink) and gpg homes from `shortGPGHome` (macOS socket
+  path limit). `doctor` reports file modes as not checked on Windows.
+  `.gitattributes` keeps LF, and `*.eml` stays byte exact. Check
+  staticcheck for Windows with
+  `go run -exec 'env GOOS=windows' honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...`.
 - Lint runs locally with `trueup lint`; CI runs only a pinned gitleaks
   (`.github/workflows/secrets.yml`, `.github/gitleaks.toml`).
 - The build records (`docs/features/`, `PLAN.md`, `.state/`) are not in

@@ -779,8 +779,19 @@ func TestUndo_ClaimRefreshErrorStopsUndo(t *testing.T) {
 // takeClaim does what claim does for a dead claim, from a second
 // process B: it removes the claim file at path and creates a new one
 // at the same path with O_EXCL. It gives the file info of B's claim.
+//
+// On Windows a file that a process holds open cannot be removed, and A
+// holds its claim open while apply runs. So B cannot take a live claim
+// there, and the rule of the caller is POSIX only. takeClaim then
+// checks that the remove of B fails, and skips the rest of the test.
 func takeClaim(t *testing.T, path string) os.FileInfo {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(path); err == nil {
+			t.Fatal("B removed the claim that A holds open; on Windows that must fail")
+		}
+		t.Skip("reason: POSIX-only rule: Windows refuses to remove the claim file that A holds open, so B cannot take it")
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("B removes the old claim: %v", err)
 	}

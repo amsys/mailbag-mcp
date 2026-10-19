@@ -23,7 +23,7 @@ id = "secret-content:internal/guard/redact_test.go:27"
 reason = "fake JWT, test input for the redactor"
 
 [[keep]]
-id = "secret-content:internal/server/server_test.go:1632"
+id = "secret-content:internal/server/server_test.go:1633"
 reason = "idempotency-key constant in a test, not a secret"
 
 [[keep]]

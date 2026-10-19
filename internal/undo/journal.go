@@ -384,7 +384,7 @@ func (j *Journal) Extend(id string, applied []mail.Applied) (Record, error) {
 	if !ownsClaim(owned, claimPath) {
 		return Record{}, fmt.Errorf("undo: another process took the claim of %s; the record stays as that process writes it", id)
 	}
-	if err := os.Rename(claimPath, j.path(id)); err != nil {
+	if err := replaceFile(claimPath, j.path(id)); err != nil {
 		return Record{}, fmt.Errorf("undo: rename %s: %w", claimPath, err)
 	}
 	done = true
@@ -541,7 +541,7 @@ func (j *Journal) ReverseInSteps(id string, apply func(Record, Progress) error) 
 	if !ownsClaim(owned, claimPath) {
 		return Record{}, fmt.Errorf("undo: another process took the claim of %s; the record stays as that process writes it", id)
 	}
-	if err := os.Rename(claimPath, j.path(id)); err != nil {
+	if err := replaceFile(claimPath, j.path(id)); err != nil {
 		return Record{}, fmt.Errorf("undo: rename %s: %w", claimPath, err)
 	}
 	done = true
@@ -679,7 +679,7 @@ func (j *Journal) writeNew(rec Record) error {
 	if err := writeFile(tmp, tmpPath, rec); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, j.path(rec.ID)); err != nil {
+	if err := replaceFile(tmpPath, j.path(rec.ID)); err != nil {
 		return fmt.Errorf("undo: rename %s: %w", tmpPath, err)
 	}
 	return nil

@@ -1443,3 +1443,178 @@ func TestBulk_MRTRStoreFull(t *testing.T) {
 		t.Errorf("%d change calls, want 0", n)
 	}
 }
+
+// TestBulk_MRTRSameInputReuses holds DS14.13 and IS14.8: a repeat
+// first call of one session with the same input keeps one record and
+// gives a new state. The old state is stale and changes nothing; the
+// new state works. A first call with a different input takes a new
+// place. After the retries, the session has no place and no map key.
+//
+// arch: DS14.13, IS14.8
+func TestBulk_MRTRSameInputReuses(t *testing.T) {
+	h, prov, j := bulkFixture(t, 3)
+	connect := bulkMRTR(t, h)
+	cs := connect(bulkNoAuto(t), false)
+	places := func() (int, int) {
+		h.pending.mu.Lock()
+		defer h.pending.mu.Unlock()
+		n := 0
+		for _, c := range h.pending.perSession {
+			n += c
+		}
+		return len(h.pending.entries), n
+	}
+
+	old, _ := bulkFirst(t, cs, bulkReadArgs())
+	state, _ := bulkFirst(t, cs, bulkReadArgs())
+	if state == old {
+		t.Fatalf("the repeat first call gave the old state %q, want a new state", old)
+	}
+	if recs, n := places(); recs != 1 || n != 1 {
+		t.Fatalf("store = %d records and %d places, want 1 and 1", recs, n)
+	}
+
+	args := bulkReadArgs()
+	args["action"] = "trash"
+	other, _ := bulkFirst(t, cs, args)
+	if other == state || other == old {
+		t.Fatalf("a different input gave a used state %q", other)
+	}
+	if recs, n := places(); recs != 2 || n != 2 {
+		t.Fatalf("store = %d records and %d places, want 2 and 2", recs, n)
+	}
+
+	bulkWantStale(t, bulkRetry(t, cs, bulkReadArgs(), old, bulkApply))
+	if n := prov.callCount(); n != 0 {
+		t.Fatalf("the old state gave %d change calls, want 0", n)
+	}
+	if recs, _ := places(); recs != 2 {
+		t.Fatalf("the stale retry left %d records, want 2", recs)
+	}
+
+	out := bulkOutOf(t, bulkRetry(t, cs, bulkReadArgs(), state, bulkApply))
+	if out.Applied != 3 {
+		t.Errorf("retry with the new state = %+v, want applied 3", out)
+	}
+	if recs := bulkRecords(t, j); len(recs) != 1 {
+		t.Errorf("journal = %+v, want one record", recs)
+	}
+	if res := bulkOutOf(t, bulkRetry(t, cs, args, other, &mcp.ElicitResult{Action: "decline"})); res.Note != bulkDeclinedNote {
+		t.Errorf("retry of the other input = %+v, want a decline", res)
+	}
+	h.pending.mu.Lock()
+	defer h.pending.mu.Unlock()
+	if len(h.pending.entries) != 0 || len(h.pending.perSession) != 0 || h.pending.held != 0 {
+		t.Errorf("store = %d records, share %v, held %d; want empty", len(h.pending.entries), h.pending.perSession, h.pending.held)
+	}
+}
+
+// TestBulk_MRTRSameInputOtherSession holds DS14.13 and IS14.8: the
+// same input on a second session takes a place of that session and
+// does not remove the record of the first session.
+//
+// arch: DS14.13, IS14.8
+func TestBulk_MRTRSameInputOtherSession(t *testing.T) {
+	h, prov, _ := bulkFixture(t, 3)
+	connect := bulkMRTR(t, h)
+	a := connect(bulkNoAuto(t), false)
+	b := connect(bulkNoAuto(t), false)
+	stateA, _ := bulkFirst(t, a, bulkReadArgs())
+	bulkFirst(t, b, bulkReadArgs())
+	h.pending.mu.Lock()
+	recs, sessions := len(h.pending.entries), len(h.pending.perSession)
+	h.pending.mu.Unlock()
+	if recs != 2 || sessions != 2 {
+		t.Fatalf("store = %d records of %d sessions, want 2 of 2", recs, sessions)
+	}
+	if out := bulkOutOf(t, bulkRetry(t, a, bulkReadArgs(), stateA, bulkApply)); out.Applied != 3 {
+		t.Errorf("retry of session a = %+v, want applied 3", out)
+	}
+	if n := prov.callCount(); n != 1 {
+		t.Errorf("%d change calls, want 1", n)
+	}
+}
+
+// TestBulk_DryRunChangesNothing holds DS14.14 and IS14.9: a dry run
+// gives the count and up to 50 rows with a date, and the note. The
+// provider sees no change call, nobody gets a question, and the call
+// leaves no undo record, no pending record and no grant. The action
+// is not run, so it may be missing.
+//
+// arch: DS14.14, IS14.9
+func TestBulk_DryRunChangesNothing(t *testing.T) {
+	h, prov, j := bulkFixture(t, 120)
+	when := time.Date(2026, 10, 1, 8, 30, 0, 0, time.UTC)
+	for i := range prov.msgs {
+		prov.msgs[i].Date = when
+	}
+	args := bulkReadArgs()
+	args["dry_run"] = true
+	for _, withAction := range []bool{true, false} {
+		if !withAction {
+			delete(args, "action")
+		}
+		res := callBulk(t, h, args, func(params *mcp.ElicitParams) (*mcp.ElicitResult, error) {
+			t.Error("a dry run asked the human")
+			return bulkAccept(params)
+		})
+		out := bulkOutOf(t, res)
+		if out.Count != 120 || len(out.Sample) != bulkDryRunSample {
+			t.Fatalf("count %d, %d rows; want 120 and %d", out.Count, len(out.Sample), bulkDryRunSample)
+		}
+		if out.Sample[0].Date != "2026-10-01T08:30:00Z" {
+			t.Errorf("date = %q, want RFC 3339", out.Sample[0].Date)
+		}
+		if out.Note != bulkDryRunNote || out.Applied != 0 || out.Undo != "" {
+			t.Errorf("result = %+v, want the dry run note, applied 0, no undo", out)
+		}
+		if n := prov.callCount(); n != 0 {
+			t.Errorf("%d change calls, want 0", n)
+		}
+	}
+	if recs := bulkRecords(t, j); len(recs) != 0 {
+		t.Errorf("%d journal records, want 0", len(recs))
+	}
+	h.pending.mu.Lock()
+	defer h.pending.mu.Unlock()
+	if len(h.pending.entries) != 0 || len(h.pending.perSession) != 0 || h.pending.held != 0 {
+		t.Errorf("pending store is not empty after a dry run")
+	}
+	if len(h.grants.grants) != 0 {
+		t.Errorf("a dry run gave a grant")
+	}
+}
+
+// TestBulk_DryRunWithUndoRefused holds DS14.14 step 4: dry_run with
+// undo is an input error, and nothing runs.
+//
+// arch: DS14.14, IS14.9
+func TestBulk_DryRunWithUndoRefused(t *testing.T) {
+	h, prov, _ := bulkFixture(t, 3)
+	res := callBulk(t, h, map[string]any{"account": "work", "dry_run": true, "undo": "list"}, bulkAccept)
+	if !res.IsError {
+		t.Fatalf("dry_run with undo = %+v, want an error", bulkOutOf(t, res))
+	}
+	if n := prov.callCount(); n != 0 {
+		t.Errorf("%d change calls, want 0", n)
+	}
+}
+
+// TestBulk_DryRunReadAccess holds DS14.14 step 1: an account with
+// access read can dry run, and a bulk change on it stays refused.
+//
+// arch: DS14.14, IS14.9
+func TestBulk_DryRunReadAccess(t *testing.T) {
+	h, _, _ := bulkFixture(t, 4)
+	h.mail.(*bulkMail).acct.Access = "read"
+	args := bulkReadArgs()
+	args["dry_run"] = true
+	out := bulkOutOf(t, callBulk(t, h, args, bulkAccept))
+	if out.Count != 4 || len(out.Sample) != 4 {
+		t.Errorf("result = %+v, want count 4 and 4 rows", out)
+	}
+	delete(args, "dry_run")
+	if res := callBulk(t, h, args, bulkAccept); !res.IsError {
+		t.Errorf("a bulk change on a read account did not fail")
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,6 +37,12 @@ const bulkChunk = MaxModifyIDs
 // bulkSampleRows is the count of rows the question shows (DS9.4).
 const bulkSampleRows = 5
 
+// bulkDryRunSample is the most rows a dry run shows (DS14.14).
+const bulkDryRunSample = 50
+
+// bulkDryRunNote is the note of a dry run (DS14.14).
+const bulkDryRunNote = "dry run: nothing changed"
+
 // bulkPage is the id count of one search page. IMAP caps a page at
 // 100 (internal/imap maxLimit), so a larger value gives nothing more.
 const bulkPage = searchMaxLimit
@@ -50,6 +57,7 @@ type BulkIn struct {
 	MoveTo  string `json:"move_to,omitempty"`
 	Max     int    `json:"max,omitempty" jsonschema:"default 500, at most 5000"`
 	Undo    string `json:"undo,omitempty" jsonschema:"token, or list"`
+	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"count and up to 50 matching rows; changes nothing"`
 }
 
 // BulkRow is one sample row. From and Subject are sender text, so each
@@ -58,6 +66,9 @@ type BulkRow struct {
 	ID      string `json:"id"`
 	From    string `json:"from"`
 	Subject string `json:"subject"`
+	// Date is the server date of the message in RFC 3339. The dry
+	// run fills it (DS14.14).
+	Date string `json:"date,omitempty"`
 }
 
 // BulkOut is the bulk tool result (DS9.4).
@@ -176,7 +187,7 @@ func addBulk(srv *mcp.Server, h *bulkTool) {
 	no := false
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "bulk",
-		Description: "Change every message that matches a query, after the human confirms (one time, or for this account until reconnect); or undo.",
+		Description: "Change every message that matches a query, after the human confirms (one time, or for this account until reconnect); or undo. Before a change by sender, call with dry_run; keep receipts, invoices and account mail out of the query.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no},
 		Meta:        mcp.Meta{requiresUserInteraction: true},
 	}, WrapReq(h.logger, "bulk", LongTimeout, h.handleReq))
@@ -249,8 +260,14 @@ type claimFunc func(account string) (bulkSet, error)
 // nobody and gives [confirmGranted]. An answer of
 // [confirmAcceptSession] gives that grant (DS14.11).
 //
-// arch: DS9.4, DS14.1, DS14.6, DS14.7, DS14.8, DS14.11
+// A call with dry_run skips both paths and runs [bulkTool.dryRun]
+// (DS14.14).
+//
+// arch: DS9.4, DS14.1, DS14.6, DS14.7, DS14.8, DS14.11, DS14.14
 func (t *bulkTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in BulkIn) (BulkOut, error) {
+	if in.DryRun {
+		return t.dryRun(ctx, in)
+	}
 	ss := sessionOf(req)
 	state, answers := retryOf(req)
 	if !newProtocol(ss) {
@@ -284,6 +301,42 @@ func (t *bulkTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in B
 	})
 }
 
+// dryRun answers a call with dry_run (DS14.14). It needs the access
+// level read, because nothing changes. It collects the ids as a bulk
+// call does and gives the count and up to [bulkDryRunSample] rows with
+// their dates. It asks nobody, checks no grant, and keeps no pending
+// record, no undo record and no journal line. It opens the provider
+// as a reader, so no write method can run (IS14.9). The action is not
+// run, so it is not checked. A call with undo is an input error.
+//
+// arch: DS14.14, IS14.9
+func (t *bulkTool) dryRun(ctx context.Context, in BulkIn) (BulkOut, error) {
+	if strings.TrimSpace(in.Undo) != "" {
+		return BulkOut{}, errors.New("dry_run and undo do not go together; send them in two calls")
+	}
+	p, acct, err := t.mail.Open(ctx, in.Account)
+	if err != nil {
+		return BulkOut{}, err
+	}
+	if err := guard.Require(acct, guard.LevelRead); err != nil {
+		return BulkOut{}, err
+	}
+	limit := in.Max
+	if limit <= 0 {
+		limit = DefaultBulkMax
+	}
+	limit = min(limit, MaxBulkIDs)
+	ids, sample, more, err := collectIDs(ctx, p, in, limit, bulkDryRunSample)
+	if err != nil {
+		return BulkOut{}, err
+	}
+	out := BulkOut{Count: len(ids), Sample: sample, Note: bulkDryRunNote}
+	if more {
+		out.Note = joinNote(out.Note, fmt.Sprintf("the set stops at max = %d; more messages can match", limit))
+	}
+	return out, nil
+}
+
 // keepGrant gives ss the grant of the account acct when outcome is
 // [confirmAcceptSession]. Any other outcome grants nothing (DS14.11).
 //
@@ -305,7 +358,14 @@ func (t *bulkTool) keepGrant(ss *mcp.ServerSession, acct config.Account, outcome
 // share gives [errPendingSessionFull]; both ask nobody (DS14.3,
 // DS14.12).
 //
-// arch: DS14.2, DS14.3, DS14.6, DS14.9, DS14.12
+// The record goes into a place from [pendingStore.hold] that matches
+// the session, the account and [bulkInput] of in, the fields that
+// [bulkTool.claimPending] checks. A repeat first call with the same
+// input removes the open record, takes its place and gets a new
+// state; the old state is then stale. A different input takes a new
+// place (DS14.13, IS14.8).
+//
+// arch: DS14.2, DS14.3, DS14.6, DS14.9, DS14.12, DS14.13, IS14.8
 func (t *bulkTool) askFirst(ss *mcp.ServerSession, acct config.Account, in BulkIn, set bulkSet, message string) (string, error) {
 	if !canElicit(ss) {
 		if acct.BulkAllowWithoutElicitation {
@@ -313,10 +373,20 @@ func (t *bulkTool) askFirst(ss *mcp.ServerSession, acct config.Account, in BulkI
 		}
 		return confirmNoElicitRefused, errBulkNoElicitation
 	}
-	state, err := t.pending.put(ss, pendingBulk{
+	input := bulkInput(in)
+	// A repeat first call with the same input gets the place of the
+	// open record and a new state, so an accept of the old prompt
+	// cannot act on the new set (DS14.13).
+	place, _, err := t.pending.hold(ss, func(r pendingBulk) bool {
+		return r.session == ss && r.account == acct.Alias && r.input == input
+	})
+	if err != nil {
+		return "", err
+	}
+	state, err := place.fill(pendingBulk{
 		session: ss,
 		account: acct.Alias,
-		input:   bulkInput(in),
+		input:   input,
 		set: bulkSet{
 			ids:    slices.Clone(set.ids),
 			sample: slices.Clone(set.sample),
@@ -449,7 +519,7 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 	if claim != nil {
 		set, err = claim(acct.Alias)
 	} else {
-		set.ids, set.sample, set.more, err = collectIDs(ctx, p, in, limit)
+		set.ids, set.sample, set.more, err = collectIDs(ctx, p, in, limit, bulkSampleRows)
 	}
 	if err != nil {
 		return BulkOut{}, err
@@ -675,10 +745,11 @@ func bulkChange(in BulkIn) (mail.Change, error) {
 // order of the search. The first page is a normal search, and its rows
 // give the sample; the later pages are ids only (DS9.4). A page with
 // Partial set is refused: the count must be exact (H2, S9-GAP1). more
-// is true when the set stopped at limit and a cursor was left.
+// is true when the set stopped at limit and a cursor was left. The
+// sample holds at most sampleN rows.
 //
 // arch: DS9.4, H2, S9-GAP1
-func collectIDs(ctx context.Context, p Writer, in BulkIn, limit int) (ids []string, sample []BulkRow, more bool, err error) {
+func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (ids []string, sample []BulkRow, more bool, err error) {
 	seen := make(map[string]bool, limit)
 	cursor := ""
 	for first := true; ; first = false {
@@ -707,7 +778,7 @@ func collectIDs(ctx context.Context, p Writer, in BulkIn, limit int) (ids []stri
 			}
 			seen[m.ID] = true
 			ids = append(ids, m.ID)
-			if first && len(sample) < bulkSampleRows {
+			if first && len(sample) < sampleN {
 				sample = append(sample, bulkRow(m))
 			}
 		}
@@ -730,7 +801,11 @@ func bulkRow(m *mail.Message) BulkRow {
 	fence := func(s string) string {
 		return guard.Fence("EMAIL", mime.DefangLinks(guard.Sanitize(s)))
 	}
-	return BulkRow{ID: m.ID, From: fence(addressText(m.From)), Subject: fence(m.Subject)}
+	row := BulkRow{ID: m.ID, From: fence(addressText(m.From)), Subject: fence(m.Subject)}
+	if !m.Date.IsZero() {
+		row.Date = m.Date.UTC().Format(time.RFC3339)
+	}
+	return row
 }
 
 // bulkQuestion is the text the human accepts (DS9.4 step 6):

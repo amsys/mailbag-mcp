@@ -34,6 +34,7 @@ var fieldText = map[string]string{
 
 	"bulk.account": "The alias of the account to change.",
 	"bulk.action":  "The change for each match: read, unread, star, unstar, archive, trash or move.",
+	"bulk.dry_run": "Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query.",
 	"bulk.folder":  "The folder to search. The default is INBOX.",
 	"bulk.max":     "The largest count of messages to change. The default is 500 and the limit is 5000.",
 	"bulk.move_to": "The target folder of the move action.",

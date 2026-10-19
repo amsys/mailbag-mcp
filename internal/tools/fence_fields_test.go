@@ -88,7 +88,9 @@ var serverOwned = map[string]bool{
 	// Skipped holds ids from the journal, and Note is server text. An
 	// UndoRow is the journal's own record: its id, its time, the tool
 	// name and a summary that modifySummary wrote.
-	"BulkRow.ID":      true,
+	"BulkRow.ID": true,
+	// BulkRow.Date is a time that the server formats as RFC 3339.
+	"BulkRow.Date":    true,
 	"BulkOut.Undo":    true,
 	"BulkOut.Skipped": true,
 	"BulkOut.Note":    true,

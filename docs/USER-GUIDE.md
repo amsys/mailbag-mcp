@@ -665,12 +665,13 @@ Unsubscribe from the lists of messages by id: a one-click POST, a draft, or the 
 
 #### bulk
 
-Change every message that matches a query, after the human confirms (one time, or for this account until reconnect); or undo.
+Change every message that matches a query, after the human confirms (one time, or for this account until reconnect); or undo. Before a change by sender, call with dry_run; keep receipts, invoices and account mail out of the query.
 
 | field | type | required | meaning |
 |---|---|---|---|
 | `account` | string | yes | The alias of the account to change. |
 | `action` | string | no | The change for each match: read, unread, star, unstar, archive, trash or move. |
+| `dry_run` | boolean | no | Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. |
 | `folder` | string | no | The folder to search. The default is INBOX. |
 | `max` | integer | no | The largest count of messages to change. The default is 500 and the limit is 5000. |
 | `move_to` | string | no | The target folder of the move action. |

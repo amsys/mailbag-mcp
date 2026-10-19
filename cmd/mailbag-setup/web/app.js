@@ -75,8 +75,8 @@ function linkify(box, line) {
 async function runJob(method, path, body, box) {
   box.replaceChildren();
   const r = await api(method, path, body);
-  job = r.id;
-  const code = await poll(r.id, (ls) => ls.forEach((l) => linkify(box, l)));
+  job = r.job;
+  const code = await poll(r.job, (ls) => ls.forEach((l) => linkify(box, l)));
   job = null;
   return code;
 }
@@ -183,17 +183,28 @@ async function signIn() {
   show("result");
   $("b-retry").hidden = true;
   $("b-cancel").hidden = false;
+  $("signin-note").hidden = pw;
   try {
     const code = await runJob("POST", "/api/accounts", body, $("out"));
     $("out").append(document.createTextNode(code === 0 ? "\nDone.\n" : "\nFailed (exit " + code + ").\n"));
     $("b-retry").hidden = code === 0;
   } catch (e) { $("out").textContent = e.message; $("b-retry").hidden = false; }
   $("b-cancel").hidden = true;
+  $("signin-note").hidden = true;
   refresh();
 }
 function retry() {
   show("access", "form");
-  if (lastForm) { $("f-alias").value = lastForm.alias; $("f-email").value = lastForm.email; }
+  $("signin-note").hidden = true;
+  if (!lastForm) return;
+  $("f-alias").value = lastForm.alias;
+  $("f-email").value = lastForm.email;
+  $("f-user").value = lastForm.username || "";
+  $("f-imap").value = lastForm.imap || "";
+  $("f-smtp").value = lastForm.smtp || "";
+  $("f-jmap").value = lastForm.session_url || "";
+  const radio = document.querySelector("input[name=access][value=" + lastForm.access + "]");
+  if (radio) radio.checked = true;
 }
 
 async function loadClients() {

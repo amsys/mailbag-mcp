@@ -6,7 +6,13 @@ package main
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
+	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -96,5 +102,126 @@ func TestWeb_Presets(t *testing.T) {
 	}
 	if ps["icloud"].IMAP == "" || ps["yahoo"].IMAP == "" {
 		t.Error("an IMAP preset has no host")
+	}
+}
+
+// serverMapKeys gives the string keys of the answer maps that server.go
+// builds. A group is the keys of one map literal plus the keys that a
+// function assigns with out["key"] = ... in the same function. It reads
+// the source of server.go, so a new key in an answer shows up here.
+func serverMapKeys(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "server.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	str := func(e ast.Expr) (string, bool) {
+		l, ok := e.(*ast.BasicLit)
+		if !ok || l.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(l.Value)
+		return v, err == nil
+	}
+	groups := map[string]map[string]bool{}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				if _, ok := x.Type.(*ast.MapType); !ok {
+					return true
+				}
+				keys := map[string]bool{}
+				for _, el := range x.Elts {
+					if kv, ok := el.(*ast.KeyValueExpr); ok {
+						if k, ok := str(kv.Key); ok {
+							keys[k] = true
+						}
+					}
+				}
+				for k := range keys {
+					if groups[fn.Name.Name] == nil {
+						groups[fn.Name.Name] = map[string]bool{}
+					}
+					groups[fn.Name.Name][k] = true
+				}
+			case *ast.IndexExpr:
+				if k, ok := str(x.Index); ok {
+					if groups[fn.Name.Name] == nil {
+						groups[fn.Name.Name] = map[string]bool{}
+					}
+					groups[fn.Name.Name][k] = true
+				}
+			}
+			return true
+		})
+	}
+	return groups
+}
+
+// jsonTags gives the json tag names of the fields of a struct type.
+func jsonTags(v any) map[string]bool {
+	out := map[string]bool{}
+	rt := reflect.TypeOf(v)
+	for i := 0; i < rt.NumField(); i++ {
+		if name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ","); name != "" && name != "-" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// TestWeb_JSONFieldsMatchServer checks that each field the page reads
+// from an API answer is a field the server sends. The tags come from
+// the Go answer types by reflection. The keys of answers that the
+// server builds as maps come from the source of server.go. A new field
+// in app.js that the server does not send fails this test.
+//
+// arch: DS13.8, DF.5
+func TestWeb_JSONFieldsMatchServer(t *testing.T) {
+	js, err := fs.ReadFile(webFiles(), "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps := serverMapKeys(t)
+	union := func(sets ...map[string]bool) map[string]bool {
+		out := map[string]bool{}
+		for _, s := range sets {
+			for k := range s {
+				out[k] = true
+			}
+		}
+		return out
+	}
+	// The variable names of app.js and the answer each one holds.
+	// r in app.js is the Response in api() and the job start answer in
+	// runJob(); ok, status and json are members of the Response.
+	// c.name is set by the page when the clients answer is an object.
+	// c is also the cards element in pickProvider(), so c.append is allowed.
+	allowed := map[string]map[string]bool{
+		"r":    union(maps["runAsync"], map[string]bool{"ok": true, "status": true, "json": true}),
+		"j":    jsonTags(jobView{}),
+		"s":    maps["handleState"],
+		"a":    jsonTags(stateAccount{}),
+		"c":    union(jsonTags(desktopPlan{}), map[string]bool{"name": true, "append": true}),
+		"data": maps["writeError"],
+	}
+	re := regexp.MustCompile(`(?:^|[^\w.$])(r|j|s|a|c|data)\.([a-z_]+)\b`)
+	seen := map[string]bool{}
+	for _, m := range re.FindAllStringSubmatch(string(js), -1) {
+		v, field := m[1], m[2]
+		seen[v+"."+field] = true
+		if !allowed[v][field] {
+			t.Errorf("app.js reads %s.%s, but the server sends no field %q for it", v, field, field)
+		}
+	}
+	for _, must := range []string{"r.job", "j.lines", "j.next", "j.done", "j.exit", "s.cli_path"} {
+		if !seen[must] {
+			t.Errorf("app.js no longer reads %s: the test does not see it", must)
+		}
 	}
 }

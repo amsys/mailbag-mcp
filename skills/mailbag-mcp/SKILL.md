@@ -79,7 +79,9 @@ two files differ.
   (`.github/workflows/secrets.yml`, `.github/gitleaks.toml`).
 - The build records (`docs/features/`, `PLAN.md`, `.state/`) are not in
   the public repo. They are in a second git dir over the same paths:
-  `git --git-dir=.git-private ...`.
+  `git --git-dir=.git-private ...`. That git dir reads the public
+  `.gitignore`, which ignores these paths: add a new file with
+  `git --git-dir=.git-private add -f`.
 - CI runs staticcheck `v0.8.2` and govulncheck `v1.9.0`, pinned by
   version in `test.yml`; run them before a push. staticcheck refuses a
   raw invisible character in a string literal (ST1018): write U+200B as

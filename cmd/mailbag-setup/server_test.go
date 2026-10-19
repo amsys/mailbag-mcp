@@ -931,11 +931,6 @@ func (h *harness) desktopConfig(content string) string {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		h.t.Fatal(err)
 	}
-	// The tool writes the backup next to the resolved file, and on macOS
-	// the temp dir is under the /var symlink, so compare resolved paths.
-	if dir, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-		p = filepath.Join(dir, filepath.Base(p))
-	}
 	if content != "" {
 		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 			h.t.Fatal(err)
@@ -1072,8 +1067,14 @@ func TestSetup_ClientsApplyDesktop(t *testing.T) {
 	if code != http.StatusOK || json.Unmarshal(body, &ap) != nil || !ap.Changed || ap.Name != clientDesktop {
 		t.Fatalf("apply: status %d, body %s", code, body)
 	}
-	if !strings.HasPrefix(ap.Backup, p+".bak-") {
-		t.Errorf("backup %q, want %s.bak-<time>", ap.Backup, p)
+	// The tool writes the backup next to the resolved file, and on macOS
+	// the temp dir is under the /var symlink, so compare resolved paths.
+	rp := p
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		rp = filepath.Join(dir, filepath.Base(p))
+	}
+	if !strings.HasPrefix(ap.Backup, rp+".bak-") {
+		t.Errorf("backup %q, want %s.bak-<time>", ap.Backup, rp)
 	}
 	if got, _ := os.ReadFile(ap.Backup); string(got) != orig {
 		t.Errorf("backup = %s, want the original", got)

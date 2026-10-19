@@ -113,7 +113,24 @@ jobs:
     environment: release
     permissions:
       contents: write
+      actions: read
     steps:
+      # Fail closed. GitHub creates a missing environment with no rule, and
+      # then this job would run with no approval. So read the rules first.
+      # The endpoint needs the permission "actions: read". GITHUB_TOKEN can
+      # have it, so the job grants it. Any error, any missing rule and any
+      # rule with no reviewer fails the step.
+      - name: require a reviewer on the release environment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/release" >"$RUNNER_TEMP/env.json"
+          n=$(jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?] | length' "$RUNNER_TEMP/env.json")
+          if [ "$n" -lt 1 ]; then
+            echo "environment release has no required_reviewers rule with a reviewer" >&2
+            exit 1
+          fi
       - name: make the draft release public
         run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
         env:

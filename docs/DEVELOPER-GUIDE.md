@@ -195,7 +195,13 @@ job starts only when the job before it passes:
    with `actions/attest-build-provenance`.
 4. **publish** runs in the GitHub environment `release`. It waits until
    the owner approves, then makes the draft public with
-   `gh release edit <tag> --draft=false`.
+   `gh release edit <tag> --draft=false`. The first step of the job
+   reads the environment and fails unless it has a `required_reviewers`
+   rule with at least one reviewer. The environment `release` must
+   exist, with the owner as required reviewer. If it does not exist,
+   GitHub creates it with no reviewer, and the check stops the publish.
+   The job uses `GITHUB_TOKEN` with `actions: read` for this check.
+   That is the least permission that can read the environment rules.
 
 Each archive holds the binary, `LICENSE`, `README.md`, `SUPPORT.md`,
 `CHANGELOG.md`, the guides in `docs/` and the systemd units in

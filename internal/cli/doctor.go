@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/amsys/mailbag-mcp/internal/config"
@@ -66,7 +67,9 @@ func doctor(args []string, env Env) int {
 			fmt.Sprintf(`run "mailbag-mcp account add" to create it (%s)`, guard.Redact(statErr.Error())))
 		return exitFail
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if !modesChecked {
+		checkOK(env, "accounts.toml mode not checked on Windows")
+	} else if info.Mode().Perm()&0o077 != 0 {
 		checkFail(env, fmt.Sprintf("accounts.toml mode is %#o", info.Mode().Perm()), "chmod 600 "+path)
 		ok = false
 	} else {
@@ -108,6 +111,12 @@ func doctor(args []string, env Env) int {
 	return exitFail
 }
 
+// modesChecked is false on Windows. That system has no group or other
+// mode bits, so doctor reports the file modes as not checked there, as
+// internal/secrets skips its mode checks (DF.7.5). Tests set it to
+// check the Windows lines on each system.
+var modesChecked = runtime.GOOS != "windows"
+
 // checkOK prints one passing check line.
 func checkOK(env Env, text string) {
 	printf(env, "ok %s", text)
@@ -131,9 +140,14 @@ func checkFail(env Env, text, hint string) {
 // in aliases, or an "oauth." client key. Other files, such as a
 // signature_file, hold no secret and are not checked (R16-L16). A
 // directory that does not exist yet (no secret written there) is not
-// a failure: there is nothing to read with the wrong mode. It prints
-// exactly one check line.
+// a failure: there is nothing to read with the wrong mode. On Windows
+// (modesChecked false) it checks nothing. It prints exactly one check
+// line.
 func checkFileStoreMode(env Env, dir string, aliases []string) bool {
+	if !modesChecked {
+		checkOK(env, "file store permissions not checked on Windows")
+		return true
+	}
 	keys := make(map[string]bool, len(aliases))
 	for _, a := range aliases {
 		keys[a] = true

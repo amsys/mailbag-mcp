@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -40,8 +41,14 @@ func fakeOpenPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'OpenSSL 3.0.2 15 Mar 2022'; exit 0; fi\nexit 0\n")
+	ext := ""
+	if runtime.GOOS == "windows" {
+		// Windows runs no shell script; PATH lookup finds a .bat file.
+		script = []byte("@echo off\r\nif \"%1\"==\"version\" echo OpenSSL 3.0.2 15 Mar 2022\r\nexit /b 0\r\n")
+		ext = ".bat"
+	}
 	for _, name := range []string{"openssl", "gpg", "gpgsm"} {
-		if err := os.WriteFile(filepath.Join(dir, name), script, 0o700); err != nil { //nolint:gosec // G306: the test needs this mode: it runs a script, opens a dir, or checks a mode test
+		if err := os.WriteFile(filepath.Join(dir, name+ext), script, 0o700); err != nil { //nolint:gosec // G306: the test needs this mode: it runs a script, opens a dir, or checks a mode test
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
@@ -181,6 +188,9 @@ func TestDoctor_ModeCheck(t *testing.T) {
 	t.Setenv("PATH", fakeOpenPath(t))
 
 	t.Run("group-readable mode fails", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("reason: POSIX-only rule: Windows has no group or other mode bits")
+		}
 		if err := os.Chmod(path, 0o640); err != nil { //nolint:gosec // G302: the test needs this mode: it runs a script, opens a dir, or checks a mode test
 			t.Fatal(err)
 		}
@@ -234,6 +244,9 @@ func TestDoctor_FileStoreModes(t *testing.T) {
 	secretFile := filepath.Join(dir, "work")
 
 	t.Run("world-readable secret file fails", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("reason: POSIX-only rule: Windows has no group or other mode bits")
+		}
 		if err := os.WriteFile(secretFile, []byte("x"), 0o644); err != nil { //nolint:gosec // G306: the test needs this mode: it runs a script, opens a dir, or checks a mode test
 			t.Fatal(err)
 		}
@@ -297,6 +310,9 @@ func TestDoctor_FileStoreModeOnlyKeys(t *testing.T) {
 		t.Errorf("a 0644 signature file failed the file store check:\n%s", out.String())
 	}
 
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: Windows has no group or other mode bits")
+	}
 	if err := os.Chmod(filepath.Join(dir, "oauth.google"), 0o644); err != nil { //nolint:gosec // G302: the test needs this mode: it runs a script, opens a dir, or checks a mode test
 		t.Fatal(err)
 	}
@@ -305,6 +321,39 @@ func TestDoctor_FileStoreModeOnlyKeys(t *testing.T) {
 	Run([]string{"doctor"}, Env{Stdout: &out, Stderr: &errOut, Login: okLogin})
 	if !strings.Contains(out.String(), "FAIL file store permissions") {
 		t.Errorf("a 0644 oauth key file passed the file store check:\n%s", out.String())
+	}
+}
+
+// TestDoctor_ModesNotCheckedOnWindows checks DF.7.5: with no mode
+// bits to read (Windows), doctor reports the accounts.toml mode and the
+// file store permissions as not checked, and a wide mode does not fail
+// the run. The test sets modesChecked, so it runs on each system.
+//
+// arch: DF.7.5, DR1G.12
+func TestDoctor_ModesNotCheckedOnWindows(t *testing.T) {
+	old := modesChecked
+	modesChecked = false
+	t.Cleanup(func() { modesChecked = old })
+
+	dir := sandbox(t)
+	path := seedAccount(t, dir, "work")
+	if err := os.Chmod(path, 0o644); err != nil { //nolint:gosec // G302: the test needs a wide mode to show that it is not checked
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "work"), []byte("x"), 0o644); err != nil { //nolint:gosec // G306: the test needs a wide mode to show that it is not checked
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeOpenPath(t))
+
+	var out, errOut strings.Builder
+	code := Run([]string{"doctor"}, Env{Stdout: &out, Stderr: &errOut, Login: okLogin})
+	if code != exitOK {
+		t.Errorf("exit code = %d, want %d\noutput:\n%s", code, exitOK, out.String())
+	}
+	for _, line := range []string{"ok accounts.toml mode not checked on Windows", "ok file store permissions not checked on Windows"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("output does not hold %q:\n%s", line, out.String())
+		}
 	}
 }
 

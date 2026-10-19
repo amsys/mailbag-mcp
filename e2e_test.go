@@ -305,7 +305,20 @@ func isTestDaemon(pid int) bool {
 		return false // no such process
 	}
 	stat, args, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
-	return !strings.HasPrefix(stat, "Z") && strings.TrimSpace(args) == binPath+" serve"
+	exe, ok := strings.CutSuffix(strings.TrimSpace(args), " serve")
+	return !strings.HasPrefix(stat, "Z") && ok && samePath(exe, binPath)
+}
+
+// samePath reports whether a and b name the same path after links. The
+// daemon gets its path from os.Executable, which resolves links on
+// Linux but not on macOS, and a TMPDIR can hold a link (macOS /var).
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // exitWithin waits up to timeout for the process to exit and returns

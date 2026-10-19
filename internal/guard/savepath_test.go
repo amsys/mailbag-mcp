@@ -20,8 +20,8 @@ import (
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_Attacks(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root := realTempDir(t)
+	outside := realTempDir(t)
 	roots := []string{root}
 
 	mustSymlink := func(t *testing.T, oldname, newname string) {
@@ -137,8 +137,8 @@ func TestSavePath_Attacks(t *testing.T) {
 		{
 			name: "the permitted root is itself a symlink",
 			setup: func(t *testing.T) ([]string, string) {
-				realDir := t.TempDir()
-				link := filepath.Join(t.TempDir(), "root-link")
+				realDir := realTempDir(t)
+				link := filepath.Join(realTempDir(t), "root-link")
 				mustSymlink(t, realDir, link)
 				return []string{link}, link
 			},
@@ -201,8 +201,8 @@ func TestSavePath_Attacks(t *testing.T) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_NoFollowOnCreate(t *testing.T) {
-	dir := t.TempDir()
-	victim := filepath.Join(t.TempDir(), "victim.txt")
+	dir := realTempDir(t)
+	victim := filepath.Join(realTempDir(t), "victim.txt")
 	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestSavePath_NoFollowOnCreate(t *testing.T) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_ExistingFileNeverOverwritten(t *testing.T) {
-	dir := t.TempDir()
+	dir := realTempDir(t)
 	first := filepath.Join(dir, "invoice.pdf")
 	if err := os.WriteFile(first, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
@@ -283,8 +283,8 @@ func TestSavePath_ExistingFileNeverOverwritten(t *testing.T) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_SwappedDirSymlink(t *testing.T) {
-	root := t.TempDir()
-	victim := t.TempDir()
+	root := realTempDir(t)
+	victim := realTempDir(t)
 	roots := []string{root}
 
 	sub := filepath.Join(root, "sub")
@@ -321,7 +321,7 @@ func TestSavePath_SwappedDirSymlink(t *testing.T) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestCreateSaveFile_RejectsPathName(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 
 	tests := []string{"../escape.txt", "sub/escape.txt", "/etc/escape.txt"}
 	for _, name := range tests {
@@ -344,7 +344,7 @@ func TestCreateSaveFile_RejectsPathName(t *testing.T) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_TildeRoot(t *testing.T) {
-	home := t.TempDir()
+	home := realTempDir(t)
 	t.Setenv("HOME", home)
 
 	downloads := filepath.Join(home, "Downloads")
@@ -540,7 +540,7 @@ func FuzzSaveName(f *testing.F) {
 //
 // arch: T2.3, §3.15, §5.4, G6, §10.9
 func TestSavePath_ResolveErrorNoPanic(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 	dir := filepath.Join(root, "does-not-exist")
 	_, _, err := CreateSaveFile(dir, "file.txt", []string{root})
 	if err == nil {
@@ -561,7 +561,7 @@ func TestSavePath_ResolveErrorNoPanic(t *testing.T) {
 //
 // arch: T2.3, §3.15, G6, R16-M3
 func TestSavePath_HiddenBelowRootRefused(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 	if err := os.MkdirAll(filepath.Join(root, ".ssh"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -599,4 +599,17 @@ func TestSavePath_HiddenBelowRootRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// realTempDir returns t.TempDir() with its symbolic links resolved.
+// The guard compares canonical paths, and on macOS t.TempDir() is
+// under /var, a link to /private/var; on Windows it can hold an 8.3
+// short name. A test root must be in the form the guard returns.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

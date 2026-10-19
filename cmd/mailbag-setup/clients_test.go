@@ -18,7 +18,13 @@ var fixedNow = func() time.Time { return time.Date(2026, 10, 19, 8, 30, 5, 0, ti
 
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "claude_desktop_config.json")
+	// applyDesktop resolves links in the path; on macOS t.TempDir() is
+	// under /var, a link to /private/var.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "claude_desktop_config.json")
 	if err := os.WriteFile(p, []byte(content), 0o640); err != nil {
 		t.Fatal(err)
 	}

@@ -561,7 +561,7 @@ func TestRead_ThreadPreviewsMissingNote(t *testing.T) {
 //
 // arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9
 func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
-	dir := t.TempDir() // under os.TempDir(), one of the permitted roots
+	dir := realTempDir(t) // under os.TempDir(), one of the permitted roots
 	content := []byte("invoice bytes")
 	prov := &readProvider{
 		att:  content,
@@ -1969,4 +1969,17 @@ func TestRead_OpaqueEnvelopedInsideShowsNote(t *testing.T) {
 	if strings.Contains(row.Body, "PROVIDER-TEXT") || strings.Contains(row.Body, "MIAGCSqGSIb3") {
 		t.Errorf("body = %q, want no text", row.Body)
 	}
+}
+
+// realTempDir returns t.TempDir() with its symbolic links resolved.
+// The guard returns canonical paths, and on macOS t.TempDir() is under
+// /var, a link to /private/var; on Windows it can hold an 8.3 short
+// name. A test that compares a saved path with its dir needs this form.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

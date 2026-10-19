@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -2834,6 +2835,24 @@ func TestServer_EveryUntrustedFieldFenced(t *testing.T) {
 	}
 }
 
+// shortGPGHome makes a throwaway GNUPGHOME with a short path. On a
+// unix system it sits under /tmp: the gpg-agent socket goes inside the
+// home when no /run/user dir exists (macOS), and a home under the long
+// macOS t.TempDir() makes that socket path longer than the 104-byte
+// limit of sun_path. The dir is removed at the end of the test.
+func shortGPGHome(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return t.TempDir()
+	}
+	dir, err := os.MkdirTemp("/tmp", "g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // appendEncryptedCanary is the decrypt row of the canary test (D7.2,
 // D10.3). It makes a throwaway GNUPGHOME and a key whose user ID holds
 // canaryWord, so gpg writes the canary on stderr (the gpg row of I18).
@@ -2853,7 +2872,7 @@ func appendEncryptedCanary(t *testing.T, lc *legacyClient, acct config.Account, 
 		t.Logf("gpg is not on PATH; the decrypt success row is left out")
 		return ""
 	}
-	home := t.TempDir()
+	home := shortGPGHome(t)
 	if err := os.Chmod(home, 0o700); err != nil { //nolint:gosec // G302: the fixture must be executable or a directory, and it sits in the test temp dir
 		t.Fatal(err)
 	}
@@ -4529,7 +4548,7 @@ const t89UID = "T89UIDCANARY"
 //   - no file under the state directory (server.log and the undo
 //     journal) holds the plain text canary or the key user ID.
 //
-// The key lives in a throwaway GNUPGHOME under t.TempDir(). The test
+// The key lives in a throwaway GNUPGHOME (shortGPGHome). The test
 // does not touch the keyring or the gpg-agent of the machine.
 //
 // arch: D7.1, D7.2
@@ -4566,7 +4585,7 @@ func TestServer_DecryptLeavesNoPlaintext(t *testing.T) {
 
 	// A throwaway GNUPGHOME. The gpg that Serve starts reads it from
 	// the environment of the test process.
-	home := t.TempDir()
+	home := shortGPGHome(t)
 	if err := os.Chmod(home, 0o700); err != nil { //nolint:gosec // G302: the fixture must be executable or a directory, and it sits in the test temp dir
 		t.Fatal(err)
 	}

@@ -563,9 +563,14 @@ func TestSocket_IdleExit(t *testing.T) {
 	clock.Set(idleAt.Add(idleExit - time.Second))
 	td.tickNoExit(t, "no session, 1 s before the idle limit")
 
+	// The idle check of the last tick from tickNoExit can still run
+	// after the clock step. Then the daemon stops before it takes the
+	// next tick; that is the expected outcome too, and td.wait below
+	// checks its reason and code.
 	clock.Set(idleAt.Add(idleExit))
 	select {
 	case td.tick <- time.Now():
+	case <-td.done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the daemon did not take the tick at the idle limit")
 	}

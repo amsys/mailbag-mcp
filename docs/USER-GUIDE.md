@@ -50,6 +50,80 @@ Run `mailbag-mcp account list` to see your accounts. Run
 `mailbag-mcp doctor` to check the configuration and the secret store.
 Run `mailbag-mcp version` to see the version.
 
+### Linux packages
+
+Each release has three Linux packages: `.deb` for Debian and Ubuntu,
+`.rpm` for Fedora and other RPM systems, and `.pkg.tar.zst` for Arch
+Linux. Each package holds `mailbag-mcp` and `mailbag-setup` in
+`/usr/bin`. Replace `<version>` with the release version and install
+the package:
+
+```
+sudo apt install ./mailbag-mcp_<version>_linux_amd64.deb
+sudo dnf install ./mailbag-mcp_<version>_linux_amd64.rpm
+sudo pacman -U ./mailbag-mcp_<version>_linux_amd64.pkg.tar.zst
+```
+
+The packages install no systemd units. After the install, run this
+command as your user, not with `sudo`:
+
+```
+mailbag-mcp service install
+```
+
+The command writes the systemd user units. It uses the path of the
+installed binary, so the units start `/usr/bin/mailbag-mcp`. It does
+not run `systemctl`. To start the daemon, see "The daemon" in the
+Client setup section.
+
+## Setup page
+
+`mailbag-setup` starts a setup page in your browser. The page runs the
+`mailbag-mcp` CLI for you. Use it to:
+
+- add an account
+- register mailbag with Claude Code, and with Claude Desktop
+- run the checks (`doctor`)
+- install the daemon units
+
+Start the page in a terminal:
+
+```
+mailbag-setup
+```
+
+The command prints an address and opens it in your default browser.
+Run `mailbag-setup --no-browser` to print the address only and open
+it yourself. Over SSH, the page cannot open a browser on your
+computer. `mailbag-setup` then tells you to run it on the desktop.
+You can also add an account on the host with `mailbag-mcp account add
+... --paste`.
+
+The setup page has these limits:
+
+- It listens on `127.0.0.1` only, on a port that the system chooses.
+- Each start makes a new random token. The address holds the token.
+  Each API request must send the token. An API request with a wrong
+  token gets an error and changes nothing. Any request with a wrong
+  host name gets an error.
+- It stops when you select "Finish", after 20 minutes with no API request,
+  or when you press Ctrl+C.
+- It runs no `sudo` and no `systemctl`. The daemon step shows the
+  `systemctl --user` command. You copy it and run it yourself.
+- It writes no log file.
+
+Passwords, API tokens and OAuth client secrets go to the CLI through
+stdin, in the `--answers-stdin` document. They do not go on the
+command line. When you upload a Google client file, the page writes it
+to a temporary file with mode 0600 for `oauth set google --file`. The
+page removes that file when the command ends.
+
+To register mailbag with Claude Desktop, quit the Claude app first.
+The app can write its config file when it quits, so the change can be
+lost. While the app runs, the page refuses the change and tells you to
+quit the app. The page does not stop the app. After a change, open
+mailbag in the client again. In Claude Code, run `/mcp`.
+
 ## Accounts
 
 The alias (`work` above) names the account in each tool call. Use

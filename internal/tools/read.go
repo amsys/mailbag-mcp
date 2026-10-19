@@ -668,16 +668,17 @@ func (t *readTool) signature(ctx context.Context, reader Reader, m *mail.Message
 	checkCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 	defer cancel()
 	done := make(chan result, 1)
-	// check is read here, not in the goroutine, so a test that puts
-	// verifyCheck back after signature returns does not race with it.
-	check := verifyCheck
+	// check and checkDone are read here, not in the goroutine, so a
+	// test that sets verifyCheck or verifyCheckDone after signature
+	// returns does not race with a goroutine that still runs.
+	check, checkDone := verifyCheck, verifyCheckDone
 	go func() {
-		// verifyCheckDone fires last, once this goroutine is about to
+		// checkDone fires last, once this goroutine is about to
 		// exit either way, so a test sees the true end of the call to
 		// verify.Check and not just of the panic recovery.
 		defer func() {
-			if verifyCheckDone != nil {
-				verifyCheckDone()
+			if checkDone != nil {
+				checkDone()
 			}
 		}()
 		// The check runs on sender bytes. A panic in it must not stop

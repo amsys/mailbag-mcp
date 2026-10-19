@@ -36,6 +36,8 @@ function el(tag, text, attrs) {
 function show(...ids) { SECTIONS.forEach((s) => { $(s).hidden = !ids.includes(s); }); }
 function fail(id, err) { const e = $(id); e.textContent = err.message; e.className = "msg err"; }
 function openTab(url) { window.open(url, "_blank", "noopener,noreferrer"); }
+// The answer to the file-store question of the CLI (review M3).
+function fileStore() { return $("f-filestore").checked; }
 
 async function refresh() {
   try {
@@ -136,7 +138,7 @@ async function sendGoogle(file) {
     const doc = JSON.parse(text);
     if (doc.web) throw new Error("This is a Web client. Make a Desktop app client.");
     if (!doc.installed) throw new Error("The file has no installed key. Make a Desktop app client.");
-    await api("POST", "/api/oauth/google", doc);
+    await api("POST", "/api/oauth/google?use_file_store=" + fileStore(), doc);
     $("gmsg").textContent = "Google client saved.";
   } catch (e) { fail("gmsg", e); }
 }
@@ -160,7 +162,7 @@ async function sendMS() {
     fail("mmsg", new Error("The client id must be a GUID."));
     return;
   }
-  try { await api("POST", "/api/oauth/microsoft", { client_id: id }); $("mmsg").textContent = "Client id saved."; }
+  try { await api("POST", "/api/oauth/microsoft", { client_id: id, use_file_store: fileStore() }); $("mmsg").textContent = "Client id saved."; }
   catch (e) { fail("mmsg", e); }
 }
 
@@ -169,6 +171,7 @@ async function signIn() {
   const body = {
     alias: $("f-alias").value.trim(), provider: preset.provider, email: $("f-email").value.trim(),
     access: document.querySelector("input[name=access]:checked").value,
+    use_file_store: fileStore(),
   };
   if (pw) {
     body.username = $("f-user").value.trim();
@@ -207,24 +210,30 @@ function retry() {
   if (radio) radio.checked = true;
 }
 
+function clientBox(c) {
+  const d = el("div");
+  d.append(el("h3", c.label), el("p", c.path));
+  if (!c.present) { d.append(el("p", "Not found on this computer.")); return d; }
+  if (c.error) { d.append(el("p", c.error, { className: "msg err" })); return d; }
+  if (c.same) d.append(el("p", "mailbag is set with this mailbag-mcp. No change is necessary."));
+  if (c.running) d.append(el("p", "The Claude app runs. Quit it, then apply.", { className: "msg err" }));
+  const pair = el("div", "", { className: "pair" });
+  pair.append(el("pre", c.before || "(no entry)"), el("pre", c.after));
+  d.append(pair, el("button", "Apply", { onclick: async () => {
+    if (c.current && !c.same && !confirm("mailbag is set to another path. Replace it?\n\n" + c.current)) return;
+    try {
+      const ap = await api("POST", "/api/clients/" + encodeURIComponent(c.name), {});
+      d.append(el("p", !ap.changed ? "No change was necessary." : ap.backup ? "Applied. Backup: " + ap.backup : "Applied."));
+    } catch (e) { d.append(el("p", e.message, { className: "msg err" })); }
+  } }));
+  return d;
+}
 async function loadClients() {
   show("clients");
   const box = $("client-list");
   box.replaceChildren();
-  try {
-    const cs = await api("GET", "/api/clients");
-    (Array.isArray(cs) ? cs : Object.entries(cs).map(([name, c]) => Object.assign({ name }, c))).forEach((c) => {
-      const d = el("div");
-      d.append(el("h3", c.name), el("p", c.path || ""));
-      const pair = el("div", "", { className: "pair" });
-      pair.append(el("pre", c.before || "(no entry)"), el("pre", c.after || ""));
-      d.append(pair, el("button", "Apply", { onclick: async () => {
-        try { await api("POST", "/api/clients/" + encodeURIComponent(c.name), {}); d.append(el("p", "Applied.")); }
-        catch (e) { d.append(el("p", e.message, { className: "msg err" })); }
-      } }));
-      box.append(d);
-    });
-  } catch (e) { box.append(el("p", e.message, { className: "msg err" })); }
+  try { (await api("GET", "/api/clients")).forEach((c) => box.append(clientBox(c))); }
+  catch (e) { box.append(el("p", e.message, { className: "msg err" })); }
 }
 
 async function main() {
@@ -236,7 +245,8 @@ async function main() {
   $("b-signin").onclick = signIn;
   $("b-retry").onclick = retry;
   $("b-cancel").onclick = () => { if (job) api("POST", "/api/jobs/" + job + "/cancel", {}).catch(() => {}); };
-  $("b-service").onclick = async () => { try { await runJob("POST", "/api/service", {}, $("out")); show("daemon", "result"); } catch (e) { $("out").textContent = e.message; } };
+  $("b-daemon").onclick = () => show("daemon");
+  $("b-service").onclick = async () => { show("daemon", "result"); try { await runJob("POST", "/api/service", {}, $("out")); } catch (e) { $("out").textContent = e.message; } };
   $("gfile").onchange = (e) => e.target.files[0] && sendGoogle(e.target.files[0]);
   const drop = $("drop");
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };

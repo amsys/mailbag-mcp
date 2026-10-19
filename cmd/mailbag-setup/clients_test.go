@@ -25,7 +25,7 @@ func writeTemp(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, "claude_desktop_config.json")
-	if err := os.WriteFile(p, []byte(content), 0o640); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o640); err != nil { //nolint:gosec // G306: the test needs a mode other than 0600 to prove that applyDesktop keeps it
 		t.Fatal(err)
 	}
 	return p
@@ -33,7 +33,7 @@ func writeTemp(t *testing.T, content string) string {
 
 func readFile(t *testing.T, p string) string {
 	t.Helper()
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(p) //nolint:gosec // G304: the path comes from the test, not from a user
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,9 +177,9 @@ func TestClients_DesktopApp_RunningRefused(t *testing.T) {
 //
 // arch: DS13.3, DS13.8, IS13.4
 func TestClients_DesktopMerge_Symlink(t *testing.T) {
-	real := writeTemp(t, "{}")
+	target := writeTemp(t, "{}")
 	link := filepath.Join(t.TempDir(), "link.json")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := applyDesktop(link, "/b", nil, fixedNow); err != nil {
@@ -188,7 +188,7 @@ func TestClients_DesktopMerge_Symlink(t *testing.T) {
 	if st, _ := os.Lstat(link); st.Mode()&os.ModeSymlink == 0 {
 		t.Fatal("link replaced")
 	}
-	if !strings.Contains(readFile(t, real), `"mailbag"`) {
+	if !strings.Contains(readFile(t, target), `"mailbag"`) {
 		t.Fatal("target not changed")
 	}
 }
@@ -230,5 +230,44 @@ func TestClients_ClaudeCode_Args(t *testing.T) {
 	cur := func(context.Context, string, ...string) ([]byte, error) { return []byte("mailbag: /old"), nil }
 	if out, same := claudeCodeCurrent(context.Background(), cur, "/new"); same || out == "" {
 		t.Fatal("different path must not match")
+	}
+}
+
+// TestClients_DesktopAppRunning checks that the app check only reads
+// the process list with pgrep, and that a failed pgrep means "not
+// running".
+//
+// arch: DS13.3, DS13.8, IS13.5
+func TestClients_DesktopAppRunning(t *testing.T) {
+	var got []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		got = append([]string{name}, args...)
+		return []byte("123"), nil
+	}
+	if !desktopAppRunning(context.Background(), run) {
+		t.Fatal("pgrep found the app, but the check says no")
+	}
+	if strings.Join(got, " ") != "pgrep -x "+desktopAppPattern {
+		t.Fatalf("got %q", got)
+	}
+	none := func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("exit status 1") }
+	if desktopAppRunning(context.Background(), none) {
+		t.Fatal("a failed pgrep must mean not running")
+	}
+}
+
+// TestClients_DesktopEntry checks the read of the current mailbag
+// entry from a Claude Desktop config.
+//
+// arch: DS13.3, DS13.8
+func TestClients_DesktopEntry(t *testing.T) {
+	raw, cmd := desktopEntry(`{"mcpServers":{"x":{},"mailbag":{"command":"/a/mailbag-mcp","args":[]}}}`)
+	if cmd != "/a/mailbag-mcp" || !strings.Contains(raw, `"args"`) {
+		t.Fatalf("raw=%q cmd=%q", raw, cmd)
+	}
+	for _, in := range []string{"", "{", `{"mcpServers":{}}`, `{"other":1}`, `{"mcpServers":[]}`} {
+		if raw, cmd := desktopEntry(in); raw != "" || cmd != "" {
+			t.Errorf("input %q: raw=%q cmd=%q", in, raw, cmd)
+		}
 	}
 }

@@ -12,13 +12,18 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -29,6 +34,7 @@ const (
 	envFakeLog     = "MAILBAG_SETUP_FAKE_LOG"
 	envFakeVersion = "MAILBAG_SETUP_FAKE_VERSION"
 	envFakeBlock   = "MAILBAG_SETUP_FAKE_BLOCK"
+	envFakeNoTerm  = "MAILBAG_SETUP_FAKE_IGNORE_TERM"
 )
 
 // fakeCall is one call of the fake CLI, as it records it.
@@ -52,6 +58,11 @@ func TestMain(m *testing.M) {
 // line for "version", waits for a signal for "doctor" when
 // MAILBAG_SETUP_FAKE_BLOCK is 1, and else prints two lines.
 func fakeCLI(args []string) int {
+	if os.Getenv(envFakeNoTerm) == "1" {
+		// Before the call is recorded, so a test that sees the call
+		// knows that SIGTERM has no effect.
+		signal.Ignore(syscall.SIGTERM)
+	}
 	stdin, _ := io.ReadAll(os.Stdin)
 	call := fakeCall{Args: args, Env: os.Environ(), Stdin: string(stdin)}
 	for _, a := range args {
@@ -83,6 +94,48 @@ func fakeCLI(args []string) int {
 	return 0
 }
 
+// fakeRunner stands in for claude and pgrep. It records each call and
+// answers with answer, or fails when answer is nil. No test runs the
+// real claude.
+type fakeRunner struct {
+	mu     sync.Mutex
+	calls  []string
+	answer func(call string) ([]byte, error)
+}
+
+// run is the cmdRunner of the fake.
+func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	call := strings.Join(append([]string{name}, args...), " ")
+	f.calls = append(f.calls, call)
+	if f.answer == nil {
+		return nil, errors.New("executable file not found")
+	}
+	return f.answer(call)
+}
+
+// set replaces the answer function.
+func (f *fakeRunner) set(answer func(call string) ([]byte, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answer = answer
+}
+
+// reset forgets the recorded calls.
+func (f *fakeRunner) reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = nil
+}
+
+// recorded gives the calls so far.
+func (f *fakeRunner) recorded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.calls...)
+}
+
 // harness is one running setup server with the fake CLI.
 type harness struct {
 	t    *testing.T
@@ -90,6 +143,8 @@ type harness struct {
 	base string
 	log  string
 	cfg  string
+	home string
+	run  *fakeRunner
 }
 
 // newHarness starts a server on 127.0.0.1 with the test binary as the
@@ -102,6 +157,7 @@ func newHarness(t *testing.T, setupVersion, cliVersion string, idle time.Duratio
 	t.Setenv(envFakeLog, logPath)
 	t.Setenv(envFakeVersion, cliVersion)
 	t.Setenv(envFakeBlock, "")
+	t.Setenv(envFakeNoTerm, "")
 	t.Setenv("MAILBAG_CONFIG_DIR", filepath.Join(dir, "config"))
 	// A -race binary sleeps 1 s at exit by default; the fake CLI is a
 	// -race binary when the test is.
@@ -115,7 +171,12 @@ func newHarness(t *testing.T, setupVersion, cliVersion string, idle time.Duratio
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	s, err := newServer(serverConfig{CLIPath: exe, SetupVersion: "mailbag-setup " + setupVersion, Idle: idle}, ln.Addr().String())
+	home := filepath.Join(dir, "home")
+	runner := &fakeRunner{}
+	s, err := newServer(serverConfig{
+		CLIPath: exe, SetupVersion: "mailbag-setup " + setupVersion, Idle: idle,
+		Home: home, GOOS: "darwin", Run: runner.run,
+	}, ln.Addr().String())
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}
@@ -129,7 +190,7 @@ func newHarness(t *testing.T, setupVersion, cliVersion string, idle time.Duratio
 		cancel()
 		<-stopped
 	})
-	return &harness{t: t, s: s, base: "http://" + s.host, log: logPath, cfg: filepath.Join(dir, "config")}
+	return &harness{t: t, s: s, base: "http://" + s.host, log: logPath, cfg: filepath.Join(dir, "config"), home: home, run: runner}
 }
 
 // request is one test request. An empty host means the right host,
@@ -858,6 +919,413 @@ func TestSetup_PageFilesServedWithHeaders(t *testing.T) {
 		if hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Content-Security-Policy") == "" ||
 			hdr.Get("Cache-Control") != "no-store" || hdr.Get("Referrer-Policy") != "no-referrer" {
 			t.Errorf("GET %s lacks the DS13.6 headers: %v", path, hdr)
+		}
+	}
+}
+
+// desktopConfig makes the Claude Desktop directory in the temp home of
+// h and, when content is not "", the config file. It gives the path.
+func (h *harness) desktopConfig(content string) string {
+	h.t.Helper()
+	p := desktopConfigPath(h.home, "darwin")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		h.t.Fatal(err)
+	}
+	if content != "" {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	return p
+}
+
+// claudeAnswers gives a fake runner answer: claude is present, "claude
+// mcp get mailbag" shows getOut (an error when getOut is ""), pgrep
+// finds the app when appRuns is true, and each other call works.
+func claudeAnswers(getOut string, appRuns bool) func(string) ([]byte, error) {
+	return func(call string) ([]byte, error) {
+		switch {
+		case call == "claude mcp get mailbag" && getOut == "":
+			return []byte("No MCP server found"), errors.New("exit status 1")
+		case call == "claude mcp get mailbag":
+			return []byte(getOut), nil
+		case strings.HasPrefix(call, "pgrep ") && !appRuns:
+			return nil, errors.New("exit status 1")
+		}
+		return []byte("ok"), nil
+	}
+}
+
+// getClients gives the answer of GET /api/clients by name.
+func (h *harness) getClients() map[string]clientView {
+	h.t.Helper()
+	code, _, body := h.do(request{method: http.MethodGet, path: "/api/clients"})
+	if code != http.StatusOK {
+		h.t.Fatalf("GET /api/clients: status %d, body %s", code, body)
+	}
+	var list []clientView
+	if err := json.Unmarshal(body, &list); err != nil {
+		h.t.Fatalf("decode clients: %v; body %s", err, body)
+	}
+	out := map[string]clientView{}
+	for _, c := range list {
+		out[c.Name] = c
+	}
+	if len(out) != 2 {
+		h.t.Fatalf("clients = %s, want claude-desktop and claude-code", body)
+	}
+	return out
+}
+
+// TestSetup_ClientsState checks GET /api/clients: both clients with
+// their current entry and the planned change, and no write and no add.
+//
+// arch: DS13.3, DS13.8, DS13.10, IS13.4, IS13.5
+func TestSetup_ClientsState(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+
+	// No Claude Desktop directory and no claude: neither is present.
+	cs := h.getClients()
+	if cs[clientDesktop].Present || cs[clientCode].Present {
+		t.Fatalf("clients with nothing installed = %+v", cs)
+	}
+
+	orig := `{"mcpServers":{"mailbag":{"command":"/old/mailbag-mcp"},"other":{"command":"x"}}}`
+	p := h.desktopConfig(orig)
+	h.run.set(claudeAnswers("mailbag:\n  Command: /old/mailbag-mcp\n", true))
+	cs = h.getClients()
+	d, c := cs[clientDesktop], cs[clientCode]
+	if !d.Present || d.Path != p || d.Before != orig || !strings.Contains(d.After, h.s.cliPath) ||
+		!strings.Contains(d.Current, "/old/mailbag-mcp") || d.Same || !d.Running || d.Error != "" {
+		t.Errorf("desktop = %+v", d)
+	}
+	if !c.Present || !strings.Contains(c.Current, "/old/mailbag-mcp") || c.Same ||
+		c.After != "claude mcp add --scope user mailbag -- "+h.s.cliPath {
+		t.Errorf("claude code = %+v", c)
+	}
+	if got, _ := os.ReadFile(p); string(got) != orig { //nolint:gosec // G304: a test temp file
+		t.Errorf("GET changed the config: %s", got)
+	}
+	for _, call := range h.run.recorded() {
+		if strings.Contains(call, " add ") || strings.Contains(call, " remove ") {
+			t.Errorf("GET ran %q", call)
+		}
+	}
+
+	// The same path: Same is true for both.
+	h.desktopConfig(`{"mcpServers":{"mailbag":{"command":` + jsonQuote(h.s.cliPath) + `}}}`)
+	h.run.set(claudeAnswers("mailbag:\n  Command: "+h.s.cliPath+"\n", false))
+	cs = h.getClients()
+	if !cs[clientDesktop].Same || !cs[clientCode].Same || cs[clientDesktop].Running {
+		t.Errorf("clients with the same path = %+v", cs)
+	}
+
+	// Bad JSON: the view gives the reason and no change.
+	h.desktopConfig("{")
+	if d := h.getClients()[clientDesktop]; d.Error == "" || d.After != "" {
+		t.Errorf("desktop with bad JSON = %+v", d)
+	}
+}
+
+// jsonQuote gives s as a JSON string.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// TestSetup_ClientsApplyDesktop checks POST /api/clients/claude-desktop:
+// a backup and the merge, a refusal while the app runs, and a refusal
+// of bad JSON with the file kept.
+//
+// arch: DS13.3, DS13.8, DS13.10, IS13.4, IS13.5
+func TestSetup_ClientsApplyDesktop(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	post := request{method: http.MethodPost, path: "/api/clients/" + clientDesktop, body: "{}"}
+
+	if code, _, body := h.do(post); code != http.StatusNotFound {
+		t.Errorf("no Claude Desktop: status %d, body %s; want 404", code, body)
+	}
+
+	orig := `{"theme":"dark","mcpServers":{"other":{"command":"x"}}}`
+	p := h.desktopConfig(orig)
+	h.run.set(claudeAnswers("", true))
+	if code, _, body := h.do(post); code != http.StatusConflict || !strings.Contains(string(body), "quit") {
+		t.Errorf("app runs: status %d, body %s; want 409", code, body)
+	}
+	if got, _ := os.ReadFile(p); string(got) != orig { //nolint:gosec // G304: a test temp file
+		t.Errorf("the config changed while the app runs: %s", got)
+	}
+	for _, call := range h.run.recorded() {
+		if !strings.HasPrefix(call, "pgrep -x ") {
+			t.Errorf("the apply ran %q; it may only read the process list (IS13.5)", call)
+		}
+	}
+
+	h.run.set(claudeAnswers("", false))
+	code, _, body := h.do(post)
+	var ap clientApplied
+	if code != http.StatusOK || json.Unmarshal(body, &ap) != nil || !ap.Changed || ap.Name != clientDesktop {
+		t.Fatalf("apply: status %d, body %s", code, body)
+	}
+	if !strings.HasPrefix(ap.Backup, p+".bak-") {
+		t.Errorf("backup %q, want %s.bak-<time>", ap.Backup, p)
+	}
+	if got, _ := os.ReadFile(ap.Backup); string(got) != orig {
+		t.Errorf("backup = %s, want the original", got)
+	}
+	got, _ := os.ReadFile(p) //nolint:gosec // G304: a test temp file
+	for _, w := range []string{`"theme": "dark"`, `"other"`, `"mailbag"`, jsonQuote(h.s.cliPath)} {
+		if !strings.Contains(string(got), w) {
+			t.Errorf("config lacks %s: %s", w, got)
+		}
+	}
+
+	if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, body := h.do(post); code == http.StatusOK {
+		t.Errorf("bad JSON: status %d, body %s; want a refusal", code, body)
+	}
+	if got, _ := os.ReadFile(p); string(got) != "{" { //nolint:gosec // G304: a test temp file
+		t.Errorf("bad JSON was replaced: %s", got)
+	}
+}
+
+// TestSetup_ClientsApplyClaudeCode checks POST
+// /api/clients/claude-code: the add for the user with the CLI path, a
+// remove of an entry with another path first, and no call when the
+// entry is the same.
+//
+// arch: DS13.3, DS13.8, DS13.10, IS13.5
+func TestSetup_ClientsApplyClaudeCode(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	post := request{method: http.MethodPost, path: "/api/clients/" + clientCode, body: "{}"}
+	add := "claude mcp add --scope user mailbag -- " + h.s.cliPath
+
+	apply := func() clientApplied {
+		t.Helper()
+		code, _, body := h.do(post)
+		var ap clientApplied
+		if code != http.StatusOK || json.Unmarshal(body, &ap) != nil {
+			t.Fatalf("apply: status %d, body %s", code, body)
+		}
+		return ap
+	}
+
+	h.run.set(claudeAnswers("", false))
+	if ap := apply(); !ap.Changed {
+		t.Errorf("new entry: %+v, want changed", ap)
+	}
+	if got, want := h.run.recorded(), []string{"claude mcp get mailbag", add}; !slices.Equal(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+
+	h.run.reset()
+	h.run.set(claudeAnswers("mailbag:\n  Command: /old/mailbag-mcp\n", false))
+	apply()
+	want := []string{"claude mcp get mailbag", "claude mcp remove --scope user mailbag", add}
+	if got := h.run.recorded(); !slices.Equal(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+
+	h.run.set(claudeAnswers("mailbag:\n  Command: "+h.s.cliPath+"\n", false))
+	before := len(h.run.recorded())
+	if ap := apply(); ap.Changed {
+		t.Errorf("same entry: %+v, want no change", ap)
+	}
+	if got := h.run.recorded()[before:]; !slices.Equal(got, []string{"claude mcp get mailbag"}) {
+		t.Errorf("same entry ran %q", got)
+	}
+
+	h.run.set(func(call string) ([]byte, error) {
+		if strings.Contains(call, " add ") {
+			return []byte("boom"), errors.New("exit status 1")
+		}
+		return nil, errors.New("exit status 1")
+	})
+	if code, _, body := h.do(post); code != http.StatusInternalServerError || !strings.Contains(string(body), "boom") {
+		t.Errorf("failed add: status %d, body %s", code, body)
+	}
+
+	if code, _, body := h.do(request{method: http.MethodPost, path: "/api/clients/vscode", body: "{}"}); code != http.StatusNotFound {
+		t.Errorf("unknown client: status %d, body %s; want 404", code, body)
+	}
+}
+
+// TestSetup_ClientsRefused checks that the client routes need the
+// token and the Host, take a JSON {} body only, and refuse a write
+// when the versions differ, each with no call and no file change.
+//
+// arch: DS13.6, DS13.7, DS13.10, IS13.3, IS13.4
+func TestSetup_ClientsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version string
+		r       request
+		want    int
+	}{
+		{"no token GET", "v1.0.0", request{method: http.MethodGet, path: "/api/clients", token: ptr("")}, http.StatusForbidden},
+		{"no token POST", "v1.0.0", request{method: http.MethodPost, path: "/api/clients/claude-desktop", body: "{}", token: ptr("")}, http.StatusForbidden},
+		{"wrong token", "v1.0.0", request{method: http.MethodPost, path: "/api/clients/claude-code", body: "{}", token: ptr("abc")}, http.StatusForbidden},
+		{"wrong Host GET", "v1.0.0", request{method: http.MethodGet, path: "/api/clients", host: "localhost"}, http.StatusForbidden},
+		{"wrong Host POST", "v1.0.0", request{method: http.MethodPost, path: "/api/clients/claude-desktop", body: "{}", host: "evil.example"}, http.StatusForbidden},
+		{"not JSON", "v1.0.0", request{method: http.MethodPost, path: "/api/clients/claude-desktop", body: "{}", contentType: "text/plain"}, http.StatusUnsupportedMediaType},
+		{"unknown field", "v1.0.0", request{method: http.MethodPost, path: "/api/clients/claude-desktop", body: `{"path":"/etc/x"}`}, http.StatusBadRequest},
+		{"version mismatch", "v9.9.9", request{method: http.MethodPost, path: "/api/clients/claude-desktop", body: "{}"}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "v1.0.0", tc.version, time.Minute)
+			orig := `{"a":1}`
+			p := h.desktopConfig(orig)
+			h.run.set(claudeAnswers("", false))
+			if code, _, body := h.do(tc.r); code != tc.want {
+				t.Errorf("status %d, body %s; want %d", code, body, tc.want)
+			}
+			if got := h.run.recorded(); len(got) != 0 {
+				t.Errorf("a refused request ran %q", got)
+			}
+			if got, _ := os.ReadFile(p); string(got) != orig { //nolint:gosec // G304: a test temp file
+				t.Errorf("a refused request changed the config: %s", got)
+			}
+			if ents, _ := os.ReadDir(filepath.Dir(p)); len(ents) != 1 {
+				t.Errorf("a refused request left %d files", len(ents))
+			}
+		})
+	}
+}
+
+// TestSetup_StopKillsStuckJob checks L3: at the stop, a CLI that
+// ignores SIGTERM is killed after stopWait, so serve ends.
+//
+// arch: DS13.6, IS13.5
+func TestSetup_StopKillsStuckJob(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	t.Setenv(envFakeBlock, "1")
+	t.Setenv(envFakeNoTerm, "1")
+	id := h.startJob("/api/doctor", "{}")
+	deadline := time.Now().Add(20 * time.Second)
+	for len(h.calls()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the doctor job did not start before the deadline")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	j := h.s.lookupJob(id)
+
+	const wait = 300 * time.Millisecond
+	h.s.stopWait = wait // read by serve only after stop
+	start := time.Now()
+	h.s.stop()
+	select {
+	case <-j.done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the stuck job did not end after the stop")
+	}
+	took := time.Since(start)
+	if took < wait {
+		t.Errorf("the job ended after %v, before stopWait %v: SIGTERM was not ignored", took, wait)
+	}
+	if v := j.view(0); v.Exit == nil || *v.Exit == 0 {
+		t.Errorf("killed job: %+v, want a non-zero exit", v)
+	}
+}
+
+// TestSetup_FileStoreChoicePassed checks review M3: the page sends the
+// answer to the file-store question with each step that can ask it,
+// and the server gives it to the CLI on stdin with --answers-stdin.
+// Account add carries use_file_store in its document; "oauth set
+// microsoft" takes it from the JSON body and "oauth set google" from
+// the query. A bad query value is refused before the CLI runs. With no
+// answer, "oauth set" gets no flag and no stdin, as before (B5).
+//
+// arch: DS13.5, DS13.8, DS13.10, IS13.1, IS13.2
+func TestSetup_FileStoreChoicePassed(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	t.Setenv("TMPDIR", t.TempDir())
+	last := func() fakeCall {
+		t.Helper()
+		calls := h.calls()
+		if len(calls) == 0 {
+			t.Fatal("the CLI did not run")
+		}
+		return calls[len(calls)-1]
+	}
+
+	id := h.startJob("/api/accounts", `{"alias":"g","provider":"gmail","email":"me@example.test","use_file_store":true}`)
+	h.waitJob(id)
+	if got := last().Stdin; got != `{"use_file_store":true}` {
+		t.Errorf("account add stdin = %q, want the use_file_store answer", got)
+	}
+
+	const guid = "00000000-1111-2222-3333-444444444444"
+	code, _, body := h.do(request{method: http.MethodPost, path: "/api/oauth/microsoft", body: `{"client_id":"` + guid + `","use_file_store":true}`})
+	if code != http.StatusOK {
+		t.Fatalf("microsoft: status %d, body %s", code, body)
+	}
+	c := last()
+	if want := []string{"oauth", "set", "microsoft", "--client-id=" + guid, "--answers-stdin"}; !slices.Equal(c.Args, want) {
+		t.Errorf("microsoft argv = %q, want %q", c.Args, want)
+	}
+	if c.Stdin != `{"use_file_store":true}` {
+		t.Errorf("microsoft stdin = %q", c.Stdin)
+	}
+
+	code, _, body = h.do(request{method: http.MethodPost, path: "/api/oauth/google?use_file_store=false", body: `{"installed":{}}`})
+	if code != http.StatusOK {
+		t.Fatalf("google: status %d, body %s", code, body)
+	}
+	c = last()
+	if len(c.Args) != 5 || !slices.Equal(c.Args[:3], []string{"oauth", "set", "google"}) ||
+		!strings.HasPrefix(c.Args[3], "--file=") || c.Args[4] != "--answers-stdin" {
+		t.Errorf("google argv = %q", c.Args)
+	}
+	if c.Stdin != `{"use_file_store":false}` {
+		t.Errorf("google stdin = %q", c.Stdin)
+	}
+
+	n := len(h.calls())
+	for _, q := range []string{"yes", "", "true&use_file_store=false"} {
+		code, _, body = h.do(request{method: http.MethodPost, path: "/api/oauth/google?use_file_store=" + q, body: `{"installed":{}}`})
+		if code != http.StatusBadRequest {
+			t.Errorf("use_file_store=%s: status %d, want 400; body %s", q, code, body)
+		}
+	}
+	if got := len(h.calls()); got != n {
+		t.Errorf("the CLI ran %d times after refused queries", got-n)
+	}
+
+	code, _, body = h.do(request{method: http.MethodPost, path: "/api/oauth/microsoft", body: `{"client_id":"` + guid + `"}`})
+	if code != http.StatusOK {
+		t.Fatalf("microsoft with no answer: status %d, body %s", code, body)
+	}
+	if c = last(); len(c.Args) != 4 || c.Stdin != "" {
+		t.Errorf("microsoft with no answer: argv %q, stdin %q; want no flag and no stdin", c.Args, c.Stdin)
+	}
+
+	// The page: one checkbox, and its value goes with each of the three
+	// requests under the field name that the server reads.
+	if !jsonTags(addAccountRequest{})["use_file_store"] {
+		t.Fatal("addAccountRequest has no use_file_store field")
+	}
+	html, err := fs.ReadFile(webFiles(), "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), `type="checkbox" id="f-filestore"`) {
+		t.Error("index.html has no file-store checkbox")
+	}
+	js, err := fs.ReadFile(webFiles(), "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`$("f-filestore").checked`,
+		`"/api/oauth/google?use_file_store=" + fileStore()`,
+		`{ client_id: id, use_file_store: fileStore() }`,
+		`use_file_store: fileStore(),`,
+	} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js does not hold %q", want)
 		}
 	}
 }

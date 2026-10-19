@@ -60,6 +60,14 @@ const versionTimeout = 10 * time.Second
 // keeps the pipe open cannot block the job.
 const jobWaitDelay = 5 * time.Second
 
+// jobStopWait is the time that serve waits for a CLI job after SIGTERM
+// at the stop. Then it kills that process (L3, IS13.5).
+const jobStopWait = 10 * time.Second
+
+// clientTimeout limits the calls of claude and pgrep for one client
+// request.
+const clientTimeout = 30 * time.Second
+
 // guidPattern is the form of a Microsoft client id (DS13.8 step 5).
 var guidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
@@ -77,6 +85,14 @@ type serverConfig struct {
 	// Idle is the time with no API request after which the server
 	// stops (DS13.6 rule 10).
 	Idle time.Duration
+	// Home is the home directory of the person. The Claude Desktop
+	// config is under it. "" means no Claude Desktop config.
+	Home string
+	// GOOS selects the Claude Desktop config path.
+	GOOS string
+	// Run starts claude and pgrep. main gives execRunner; tests give
+	// a fake, so no test runs the real claude.
+	Run cmdRunner
 }
 
 // server is the setup server. It implements http.Handler.
@@ -90,7 +106,14 @@ type server struct {
 	token        string
 	host         string
 	idle         time.Duration
+	home         string
+	goos         string
+	run          cmdRunner
+	stopWait     time.Duration
 	mux          *http.ServeMux
+
+	// clientMu lets one client change run at a time.
+	clientMu sync.Mutex
 
 	idleTimer *time.Timer
 	done      chan struct{}
@@ -122,6 +145,10 @@ func newServer(cfg serverConfig, addr string) (*server, error) {
 		token:        token,
 		host:         addr,
 		idle:         cfg.Idle,
+		home:         cfg.Home,
+		goos:         cfg.GOOS,
+		run:          cfg.Run,
+		stopWait:     jobStopWait,
 		done:         make(chan struct{}),
 		jobs:         map[string]*job{},
 	}
@@ -172,6 +199,8 @@ func (s *server) routes() {
 	m.HandleFunc("POST /api/jobs/{id}/cancel", s.handleJobCancel)
 	m.HandleFunc("POST /api/doctor", s.handleDoctor)
 	m.HandleFunc("POST /api/service", s.writeAction(s.handleService))
+	m.HandleFunc("GET /api/clients", s.handleClients)
+	m.HandleFunc("POST /api/clients/{name}", s.writeAction(s.handleClientApply))
 	m.HandleFunc("POST /api/finish", s.handleFinish)
 	s.mux = m
 }
@@ -234,7 +263,8 @@ func (s *server) stop() {
 
 // serve serves on ln until ctx ends or stop is called (Finish, idle
 // time, signal). Then it shuts the HTTP server down and sends SIGTERM
-// to a CLI job that still runs. It stops no other process (IS13.5).
+// to a CLI job that still runs. When that process does not end in
+// stopWait, serve kills it. It stops no other process (IS13.5).
 //
 // arch: DS13.6, IS13.5
 func (s *server) serve(ctx context.Context, ln net.Listener) {
@@ -254,7 +284,14 @@ func (s *server) serve(ctx context.Context, ln net.Listener) {
 	s.mu.Unlock()
 	if j != nil {
 		j.cancel()
-		<-j.done
+		select {
+		case <-j.done:
+		case <-time.After(s.stopWait):
+			// The process that startJob started, and no other one
+			// (IS13.5). It ignored SIGTERM.
+			_ = j.proc.Kill()
+			<-j.done
+		}
 	}
 }
 
@@ -299,7 +336,7 @@ func (s *server) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", pageTypes[r.URL.Path])
-	_, _ = w.Write(b)
+	_, _ = w.Write(b) //nolint:gosec // G705: the router passes only four fixed paths, b is an embedded file and the Content-Type comes from pageTypes
 }
 
 // stateAccount is one account in the state of GET /api/state.
@@ -350,10 +387,21 @@ func (s *server) handleState(w http.ResponseWriter, _ *http.Request) {
 // handleOAuthGoogle takes the client file of the Google Cloud console
 // as the body and runs "oauth set google --file". The file goes to a
 // 0600 file in a new 0700 temporary directory, and the server removes
-// the directory when the command ends (DS13.6 rule 11, IS13.2).
+// the directory when the command ends (DS13.6 rule 11, IS13.2). The
+// body is the file as it is, so the answer to the file-store question
+// comes in the query: ?use_file_store=true or false (review M3).
 //
-// arch: DS13.6, DS13.10, IS13.2
+// arch: DS13.5, DS13.6, DS13.10, IS13.2
 func (s *server) handleOAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	var useFileStore *bool
+	if q := r.URL.Query(); q.Has("use_file_store") {
+		v, err := strconv.ParseBool(q.Get("use_file_store"))
+		if err != nil || len(q["use_file_store"]) != 1 {
+			writeError(w, http.StatusBadRequest, "use_file_store must be true or false")
+			return
+		}
+		useFileStore = &v
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read the body")
@@ -386,7 +434,23 @@ func (s *server) handleOAuthGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clear(body)
-	s.runSync(w, []string{"oauth", "set", "google", "--file=" + file}, nil, cleanup)
+	args, stdin := oauthAnswers([]string{"oauth", "set", "google", "--file=" + file}, useFileStore)
+	s.runSync(w, args, stdin, cleanup)
+}
+
+// oauthAnswers adds --answers-stdin to an "oauth set" argv when the
+// page answered the file-store question, and gives the document for
+// stdin: {"use_file_store": B} (DS13.5, review M3). With no answer, the
+// argv stays as it is and stdin is empty. The CLI then refuses the
+// question as before, because its stdin is not a terminal (B5).
+//
+// arch: DS13.5, IS13.2, B5
+func oauthAnswers(args []string, useFileStore *bool) ([]string, []byte) {
+	if useFileStore == nil {
+		return args, nil
+	}
+	doc, _ := json.Marshal(answersDoc{UseFileStore: useFileStore}) //nolint:gosec // G117: the document goes to the CLI on stdin by design (IS13.2); a struct of a bool pointer always encodes
+	return append(args, "--answers-stdin"), doc
 }
 
 // writePrivateFile writes data to a new file at p with mode 0600.
@@ -403,12 +467,14 @@ func writePrivateFile(p string, data []byte) error {
 }
 
 // handleOAuthMicrosoft runs "oauth set microsoft --client-id". The
-// client id of a public client is not a secret.
+// client id of a public client is not a secret. The optional
+// use_file_store goes to the CLI on stdin (review M3).
 //
-// arch: DS13.10
+// arch: DS13.5, DS13.10
 func (s *server) handleOAuthMicrosoft(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClientID string `json:"client_id"`
+		ClientID     string `json:"client_id"`
+		UseFileStore *bool  `json:"use_file_store"`
 	}
 	if !decodeBody(w, r, &req) {
 		return
@@ -417,7 +483,8 @@ func (s *server) handleOAuthMicrosoft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the client id must be a GUID")
 		return
 	}
-	s.runSync(w, []string{"oauth", "set", "microsoft", "--client-id=" + req.ClientID}, nil, nil)
+	args, stdin := oauthAnswers([]string{"oauth", "set", "microsoft", "--client-id=" + req.ClientID}, req.UseFileStore)
+	s.runSync(w, args, stdin, nil)
 }
 
 // addAccountRequest is the body of POST /api/accounts. Secret and
@@ -535,6 +602,70 @@ func (s *server) handleDoctor(w http.ResponseWriter, _ *http.Request) {
 // arch: DS13.8, IS13.5
 func (s *server) handleService(w http.ResponseWriter, _ *http.Request) {
 	s.runAsync(w, []string{"service", "install"}, nil, nil)
+}
+
+// desktopPath gives the Claude Desktop config path, or "" when no
+// home directory or no path for this system is known.
+func (s *server) desktopPath() string {
+	if s.home == "" {
+		return ""
+	}
+	return desktopConfigPath(s.home, s.goos)
+}
+
+// handleClients gives the state of Claude Desktop and Claude Code:
+// present, the current mailbag entry, the change that "Apply" makes,
+// and whether the Claude app runs. It writes nothing.
+//
+// arch: DS13.3, DS13.8, DS13.10
+func (s *server) handleClients(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), clientTimeout)
+	defer cancel()
+	desktop := desktopState(s.desktopPath(), s.cliPath, desktopAppRunning(ctx, s.run))
+	writeJSON(w, http.StatusOK, []clientView{desktop, claudeCodeState(ctx, s.run, s.cliPath)})
+}
+
+// handleClientApply connects mailbag to one client. Claude Desktop:
+// a backup, a merge and a rename, refused while the app runs.
+// Claude Code: "claude mcp add --scope user". The body is {}.
+//
+// arch: DS13.3, DS13.8, DS13.10, IS13.4, IS13.5
+func (s *server) handleClientApply(w http.ResponseWriter, r *http.Request) {
+	var req struct{}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), clientTimeout)
+	defer cancel()
+	name := r.PathValue("name")
+	switch name {
+	case clientDesktop:
+		if !desktopPresent(s.desktopPath()) {
+			writeError(w, http.StatusNotFound, "Claude Desktop is not on this computer")
+			return
+		}
+		running := func() bool { return desktopAppRunning(ctx, s.run) }
+		backup, err := applyDesktop(s.desktopPath(), s.cliPath, running, time.Now)
+		switch {
+		case errors.Is(err, errAppRunning):
+			writeError(w, http.StatusConflict, err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		default:
+			writeJSON(w, http.StatusOK, clientApplied{Name: name, Changed: true, Backup: backup})
+		}
+	case clientCode:
+		changed, err := connectClaudeCode(ctx, s.run, s.cliPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, clientApplied{Name: name, Changed: changed})
+	default:
+		writeError(w, http.StatusNotFound, "no such client")
+	}
 }
 
 // handleFinish answers, then stops the server.

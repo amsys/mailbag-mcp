@@ -48,8 +48,9 @@ const usageText = `usage: mailbag-mcp account add <alias> --provider imap|outloo
        mailbag-mcp account remove <alias>
        mailbag-mcp account test <alias>
        mailbag-mcp identities detect <alias> [--sample N]
-       mailbag-mcp oauth set microsoft --client-id ID
-       mailbag-mcp oauth set google --file client_secret.json
+       mailbag-mcp oauth set microsoft --client-id ID [--answers-stdin]
+       mailbag-mcp oauth set google --file client_secret.json [--answers-stdin]
+                   (stdin: {"use_file_store": B}; "secret" is refused)
        mailbag-mcp tools size
        mailbag-mcp tools markdown
        mailbag-mcp doctor
@@ -67,9 +68,9 @@ type Env struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	// Stdin is where "account add --answers-stdin" reads its one JSON
-	// document (DS13.5). A nil value means os.Stdin. No other command
-	// reads it.
+	// Stdin is where "account add --answers-stdin" and "oauth set
+	// --answers-stdin" read their one JSON document (DS13.5). A nil
+	// value means os.Stdin. No other command reads it.
 	Stdin io.Reader
 
 	// ReadSecret asks for one secret with no echo. A nil value means

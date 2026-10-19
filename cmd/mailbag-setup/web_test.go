@@ -200,17 +200,19 @@ func TestWeb_JSONFieldsMatchServer(t *testing.T) {
 	// The variable names of app.js and the answer each one holds.
 	// r in app.js is the Response in api() and the job start answer in
 	// runJob(); ok, status and json are members of the Response.
-	// c.name is set by the page when the clients answer is an object.
-	// c is also the cards element in pickProvider(), so c.append is allowed.
+	// c is one clientView of GET /api/clients; c is also the cards
+	// element in pickProvider(), so c.append is allowed. ap is the
+	// answer of POST /api/clients/<name>.
 	allowed := map[string]map[string]bool{
 		"r":    union(maps["runAsync"], map[string]bool{"ok": true, "status": true, "json": true}),
 		"j":    jsonTags(jobView{}),
 		"s":    maps["handleState"],
 		"a":    jsonTags(stateAccount{}),
-		"c":    union(jsonTags(desktopPlan{}), map[string]bool{"name": true, "append": true}),
+		"c":    union(jsonTags(clientView{}), map[string]bool{"append": true}),
+		"ap":   jsonTags(clientApplied{}),
 		"data": maps["writeError"],
 	}
-	re := regexp.MustCompile(`(?:^|[^\w.$])(r|j|s|a|c|data)\.([a-z_]+)\b`)
+	re := regexp.MustCompile(`(?:^|[^\w.$])(r|j|s|a|c|ap|data)\.([a-z_]+)\b`)
 	seen := map[string]bool{}
 	for _, m := range re.FindAllStringSubmatch(string(js), -1) {
 		v, field := m[1], m[2]
@@ -219,7 +221,11 @@ func TestWeb_JSONFieldsMatchServer(t *testing.T) {
 			t.Errorf("app.js reads %s.%s, but the server sends no field %q for it", v, field, field)
 		}
 	}
-	for _, must := range []string{"r.job", "j.lines", "j.next", "j.done", "j.exit", "s.cli_path"} {
+	for _, must := range []string{
+		"r.job", "j.lines", "j.next", "j.done", "j.exit", "s.cli_path",
+		"c.name", "c.present", "c.current", "c.same", "c.running", "c.before", "c.after", "c.error",
+		"ap.changed", "ap.backup",
+	} {
 		if !seen[must] {
 			t.Errorf("app.js no longer reads %s: the test does not see it", must)
 		}

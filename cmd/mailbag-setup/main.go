@@ -99,10 +99,17 @@ func run(args []string, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "%s: listen on 127.0.0.1: %v\n", setupName, err)
 		return 1
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "" // the page then shows no Claude Desktop
+	}
 	s, err := newServer(serverConfig{
 		CLIPath:      cli,
 		SetupVersion: setupName + " " + buildVersion(),
 		Idle:         idleLimit,
+		Home:         home,
+		GOOS:         runtime.GOOS,
+		Run:          execRunner,
 	}, ln.Addr().String())
 	if err != nil {
 		_ = ln.Close()

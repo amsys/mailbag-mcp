@@ -15,6 +15,7 @@
   <button id="b-add">Add an account</button>
   <button id="b-clients">Connect a client</button>
   <button id="b-checks">Run checks</button>
+  <button id="b-daemon">Daemon</button>
 </section>
 
 <section id="provider" hidden><h2>Add an account: provider</h2>
@@ -25,6 +26,7 @@
   <label><input type="radio" name="access" value="read"> read: read and search only</label>
   <label><input type="radio" name="access" value="draft" checked> draft: also make drafts (default)</label>
   <label><input type="radio" name="access" value="send"> send: also send, after a confirmation in the client</label>
+  <label><input type="checkbox" id="f-filestore"> Store the password in a file when the system keyring does not answer</label>
 </section>
 
 <section id="gmail" hidden><h2>Gmail: Google client</h2>

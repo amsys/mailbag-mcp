@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
 	"github.com/amsys/mailbag-mcp/internal/guard"
@@ -419,6 +420,128 @@ func TestCLI_OAuthSetGoogleNeverPrintsID(t *testing.T) {
 		line := "server said: " + value + " is not allowed"
 		if got := guard.Redact(line); strings.Contains(got, value) {
 			t.Errorf("the %s is not registered with the redactor: Redact(%q) = %q", name, line, got)
+		}
+	}
+}
+
+// oauthSetArgs gives the argv of "oauth set" for each provider, with
+// a fake Google client file. The values are made up (IS7.1).
+func oauthSetArgs(t *testing.T) map[string][]string {
+	t.Helper()
+	return map[string][]string{
+		"microsoft": {"oauth", "set", "microsoft", "--client-id", "00000000-1111-2222-3333-444444444444"},
+		"google":    {"oauth", "set", "google", "--file", writeGoogleClientFile(t, "1-abc.test-client.apps.googleusercontent.com", "oauth-answers-test-secret")},
+	}
+}
+
+// TestCLI_OAuthAnswersStdin_FileStore proves that "oauth set
+// --answers-stdin" answers the file-store question of storeKind from
+// use_file_store (review M3, DS13.5). The keyring does not answer (a
+// mock with an error) and no accounts.toml exists, so storeKind asks.
+// true writes the client to the file store and records "file"; false
+// writes nothing and exits 1; a document with no use_file_store exits
+// 2 and writes nothing. Without the flag, the question goes to the
+// terminal reader, which refuses the test's stdin as today (B5), and
+// nothing is written.
+//
+// arch: DS13.5, IS13.2, IS13.6, B3, B5
+func TestCLI_OAuthAnswersStdin_FileStore(t *testing.T) {
+	keyring.MockInitWithError(errors.New("no secret service in this test"))
+	t.Cleanup(keyring.MockInit)
+	for provider, args := range oauthSetArgs(t) {
+		key := map[string]string{"microsoft": microsoftClientKey, "google": googleClientKey}[provider]
+		for _, tc := range []struct {
+			name  string
+			flag  bool
+			stdin string
+			want  int
+		}{
+			{"use_file_store true", true, `{"use_file_store": true}`, exitOK},
+			{"use_file_store false", true, `{"use_file_store": false}`, exitFail},
+			{"no answer", true, `{}`, exitUsage},
+			{"no flag", false, `{"use_file_store": true}`, exitFail},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("MAILBAG_CONFIG_DIR", dir)
+				t.Setenv("MAILBAG_SECRETS", "")
+				argv := append([]string{}, args...)
+				if tc.flag {
+					argv = append(argv, "--answers-stdin")
+				}
+				var out, errOut bytes.Buffer
+				code := Run(argv, Env{Stdout: &out, Stderr: &errOut, Stdin: strings.NewReader(tc.stdin)})
+				if code != tc.want {
+					t.Fatalf("exit code = %d, want %d\nstderr: %s", code, tc.want, errOut.String())
+				}
+				if tc.want != exitOK {
+					if after := dirNames(t, dir); after != "" {
+						t.Errorf("a refused run wrote files: [%s]", after)
+					}
+					if tc.want == exitUsage && !strings.Contains(errOut.String(), "does not answer this prompt") {
+						t.Errorf("stderr does not name the unanswered prompt:\n%s", errOut.String())
+					}
+					return
+				}
+				kind, err := recordedKind(filepath.Join(dir, "accounts.toml"))
+				if err != nil || kind != secrets.KindFile {
+					t.Errorf("accounts.toml records %q (err %v), want %q", kind, err, secrets.KindFile)
+				}
+				store, err := secrets.Select(secrets.KindFile, keyringService, dir)
+				if err != nil {
+					t.Fatalf("select the file store: %v", err)
+				}
+				if _, err := store.Get(key); err != nil {
+					t.Errorf("the file store has no %q: %v", key, err)
+				}
+			})
+		}
+	}
+}
+
+// TestCLI_OAuthAnswersStdin_SecretRefused proves that the document of
+// "oauth set --answers-stdin" must not hold "secret", and that the
+// strict reader of DS13.5 refuses an unknown field and a second
+// document. Each refusal exits 2 before a file is written, and no
+// output repeats the value (IS13.2).
+//
+// arch: DS13.5, IS13.2, IS13.6, B5
+func TestCLI_OAuthAnswersStdin_SecretRefused(t *testing.T) {
+	const typed = "fake-oauth-refused-value"
+	for provider, args := range oauthSetArgs(t) {
+		for _, tc := range []struct {
+			name  string
+			stdin string
+			want  string
+		}{
+			{"secret", `{"secret": "` + typed + `", "use_file_store": true}`, `must not hold "secret"`},
+			{"unknown field", `{"use_file_store": true, "password": "` + typed + `"}`, "unknown field"},
+			{"two documents", `{"use_file_store": true} {"secret": "` + typed + `"}`, "more than one JSON document"},
+			{"a line, not JSON", typed + "\n", "one valid JSON document"},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				dir := sandbox(t)
+				var out, errOut bytes.Buffer
+				code := Run(append(append([]string{}, args...), "--answers-stdin"), Env{
+					Stdout: &out, Stderr: &errOut,
+					Stdin: strings.NewReader(tc.stdin),
+				})
+				if code != exitUsage {
+					t.Errorf("exit code = %d, want %d\nstderr: %s", code, exitUsage, errOut.String())
+				}
+				if !strings.HasPrefix(errOut.String(), "usage:") {
+					t.Errorf("a usage error must start with a line that starts with \"usage:\":\n%s", errOut.String())
+				}
+				if !strings.Contains(errOut.String(), tc.want) {
+					t.Errorf("stderr does not hold %q:\n%s", tc.want, errOut.String())
+				}
+				if strings.Contains(out.String()+errOut.String(), typed) {
+					t.Errorf("the value is in the output:\n%s%s", out.String(), errOut.String())
+				}
+				if after := dirNames(t, dir); after != "" {
+					t.Errorf("a refused document wrote files: [%s]", after)
+				}
+			})
 		}
 	}
 }

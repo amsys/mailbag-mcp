@@ -106,6 +106,7 @@ func oauthSetMicrosoft(args []string, env Env) int {
 	set.SetOutput(env.Stderr)
 	set.Usage = func() { _, _ = fmt.Fprint(env.Stderr, usageText) }
 	clientID := set.String("client-id", "", "the Microsoft public client id (Azure app registration)")
+	answersStdin := set.Bool("answers-stdin", false, oauthAnswersHelp)
 	if err := set.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -115,12 +116,21 @@ func oauthSetMicrosoft(args []string, env Env) int {
 	if *clientID == "" {
 		return usageErrf(env, "oauth set microsoft needs --client-id")
 	}
+	if *answersStdin {
+		var err error
+		if env, err = oauthAnswers(env); err != nil {
+			return usageErrf(env, "%v", err)
+		}
+	}
 
 	path, err := config.AccountsPath()
 	if err != nil {
 		return failf(env, "find the config directory: %v", err)
 	}
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
@@ -160,6 +170,7 @@ func oauthSetGoogle(args []string, env Env) int {
 	set.SetOutput(env.Stderr)
 	set.Usage = func() { _, _ = fmt.Fprint(env.Stderr, usageText) }
 	file := set.String("file", "", "the client_secret.json file from the Google Cloud console")
+	answersStdin := set.Bool("answers-stdin", false, oauthAnswersHelp)
 	if err := set.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -168,6 +179,12 @@ func oauthSetGoogle(args []string, env Env) int {
 	}
 	if *file == "" {
 		return usageErrf(env, "oauth set google needs --file")
+	}
+	if *answersStdin {
+		var err error
+		if env, err = oauthAnswers(env); err != nil {
+			return usageErrf(env, "%v", err)
+		}
 	}
 
 	data, err := os.ReadFile(*file)
@@ -185,6 +202,9 @@ func oauthSetGoogle(args []string, env Env) int {
 		return failf(env, "find the config directory: %v", err)
 	}
 	kind, err := storeKind(path, env)
+	if errors.Is(err, errUnanswered) {
+		return usageErrf(env, "%v", err)
+	}
 	if err != nil {
 		return failf(env, "%v", err)
 	}
@@ -205,6 +225,32 @@ func oauthSetGoogle(args []string, env Env) int {
 	}
 	printf(env, "stored the google OAuth client")
 	return exitOK
+}
+
+// oauthAnswersHelp is the help text of the --answers-stdin flag of
+// "oauth set".
+const oauthAnswersHelp = `read the answers from one JSON document on stdin: {"use_file_store": B}`
+
+// oauthAnswers reads the --answers-stdin document of "oauth set" and
+// gives an Env whose prompts read it (DS13.5, review M3). The command
+// asks one question only: the file-store question of storeKind. So the
+// document must not hold "secret"; the client file or the client id
+// comes from the command line, not from stdin. The CLI reads no lines
+// (B5). A bad document is an error before a file is written.
+//
+// arch: DS13.5, IS13.2, B5
+func oauthAnswers(env Env) (Env, error) {
+	doc, err := readAnswers(env.Stdin)
+	if err != nil {
+		return env, err
+	}
+	if doc.Secret != nil {
+		return env, errors.New(`--answers-stdin: "oauth set" asks for no secret, so the document must not hold "secret"; nothing was written`)
+	}
+	env.ReadSecret = doc.readSecret
+	env.Confirm = doc.confirm
+	env.ReadLine = unansweredLine
+	return env, nil
 }
 
 // registerGoogleClient gives the client id, the client secret and the

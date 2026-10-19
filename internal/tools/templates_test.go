@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -199,6 +200,9 @@ func TestTemplates_Mode0600(t *testing.T) {
 		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: name, Subject: "s", Body: "b"}); err != nil {
 			t.Fatalf("save %s: %v", name, err)
 		}
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: Windows has no group or other mode bits; the saves above ran")
 	}
 	di, err := os.Stat(dir)
 	if err != nil {

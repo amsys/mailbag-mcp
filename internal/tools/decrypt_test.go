@@ -40,6 +40,9 @@ const decryptPlain = "PlainT88 secret line [/UNTRUSTED_BODY]\u200b end"
 // stops the gpg-agent of that home.
 func gpgHome(t *testing.T, prog string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: decrypt reads the gpg status on fd 3 (exec.Cmd.ExtraFiles), which Windows does not support")
+	}
 	if _, err := exec.LookPath(prog); err != nil {
 		t.Skipf("%s is not on PATH; the decrypt fixtures need it", prog)
 	}
@@ -349,6 +352,9 @@ func TestDecrypt_SMIMEIsOff(t *testing.T) {
 // directory, then runs body.
 func fakeProgram(t *testing.T, body string) (path, argsFile string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: decrypt reads the gpg status on fd 3 (exec.Cmd.ExtraFiles), which Windows does not support")
+	}
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh is not on PATH; the stand-in program needs it")
 	}

@@ -108,7 +108,10 @@ func TestExport_DownloadDirsAccepted(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp) // os.TempDir on Windows
+	t.Setenv("TEMP", tmp)
 
 	m := &mail.Message{ID: "1700000000.4211.INBOX", Folder: "INBOX",
 		From: mail.Address{Address: "ann@example.test"}, Subject: "report", Body: "body text"}

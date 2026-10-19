@@ -118,8 +118,14 @@ func TestCLI_ServiceInstallWritesUnits(t *testing.T) {
 	if strings.Contains(got, "%h") {
 		t.Errorf("mailbag.service still holds the %%h placeholder:\n%s", got)
 	}
+	// The unit holds the path in its ExecStart= form: a Windows path
+	// has backslashes, which execStartPath quotes and escapes.
 	exe, _ := os.Executable()
-	if !filepath.IsAbs(exe) || !strings.Contains(got, exe) {
+	quoted, err := execStartPath(exe)
+	if err != nil {
+		t.Fatalf("execStartPath(%q): %v", exe, err)
+	}
+	if !filepath.IsAbs(exe) || !strings.Contains(got, "ExecStart="+quoted+" serve") {
 		t.Errorf("mailbag.service does not name the absolute executable %q:\n%s", exe, got)
 	}
 	if !strings.Contains(readFile(t, socket), "ListenStream=%t/mailbag/mailbag.sock") {

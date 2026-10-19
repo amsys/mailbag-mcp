@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -656,7 +657,10 @@ func TestAttachment_UsesConfiguredDownloadDirs(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp) // os.TempDir on Windows
+	t.Setenv("TEMP", tmp)
 
 	content := []byte("invoice bytes")
 	prov := &readProvider{att: content, info: mail.AttachmentInfo{Filename: "invoice.pdf"}}
@@ -1853,6 +1857,9 @@ const opaqueCertCanary = "CANARY-T190-CERT"
 // is not in the signed content.
 func opaqueSigned(t *testing.T, content string) (*mail.Message, []byte) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: S/MIME verify gives openssl /dev/stdin and /dev/stdout (internal/verify)")
+	}
 	bin, err := exec.LookPath("openssl")
 	if err != nil {
 		t.Skip("openssl is not on PATH; the S/MIME fixture needs it to sign")

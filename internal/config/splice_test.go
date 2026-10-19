@@ -226,7 +226,10 @@ email    = "me@gmail.com"
 //
 // arch: DRV.19.1
 func TestRemoveAccountBlock_KeepsFollowingTables(t *testing.T) {
-	const original = `secrets = "keyring"
+	// The CA path must be absolute on each system, so it comes from
+	// t.TempDir, with forward slashes for the TOML string.
+	ca := filepath.ToSlash(filepath.Join(t.TempDir(), "ca.pem"))
+	original := `secrets = "keyring"
 
 [accounts.work]
 provider = "imap"
@@ -234,16 +237,16 @@ email    = "me@example.com"
 
 [verify]
 authserv_id   = "mail.example.com"
-smime_ca_file = "/etc/mailbag/ca.pem"
+smime_ca_file = "` + ca + `"
 
 [send]
 allow_without_elicitation = true
 `
-	const want = `secrets = "keyring"
+	want := `secrets = "keyring"
 
 [verify]
 authserv_id   = "mail.example.com"
-smime_ca_file = "/etc/mailbag/ca.pem"
+smime_ca_file = "` + ca + `"
 
 [send]
 allow_without_elicitation = true

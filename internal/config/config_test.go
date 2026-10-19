@@ -325,17 +325,20 @@ email    = "me@example.com"
 		if v.AuthservID != "mx.example.net" {
 			t.Errorf("AuthservID = %q, want mx.example.net", v.AuthservID)
 		}
-		if v.PGPKeysDir != dir {
-			t.Errorf("PGPKeysDir = %q, want %q", v.PGPKeysDir, dir)
+		// Load keeps each path as the file gives it; the file has
+		// forward slashes, also on Windows.
+		slashDir := filepath.ToSlash(dir)
+		if v.PGPKeysDir != slashDir {
+			t.Errorf("PGPKeysDir = %q, want %q", v.PGPKeysDir, slashDir)
 		}
-		if v.SMIMECAFile != dir+"/ca.pem" {
-			t.Errorf("SMIMECAFile = %q, want %q/ca.pem", v.SMIMECAFile, dir)
+		if v.SMIMECAFile != slashDir+"/ca.pem" {
+			t.Errorf("SMIMECAFile = %q, want %q/ca.pem", v.SMIMECAFile, slashDir)
 		}
 		if !v.SMIMECRLCheck {
 			t.Errorf("SMIMECRLCheck = false, want true")
 		}
-		if v.OpensslPath != dir+"/openssl" {
-			t.Errorf("OpensslPath = %q, want %q/openssl", v.OpensslPath, dir)
+		if v.OpensslPath != slashDir+"/openssl" {
+			t.Errorf("OpensslPath = %q, want %q/openssl", v.OpensslPath, slashDir)
 		}
 	})
 
@@ -1157,6 +1160,7 @@ func sigOf(t *testing.T, c *Config) string {
 func TestIdentity_SignatureFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if err := os.WriteFile(filepath.Join(home, "sig.txt"), []byte(ownerSig+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1170,7 +1174,8 @@ func TestIdentity_SignatureFile(t *testing.T) {
 		{"absolute", abs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, path := sigDirFixture(t, "signature_file = \""+tc.key+"\"\n")
+			// A TOML literal string: a Windows path has backslashes.
+			dir, path := sigDirFixture(t, "signature_file = '"+tc.key+"'\n")
 			if err := os.WriteFile(filepath.Join(dir, "sig.txt"), []byte(ownerSig+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}

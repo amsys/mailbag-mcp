@@ -346,6 +346,7 @@ func TestCreateSaveFile_RejectsPathName(t *testing.T) {
 func TestSavePath_TildeRoot(t *testing.T) {
 	home := realTempDir(t)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	downloads := filepath.Join(home, "Downloads")
 	if err := os.Mkdir(downloads, 0o700); err != nil {

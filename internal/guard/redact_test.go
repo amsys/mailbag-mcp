@@ -93,6 +93,7 @@ func TestRedact_Values(t *testing.T) {
 
 	t.Run("home directory replaced with tilde", func(t *testing.T) {
 		t.Setenv("HOME", "/home/testuser")
+		t.Setenv("USERPROFILE", "/home/testuser")
 		got := Redact("/home/testuser/mail/attach.txt")
 		want := "~/mail/attach.txt"
 		if got != want {
@@ -128,6 +129,7 @@ func TestRedact_ValuesBeforePatterns(t *testing.T) {
 // arch: T2.2, §3.15, G5, B6, §10.3
 func TestRedact_HomeBoundary(t *testing.T) {
 	t.Setenv("HOME", "/home/alice")
+	t.Setenv("USERPROFILE", "/home/alice")
 
 	got := Redact("/home/alicez/file and /home/alice/mail")
 	want := "/home/alicez/file and ~/mail"

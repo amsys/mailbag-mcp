@@ -1,7 +1,7 @@
 # Test workflow: vet, staticcheck, race tests, the coverage gate and
-# govulncheck on Linux, macOS and Windows. release.yml calls it for a tag
-# with workflow_call (DS12.7).
-# arch: T1.7, §5.5, §8 S1, DS12.7
+# govulncheck on Linux and macOS, and a part of it on Windows (DF.7.4).
+# release.yml calls it for a tag with workflow_call (DS12.7).
+# arch: T1.7, §5.5, §8 S1, DS12.7, DF.7.4
 name: test
 
 on:
@@ -20,15 +20,30 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # bash on each system: PowerShell splits -coverprofile=cover.out
+        # at the dot.
+        shell: bash
+    env:
+      # Windows runs a part of the module only (owner ruling DF.7.4).
+      # internal/server and the root e2e tests need the daemon, which
+      # has no Windows port (no Unix socket serve there).
+      # internal/verify needs OpenSSL 3 for S/MIME, which the Windows
+      # runner image does not give. The other packages are not used
+      # on Windows.
+      PKGS: ${{ matrix.os == 'windows-latest' && './internal/config/... ./internal/mime/... ./internal/guard/... ./internal/tools/... ./internal/undo/... ./internal/cli/...' || './...' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: stable
-      - run: go vet ./...
-      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
-      - run: go test -race -coverprofile=cover.out ./...
+      - run: go build $PKGS
+      - run: go vet $PKGS
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 $PKGS
+      - run: go test -race -coverprofile=cover.out $PKGS
       - run: go tool cover -func=cover.out
       - run: scripts/coverage_gate.sh cover.out
         if: runner.os == 'Linux'
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        if: runner.os != 'Windows'

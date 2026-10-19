@@ -1,0 +1,5 @@
+# Line endings: every text file is LF in the work tree on each system,
+# so the golden files and the docs compare byte for byte on Windows too.
+# The .eml fixtures keep their CRLF bytes as they are (no conversion).
+* text=auto eol=lf
+*.eml -text

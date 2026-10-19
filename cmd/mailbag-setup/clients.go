@@ -243,6 +243,8 @@ func applyDesktop(path, binPath string, running func() bool, now func() time.Tim
 type cmdRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // execRunner is the cmdRunner that starts a real process.
+//
+//lint:ignore U1000 reason: no page handler calls applyClaudeCode yet, so nothing passes execRunner; TODO: wire the Claude Code step of DS13.8 (A1-CI report)
 func execRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // G204: the program is claude and the arguments are fixed words plus a path
 }

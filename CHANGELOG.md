@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-20
+
 ### Added
 
 - One MCP server for many mailboxes: IMAP/SMTP, Outlook, Gmail (REST
@@ -25,6 +27,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   activation is optional. The daemon stops after 15 minutes with no
   session.
 - Secrets in the system keyring, with a file store as the fallback.
+- `mailbag-setup`, a setup page in the browser for the account, the
+  client and the daemon steps. It listens on `127.0.0.1` and needs a
+  token.
+- `account add --answers-stdin` and `oauth set --answers-stdin`: the
+  setup page sends passwords and client secrets through stdin.
+- `bulk` has `dry_run`: it counts the matches and lists up to 50 rows,
+  and it changes nothing.
+- One session holds at most 16 places of the store for pending sends
+  and bulk changes. Another session still has room. A repeated call
+  reuses its place and does not take a new one.
+- Linux packages `.deb`, `.rpm` and `.pkg.tar.zst`, with `mailbag-mcp`
+  and `mailbag-setup` in `/usr/bin`.
+- A release gate: a tag must have a good SSH signature, and CI reads
+  the allowed keys from `main`. The `release` environment needs an
+  approval before the release goes public.
+- Live tests of the JMAP provider against a Stalwart account. They
+  need the build tag `live` and `MAILBAG_LIVE_JMAP`.
 
 ### Changed
 

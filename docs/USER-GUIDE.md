@@ -118,6 +118,23 @@ command line. When you upload a Google client file, the page writes it
 to a temporary file with mode 0600 for `oauth set google --file`. The
 page removes that file when the command ends.
 
+The page has these steps:
+
+- Account: the form adds the account with `account add
+  --answers-stdin`. The box "Store the password in a file when the
+  system keyring does not answer" answers the file store question for
+  the account and for `oauth set`.
+- Connect a client: the page lists each client it finds and registers
+  mailbag with it.
+- Daemon: the page installs the systemd units. It does not start them.
+  You copy and run the `systemctl --user` command that it shows.
+
+The token is in the address that the page opens, after `#k=`. The
+browser command gets the address as an argument, so another program of
+your user can see it in the process list while the command runs. The
+address also stays in the terminal. The token is valid until the page
+stops. Clear the terminal when other people can read it.
+
 To register mailbag with Claude Desktop, quit the Claude app first.
 The app can write its config file when it quits, so the change can be
 lost. While the app runs, the page refuses the change and tells you to
@@ -828,6 +845,8 @@ Some toolsets have more keys:
   ack_plaintext_reaches_model_provider = true
   ```
 
+  On Windows, decrypt does not work: it needs the gpg status output on a file descriptor that Windows does not give.
+
   When one of the three is missing, the server does not offer the
   tool, and `mailbag-mcp doctor` names the missing setting. The tool
   needs `gpg` and `gpgsm` in `PATH`.
@@ -905,6 +924,13 @@ The files are here:
 | `server.log`, `undo/` | `~/.local/state/mailbag-mcp/` | `state/` in the directory above | `state\` in the directory above |
 
 `XDG_CONFIG_HOME` and `XDG_STATE_HOME` change the Linux paths.
+
+Windows limits:
+
+- Windows has no daemon. Each client starts its own server process.
+- On Windows, decrypt does not work.
+- On Windows, S/MIME verify does not work, because the server passes the message to OpenSSL through `/dev/stdin`.
+- `mailbag-setup` is not in the Windows archive. Use the CLI there.
 
 The server writes its log to `server.log`. When the file is larger
 than 1 MB, the server renames it to `server.log.old` and starts a new

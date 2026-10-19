@@ -190,7 +190,8 @@ job starts only when the job before it passes:
 2. **test** calls `test.yml` with `workflow_call`.
 3. **build** runs GoReleaser with `.goreleaser.yaml` and makes a
    **draft** release (`release.draft: true`) with six archives (Linux,
-   macOS and Windows, each on amd64 and arm64) and `checksums.txt`. It
+   macOS and Windows, each on amd64 and arm64), three Linux packages
+   (`.deb`, `.rpm` and `.pkg.tar.zst`) and `checksums.txt`. It
    attests each file in `checksums.txt`, and `checksums.txt` itself,
    with `actions/attest-build-provenance`.
 4. **publish** runs in the GitHub environment `release`. It waits until
@@ -256,7 +257,15 @@ tag with `git ls-remote` and change the hash and the comment together.
 request, and when `release.yml` calls it for a tag. It runs on
 `ubuntu-latest`, `macos-latest` and `windows-latest`:
 `go vet`, staticcheck, `go test -race -coverprofile=cover.out ./...`,
-`go tool cover -func`, the coverage gate (Linux only) and govulncheck.
+`go tool cover -func`, the coverage gate (Linux only) and govulncheck
+(not on Windows).
+
+Windows runs a subset (DF.7.4): build, vet, staticcheck and tests for
+`./internal/config/...`, `./internal/mime/...`, `./internal/guard/...`,
+`./internal/tools/...`, `./internal/undo/...` and `./internal/cli/...`
+only. `internal/server` has no daemon on Windows, `internal/verify`
+needs OpenSSL 3, and the root e2e tests need the daemon. The steps use
+`bash`. `test.yml` says why in a comment.
 
 staticcheck and govulncheck are pinned by version in `test.yml`, so a
 new release of a tool cannot fail CI with no code change. Run the same

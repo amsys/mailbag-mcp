@@ -606,6 +606,19 @@ two files differ.
   input reuses the open record through `hold` and gets a NEW request
   state; the old state is stale (DS14.13), as for send.
   `TestBulk_MRTRSameInputReuses`, `TestBulk_MRTRSameInputOtherSession`.
+- H13 On Windows, Go opens a file without FILE_SHARE_DELETE, so a
+  rename over a record that a reader holds open (a List, the CLI, a
+  second server, antivirus or the indexer) fails with Access is denied.
+  bulk then sets journalFailed, and later chunks change mail with no
+  undo rows. Each journal write that replaces `<id>.json` goes through
+  `replaceFile` (`internal/undo/replace_windows.go`): it retries on
+  ERROR_ACCESS_DENIED and ERROR_SHARING_VIOLATION with a 1 ms doubling
+  backoff up to `replaceBudget` (500 ms), far below ClaimMaxAge. Never
+  call `os.Rename` on a record directly, and do not fix this with a
+  share flag in `read`: other processes open the file with their own
+  flags. `TestJournal_ExtendWhileRecordOpen` (passes trivially on
+  POSIX), `TestReplace_RetriesSharingError`,
+  `TestReplace_GivesErrorAfterBudget`, `TestBulk_Detached` (Windows CI).
 
 ## N. Identities and signatures (`internal/config`, `internal/tools`, `internal/cli`, design `03-design-identities.md`)
 

@@ -1,6 +1,6 @@
 ---
 name: mailbag-mcp
-description: Rules and traps of mailbag-mcp, each with the test that pins it. Load before editing internal/imap, internal/oauth, internal/gmail, internal/jmap, internal/guard, internal/tools, internal/config, internal/cli, internal/server, internal/shim or the release files of mailbag-mcp (.goreleaser.yaml, .github/workflows, scripts/coverage_gate.sh, size_test.go), and before changing a tool schema or a test bound.
+description: Rules and traps of mailbag-mcp, each with the test that pins it. Load before editing internal/imap, internal/oauth, internal/gmail, internal/jmap, internal/guard, internal/tools, internal/config, internal/cli, internal/server, internal/shim, cmd/mailbag-setup or the release files of mailbag-mcp (.goreleaser.yaml, .github/workflows, scripts/coverage_gate.sh, scripts/release, size_test.go), and before changing a tool schema or a test bound.
 ---
 
 # mailbag-mcp rules
@@ -50,6 +50,24 @@ two files differ.
 - Release: `.goreleaser.yaml` sets `-trimpath` and `-s -w`, and never
   `-X`. The version comes from the Go build info, so a dirty tree gives
   `+dirty`. Each action in `.github/workflows` is pinned by commit hash.
+- Release workflow: verify, test (`test.yml` through `workflow_call`),
+  build, publish. verify runs `scripts/release/verify-tag.sh` from
+  `origin/main`: the tag must be on main, have a CHANGELOG section and
+  carry an SSH signature that `git verify-tag` accepts against
+  `.github/allowed_signers` (principal `dev@amsys.cz`, key
+  `~/.ssh/id_ed25519_amsys_sign`). Tag with `git tag -s` and
+  `gpg.format=ssh`. GoReleaser makes a draft release; publish runs in
+  the environment `release` and needs the owner's approval (IS12.5).
+- Packages: `nfpms` makes `.deb`, `.rpm` and `.pkg.tar.zst`. They put
+  `mailbag-mcp` and `mailbag-setup` in `/usr/bin`, the licence and the
+  docs under `/usr/share`, and no systemd units: the user runs
+  `mailbag-mcp service install`, which writes the units with the path
+  of the running binary (DF.2). Each archive holds both binaries.
+- Lint runs locally with `trueup lint`; CI runs only a pinned gitleaks
+  (`.github/workflows/secrets.yml`, `.github/gitleaks.toml`).
+- The build records (`docs/features/`, `PLAN.md`, `.state/`) are not in
+  the public repo. They are in a second git dir over the same paths:
+  `git --git-dir=.git-private ...`.
 - CI runs staticcheck `v0.8.2` and govulncheck `v1.9.0`, pinned by
   version in `test.yml`; run them before a push. staticcheck refuses a
   raw invisible character in a string literal (ST1018): write U+200B as
@@ -112,10 +130,20 @@ two files differ.
   the file store. The test checks the error; nothing checks that the CLI
   records its choice. `TestServer_NoSilentFallback`.
 - B4 No tool takes a secret. `TestSchema_NoSecretFields`.
-- B5 Secrets come from a terminal only; check the alias before each
-  prompt; a failed login removes the new account.
-  `TestCLI_AddRefusesPipe`, `TestCLI_AliasBeforePrompt`,
-  `TestCLI_LoginFailRollsBack`.
+- B5 Secrets come from a terminal, or from one strict JSON document on
+  stdin with `account add --answers-stdin` (`{"secret": S,
+  "use_file_store": B}`, design DS13.5). The flag replaces
+  `Env.ReadSecret` and `Env.Confirm`; there is no line parsing, an
+  unknown key, a second document or an oversize input exits 2 before
+  any file write, and a prompt the document does not answer is an
+  error. A secret never goes in argv or the environment. Without the
+  flag a pipe is still refused. Check the alias before each prompt; a
+  failed login removes the new account. `TestCLI_AddRefusesPipe`,
+  `TestCLI_AliasBeforePrompt`, `TestCLI_LoginFailRollsBack`,
+  `TestCLI_AnswersStdin_WritesAccount`,
+  `TestCLI_AnswersStdin_BadDocumentRefused`,
+  `TestCLI_AnswersStdin_OversizeRefused`,
+  `TestCLI_AnswersStdin_PasteUnanswered`, `TestCLI_AnswersStdin_Confirm`.
 - B6 The redactor replaces each registered secret.
   `TestCLI_PasswordNeverPrinted`.
 - B7 Save a rotated refresh token; keep the old one when none comes
@@ -355,6 +383,14 @@ two files differ.
 
 - F0 The client is written by hand on `net/http` (no go-jmap), through
   the guarded HTTP client. `TestFactory_JMAPClientIsGuarded`.
+- F0a Stalwart refuses concurrent calls with
+  `urn:ietf:params:jmap:error:limit`; `postCapped` retries them and
+  counts each retry in the package variable `limitRetries`. Live tests
+  in `internal/jmap/live_stalwart_test.go` (tag `live`,
+  `MAILBAG_LIVE_JMAP=<alias>`, package `jmap_test`; `export_test.go`
+  gives `LimitRetries()`): `TestLive_LimitRetry` (read only) and
+  `TestLive_MoveOutOfJunkSetsNotJunk`, which creates its own message
+  and destroys it in `t.Cleanup` and touches no other message.
 - F1 A submission has `identityId`, and `using` has submission.
   `TestJMAP_SubmissionIdentity`, `TestJMAP_UsingHasSubmission`.
 - F2 `onSuccessUpdateEmail` files the sent message.
@@ -543,6 +579,21 @@ two files differ.
   `TestBulk_SessionGrantPerAccount`, `TestBulk_SessionGrantPerSession`,
   `TestBulk_SessionGrantDeclineGrantsNothing`,
   `TestBulk_SessionGrantSendStillAsks`, `TestBulk_MRTRSessionGrant`.
+- H11 `dry_run` (DS14.14) gives the count and up to `bulkDryRunSample`
+  (50) rows with a date and the note "dry run: nothing changed". It
+  needs read access only, and it returns before the session, the
+  retry state, the grant and `askFirst`, so it reaches no Writer, no
+  pending record, no undo record and no question. `collectIDs` takes a
+  `Reader`, so the compiler blocks a write there. `dry_run` with
+  `undo` is an input error. Before a bulk change by sender, call with
+  `dry_run` and keep receipts, invoices and account mail out of the
+  query (a by-sender move once took a wanted message with the promo mail).
+  `TestBulk_DryRunChangesNothing`, `TestBulk_DryRunReadAccess`,
+  `TestBulk_DryRunWithUndoRefused`.
+- H12 A repeat bulk first call with the same session, account and
+  input reuses the open record through `hold` and gets a NEW request
+  state; the old state is stale (DS14.13), as for send.
+  `TestBulk_MRTRSameInputReuses`, `TestBulk_MRTRSameInputOtherSession`.
 
 ## N. Identities and signatures (`internal/config`, `internal/tools`, `internal/cli`, design `03-design-identities.md`)
 
@@ -746,9 +797,47 @@ The ids in brackets are the invariants of DI8.
     bulk retry acts on the ids of the first call, never a new search.
   - The first send call spends the limit; the retry does not. The key
     store runs on both calls.
+  - Each tool (send, bulk) has its own store of `pendingLimit` (64)
+    places, and one session holds at most `pendingPerSession` (16) of
+    them; the next place gives `errPendingSessionFull` (DS14.12). The
+    check runs in `hold` and `put` before `limit.take`, so a refused
+    send spends no send. take, drop, expiry and reuse give the place
+    back to its session; a count of 0 deletes the map key.
+    `TestPendingStore_SessionShare`, `TestPendingStore_SessionShareReturns`,
+    `TestSend_MRTRSessionShareSpendsNoSend`,
+    `TestSend_MRTROneSessionFillsStore`, `TestBulk_MRTRStoreFull`.
   - The go-sdk test client speaks 2026-07-28 and answers
     `inputRequests` through its `ElicitationHandler`; tests of forged
     or replayed states turn that off (`MultiRoundTripOptions`).
   `TestSend_MRTRAccept`, `TestSend_MRTRStaleState`,
   `TestSend_MRTRDraftChanged`, `TestBulk_MRTRAccept`,
   `TestBulk_MRTROtherSession`, `TestClaimPending_EachFieldMustMatch`.
+
+## S. Setup page (`cmd/mailbag-setup`, design `03-design-S13.md`)
+
+- S1 `mailbag-setup` is a second binary. It changes state only through
+  the `mailbag-mcp` CLI (IS13.1), finds the CLI and refuses a version
+  mismatch before any write (DS13.7), and never runs sudo, systemctl
+  or launchctl (IS13.5). `TestSetup_FindCLI`,
+  `TestSetup_VersionMismatchNoWrites`.
+- S2 The server listens on 127.0.0.1 with a one-time token, checks
+  Host, sends the security headers on every response, sends no CORS
+  headers, takes only JSON posts, runs one job at a time and exits when
+  idle (DS13.6). `TestSetup_NoToken403`, `TestSetup_WrongToken403`,
+  `TestSetup_HostMismatch403`, `TestSetup_SecurityHeadersOnEveryResponse`,
+  `TestSetup_NoCORSHeaders`, `TestSetup_PostNeedsJSON`,
+  `TestSetup_OneJobAtATime`, `TestSetup_IdleExit`.
+- S3 A secret goes to the CLI on stdin (`--answers-stdin`), never in
+  argv, the environment or a log. `TestSetup_SecretNotInArgvOrEnv`.
+- S4 The page (`cmd/mailbag-setup/web/`, `go:embed`) writes text with
+  `textContent` only; `TestWeb_NoHTMLSinks` refuses `innerHTML`,
+  `outerHTML`, `insertAdjacentHTML`, `document.write` and `eval(`.
+  Presets are in `web/presets.json`. The token moves from the URL
+  fragment to `sessionStorage`. `TestWeb_PageShape`, `TestWeb_Presets`,
+  `TestSetup_PageFilesServedWithHeaders`.
+- S5 Client config: Claude Desktop JSON is merged with a backup first
+  (`...json.bak-<UTC time>`), a temp file and a rename, the key order
+  kept, bad JSON refused, and no write while the app runs; Claude Code
+  goes through `claude mcp add --scope user`. Tests use temp dirs only.
+  `TestClients_DesktopMerge_KeyOrder`, `TestClients_DesktopMerge_BadJSON`,
+  `TestClients_DesktopApp_RunningRefused`, `TestClients_ClaudeCode_Args`.

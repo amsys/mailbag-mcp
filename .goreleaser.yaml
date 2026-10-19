@@ -21,9 +21,23 @@ builds:
     ldflags:
       - -s -w
 
+  # The setup page tool of DS13. It is a second binary in the same
+  # archives and packages (DS13.9, DF.2).
+  - id: mailbag-setup
+    main: ./cmd/mailbag-setup
+    binary: mailbag-setup
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
 archives:
   - id: mailbag-mcp
-    ids: [mailbag-mcp]
+    ids: [mailbag-mcp, mailbag-setup]
     formats: [tar.gz]
     format_overrides:
       - goos: windows
@@ -42,7 +56,7 @@ archives:
 
 nfpms:
   - id: mailbag-mcp
-    ids: [mailbag-mcp]
+    ids: [mailbag-mcp, mailbag-setup]
     package_name: mailbag-mcp
     file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     maintainer: "Martin <dev@amsys.cz>"
@@ -50,7 +64,7 @@ nfpms:
     homepage: https://github.com/amsys/mailbag-mcp
     description: Mail access for AI agents over MCP.
     formats: [deb, rpm, archlinux]
-    # arch: DS12.2, DS12.7, DF.2, DF.6
+    # arch: DS12.2, DS12.7, DS13.1, DS13.9, DF.1, DF.2, DF.6
     # No systemd units and no scripts. The service install command writes
     # the units with the path of the running binary (DF.2).
     contents:

@@ -17,6 +17,7 @@ allow = []                   # paths or names the scratch rule lets through (D5.
 [languages]                  # one key per language: strict | clean | off
 shell = "off"
 go = "clean"
+typescript = "clean"
 
 [[keep]]
 id = "secret-content:internal/guard/redact_test.go:27"
@@ -49,3 +50,15 @@ reason = "fixed path: docs_test.go, .goreleaser.yaml docs/*.md, SUPPORT.md and t
 [[keep]]
 id = "refcheck:docs/DEVELOPER-GUIDE.md:3:misplaced"
 reason = "fixed path: README, SUPPORT.md and .goreleaser.yaml docs/*.md name it"
+
+[[keep]]
+id = "platform:branch-protection:"
+reason = "solo maintainer: ruleset 25432878 blocks force push and deletion on main; a required PR review is not possible for one person"
+
+[[keep]]
+id = "platform:mfa:"
+reason = "personal account amsys, not an organization; the owner confirmed two-factor authentication is on (2026-10-20)"
+
+[[keep]]
+id = "platform:least-privilege:"
+reason = "the owner is the only collaborator (checked with gh api 2026-10-20)"

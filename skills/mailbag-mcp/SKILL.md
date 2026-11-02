@@ -499,6 +499,23 @@ two files differ.
   `TestGuardedTransport_ForwardsCloseIdle`.
 - G9 Toolsets are for size; the access level is for security.
   `TestAccess_Matrix`, `TestAccess_LevelOrder`.
+- G9a The `classify` level (D5.1, D12.1 G7, D12.2 N5) ranks
+  read < classify < draft < send. A value that `rank` cannot read
+  ranks as draft, never send. classify permits every read tool and
+  `modify` only for read, starred, labels without TRASH, SPAM or DRAFT
+  (any case, outer spaces trimmed), and a move to INBOX or to the junk
+  folder. The move rule compares names, not roles: `move_to` equals
+  "INBOX" or `junkFolder(acct)` with `strings.EqualFold`, with no trim
+  (" INBOX" needs draft). `junkFolder` is the `junk` key of the
+  existing `folders` table, else "Junk"; Gmail is always "SPAM" and
+  ignores the table, because a Gmail move to an unknown label creates
+  it. Do not add a `junk_folder` key. Undo, trash, archive, INBOX in
+  `remove_labels`, any other move, send, draft and every folder write
+  need draft. `needLevel` reads only the request and the config, so
+  the refusal comes before any network or provider call (G10).
+  `TestAccess_ClassifyRank`, `TestModify_ClassifyLevel` (also counts
+  provider calls before the refusal), `TestNeedLevel_JunkFolder`,
+  `TestAccess_Matrix`.
 - G10 Each tool except `accounts` and `search` requires `account`. The
   alias is checked first; an unknown alias fails before any network or
   keyring work. `TestTools_UnknownAccount`.

@@ -134,10 +134,14 @@ var knownProviders = map[string]bool{
 	"jmap":    true,
 }
 
+// knownAccess is the access enum of D5. "classify" is the level of
+// D5.1: read, plus the modify changes that sort mail between INBOX and
+// junk.
 var knownAccess = map[string]bool{
-	"read":  true,
-	"draft": true,
-	"send":  true,
+	"read":     true,
+	"classify": true,
+	"draft":    true,
+	"send":     true,
 }
 
 // Account is one [accounts.<alias>] block of accounts.toml, after
@@ -146,7 +150,7 @@ type Account struct {
 	Alias      string
 	Provider   string // imap | outlook | gmail | jmap
 	Email      string
-	Access     string // read | draft | send, default "draft"
+	Access     string // read | classify | draft | send, default "draft"
 	IMAP       string
 	SMTP       string
 	Username   string // default: Email

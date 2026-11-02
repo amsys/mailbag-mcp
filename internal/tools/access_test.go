@@ -43,6 +43,13 @@ type accessProv struct {
 	mods    int
 	// settings counts the gmail.Settings calls of gmail_settings.
 	settings int
+	// creates counts the CreateFolder calls of the folders tool.
+	creates int
+}
+
+func (p *accessProv) CreateFolder(context.Context, string) error {
+	p.creates++
+	return nil
 }
 
 func (p *accessProv) Folders(context.Context) ([]mail.Folder, error) {
@@ -271,23 +278,40 @@ type accessCase struct {
 // Each cell points MAILBAG_CONFIG_DIR at its own directory, so no
 // cell reads or writes the real config directory.
 //
+// The classify level of D5.1 has a column too: it runs every read
+// tool and the modify row, and refuses draft, send, bulk, unsubscribe,
+// templates save, gmail_settings and a folder write.
+//
 // arch: T5.4, §3.17, §9 U7, G9, D5, §10.5, §10.11, §5.3
 // arch: DS9.8, DS9.9, IS9.8, IS9.9
+// arch: D5.1, D1.2, D12.1
 func TestAccess_Matrix(t *testing.T) {
 	always := map[guard.Level]accessOutcome{
-		guard.LevelRead:  accessPermitted,
-		guard.LevelDraft: accessPermitted,
-		guard.LevelSend:  accessPermitted,
+		guard.LevelRead:     accessPermitted,
+		guard.LevelClassify: accessPermitted,
+		guard.LevelDraft:    accessPermitted,
+		guard.LevelSend:     accessPermitted,
+	}
+	// classifyAndUp is the modify row: a read flag is a classify
+	// change (D5.1). TestModify_ClassifyLevel holds every other
+	// modify branch.
+	classifyAndUp := map[guard.Level]accessOutcome{
+		guard.LevelRead:     accessDenied,
+		guard.LevelClassify: accessPermitted,
+		guard.LevelDraft:    accessPermitted,
+		guard.LevelSend:     accessPermitted,
 	}
 	draftAndUp := map[guard.Level]accessOutcome{
-		guard.LevelRead:  accessDenied,
-		guard.LevelDraft: accessPermitted,
-		guard.LevelSend:  accessPermitted,
+		guard.LevelRead:     accessDenied,
+		guard.LevelClassify: accessDenied,
+		guard.LevelDraft:    accessPermitted,
+		guard.LevelSend:     accessPermitted,
 	}
 	sendOnly := map[guard.Level]accessOutcome{
-		guard.LevelRead:  accessDenied,
-		guard.LevelDraft: accessDenied,
-		guard.LevelSend:  accessPermitted,
+		guard.LevelRead:     accessDenied,
+		guard.LevelClassify: accessDenied,
+		guard.LevelDraft:    accessDenied,
+		guard.LevelSend:     accessPermitted,
 	}
 
 	cases := []accessCase{{
@@ -308,6 +332,16 @@ func TestAccess_Matrix(t *testing.T) {
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.folders == 1 },
+	}, {
+		// D5.1: a folder write needs draft, so classify refuses it.
+		tool: "folders create",
+		want: draftAndUp,
+		run: func(ctx context.Context, fx *accessFixture) (string, error) {
+			h := &foldersTool{mail: fx.mail}
+			_, err := h.handle(ctx, FoldersIn{Account: "work", Action: folderActionCreate, Name: "Sorted"})
+			return "", err
+		},
+		ran: func(fx *accessFixture) bool { return fx.prov.creates == 1 },
 	}, {
 		tool: "search",
 		want: always,
@@ -346,7 +380,7 @@ func TestAccess_Matrix(t *testing.T) {
 		ran: func(fx *accessFixture) bool { return fx.prov.raws == 1 },
 	}, {
 		tool: "modify",
-		want: draftAndUp,
+		want: classifyAndUp,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
 			read := true
@@ -366,9 +400,10 @@ func TestAccess_Matrix(t *testing.T) {
 	}, {
 		tool: "send a stored draft",
 		want: map[guard.Level]accessOutcome{
-			guard.LevelRead:  accessDenied,
-			guard.LevelDraft: accessDenied,
-			guard.LevelSend:  accessPermitted,
+			guard.LevelRead:     accessDenied,
+			guard.LevelClassify: accessDenied,
+			guard.LevelDraft:    accessDenied,
+			guard.LevelSend:     accessPermitted,
 		},
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &sendTool{mail: fx.mail}
@@ -429,7 +464,7 @@ func TestAccess_Matrix(t *testing.T) {
 		ran: func(fx *accessFixture) bool { return fx.prov.settings == 2 },
 	}}
 
-	for _, level := range []guard.Level{guard.LevelRead, guard.LevelDraft, guard.LevelSend} {
+	for _, level := range []guard.Level{guard.LevelRead, guard.LevelClassify, guard.LevelDraft, guard.LevelSend} {
 		for _, c := range cases {
 			t.Run(string(level)+"/"+c.tool, func(t *testing.T) {
 				fx := newAccessFixture(t, level)
@@ -451,7 +486,7 @@ func TestAccess_Matrix(t *testing.T) {
 					if !errors.Is(err, guard.ErrAccessDenied) {
 						t.Fatalf("access=%s: %s gave %v, want ErrAccessDenied (§10.5)", level, c.tool, err)
 					}
-					if fx.prov.sent+fx.prov.drafts+fx.prov.mods+fx.prov.settings != 0 {
+					if fx.prov.sent+fx.prov.drafts+fx.prov.mods+fx.prov.settings+fx.prov.creates != 0 {
 						t.Errorf("access=%s: %s wrote to the mailbox before it refused; the check must be the first line (§3.17)", level, c.tool)
 					}
 					if c.ran(fx) {
@@ -544,5 +579,139 @@ func TestAccess_DraftFallbackSavesTheMessage(t *testing.T) {
 	}
 	if fx.prov.sent != 0 {
 		t.Errorf("a draft account sent %d messages (§10.5)", fx.prov.sent)
+	}
+}
+
+// TestModify_ClassifyLevel holds the level each modify request needs
+// (D5.1, as D12.1 G7 and D12.2 N5 rule it), at the levels read,
+// classify and draft. classify permits only read, starred, labels
+// with no TRASH, SPAM or DRAFT, and a move to INBOX or to the junk
+// folder of the account. Every other branch needs draft: trash,
+// archive, undo, and a move to any other folder.
+//
+// A refused call must give ErrAccessDenied, name the level it needs,
+// and leave every provider counter at zero: no network call comes
+// before the refusal (G10). A permitted change must reach the
+// provider once.
+//
+// arch: D5.1, D1.2, D12.1
+func TestModify_ClassifyLevel(t *testing.T) {
+	yes, no := true, false
+	id := []string{"1.10.INBOX"}
+	spamCfg := map[string]string{" Junk ": "Spam"}
+
+	cases := []struct {
+		name     string
+		provider string            // default "imap"
+		folders  map[string]string // the folders table of the account
+		in       ModifyIn
+		need     guard.Level
+		undo     bool // an undo call: no provider change at draft
+	}{
+		{name: "read", in: ModifyIn{IDs: id, Read: &yes}, need: guard.LevelClassify},
+		{name: "unread", in: ModifyIn{IDs: id, Read: &no}, need: guard.LevelClassify},
+		{name: "starred", in: ModifyIn{IDs: id, Starred: &yes}, need: guard.LevelClassify},
+		{name: "add label", in: ModifyIn{IDs: id, AddLabels: []string{"Receipts"}}, need: guard.LevelClassify},
+		{name: "remove label", in: ModifyIn{IDs: id, RemoveLabels: []string{"Receipts"}}, need: guard.LevelClassify},
+		{name: "add UNREAD", in: ModifyIn{IDs: id, AddLabels: []string{"UNREAD"}}, need: guard.LevelClassify},
+		{name: "add STARRED", in: ModifyIn{IDs: id, AddLabels: []string{"STARRED"}}, need: guard.LevelClassify},
+		{name: "add junk keyword", in: ModifyIn{IDs: id, AddLabels: []string{"$Junk"}}, need: guard.LevelClassify},
+		{name: "add INBOX is a move to INBOX", in: ModifyIn{IDs: id, AddLabels: []string{"INBOX"}}, need: guard.LevelClassify},
+		{name: "move_to INBOX", in: ModifyIn{IDs: id, MoveTo: "INBOX"}, need: guard.LevelClassify},
+		{name: "move_to inbox any case", in: ModifyIn{IDs: id, MoveTo: "inbox"}, need: guard.LevelClassify},
+		{name: "move_to default Junk", in: ModifyIn{IDs: id, MoveTo: "Junk"}, need: guard.LevelClassify},
+		{name: "move_to default junk any case", in: ModifyIn{IDs: id, MoveTo: "JUNK"}, need: guard.LevelClassify},
+		{name: "move_to configured junk", folders: spamCfg, in: ModifyIn{IDs: id, MoveTo: "spam"}, need: guard.LevelClassify},
+		{name: "move_to Junk when config names Spam", folders: spamCfg, in: ModifyIn{IDs: id, MoveTo: "Junk"}, need: guard.LevelDraft},
+		{name: "move_to Spam with no config", in: ModifyIn{IDs: id, MoveTo: "Spam"}, need: guard.LevelDraft},
+		{name: "gmail move_to SPAM", provider: "gmail", in: ModifyIn{IDs: id, MoveTo: "SPAM"}, need: guard.LevelClassify},
+		{name: "gmail move_to Junk", provider: "gmail", in: ModifyIn{IDs: id, MoveTo: "Junk"}, need: guard.LevelDraft},
+		{name: "gmail ignores folders table", provider: "gmail", folders: map[string]string{"junk": "Receipts"}, in: ModifyIn{IDs: id, MoveTo: "Receipts"}, need: guard.LevelDraft},
+		{name: "move_to padded INBOX", in: ModifyIn{IDs: id, MoveTo: " INBOX"}, need: guard.LevelDraft},
+		{name: "move_to Trash", in: ModifyIn{IDs: id, MoveTo: "Trash"}, need: guard.LevelDraft},
+		{name: "move_to other folder", in: ModifyIn{IDs: id, MoveTo: "Projects"}, need: guard.LevelDraft},
+		{name: "trash", in: ModifyIn{IDs: id, Trash: true}, need: guard.LevelDraft},
+		{name: "archive", in: ModifyIn{IDs: id, Archive: true}, need: guard.LevelDraft},
+		{name: "add TRASH", in: ModifyIn{IDs: id, AddLabels: []string{" trash "}}, need: guard.LevelDraft},
+		{name: "remove TRASH", in: ModifyIn{IDs: id, RemoveLabels: []string{"TRASH"}}, need: guard.LevelDraft},
+		{name: "add SPAM", in: ModifyIn{IDs: id, AddLabels: []string{"Spam"}}, need: guard.LevelDraft},
+		{name: "remove SPAM", in: ModifyIn{IDs: id, RemoveLabels: []string{"SPAM"}}, need: guard.LevelDraft},
+		{name: "add DRAFT", in: ModifyIn{IDs: id, AddLabels: []string{"draft"}}, need: guard.LevelDraft},
+		{name: "remove DRAFT", in: ModifyIn{IDs: id, RemoveLabels: []string{"DRAFT"}}, need: guard.LevelDraft},
+		{name: "remove INBOX is archive", in: ModifyIn{IDs: id, RemoveLabels: []string{"INBOX"}}, need: guard.LevelDraft},
+		{name: "read with trash", in: ModifyIn{IDs: id, Read: &yes, Trash: true}, need: guard.LevelDraft},
+		{name: "label with move_to other", in: ModifyIn{IDs: id, AddLabels: []string{"Receipts"}, MoveTo: "Projects"}, need: guard.LevelDraft},
+		{name: "undo list", in: ModifyIn{Undo: "list"}, need: guard.LevelDraft, undo: true},
+		{name: "undo token", in: ModifyIn{Undo: "no-such-token"}, need: guard.LevelDraft, undo: true},
+	}
+
+	for _, level := range []guard.Level{guard.LevelRead, guard.LevelClassify, guard.LevelDraft} {
+		for _, c := range cases {
+			t.Run(string(level)+"/"+c.name, func(t *testing.T) {
+				fx := newAccessFixture(t, level)
+				if c.provider != "" {
+					fx.mail.acct.Provider = c.provider
+				}
+				fx.mail.acct.Folders = c.folders
+				in := c.in
+				in.Account = "work"
+				h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
+				_, err := h.handle(context.Background(), in)
+				p := fx.prov
+				calls := p.folders + p.searchs + p.reads + p.raws + p.atts + p.sent + p.drafts + p.mods + p.settings + p.creates
+
+				if !guard.Permits(level, c.need) {
+					if !errors.Is(err, guard.ErrAccessDenied) {
+						t.Fatalf("access=%s: %v, want ErrAccessDenied: this call needs %s (D5.1)", level, err, c.need)
+					}
+					if want := "access=" + string(c.need); !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal %q does not name %q", err, want)
+					}
+					if calls != 0 {
+						t.Errorf("access=%s: %d provider calls before the refusal; the check must come before any network call (G10)", level, calls)
+					}
+					return
+				}
+				if errors.Is(err, guard.ErrAccessDenied) {
+					t.Fatalf("access=%s: %v, want the call to run: it needs only %s", level, err, c.need)
+				}
+				if c.undo {
+					return
+				}
+				if err != nil {
+					t.Fatalf("access=%s: %v", level, err)
+				}
+				if p.mods != 1 {
+					t.Errorf("access=%s: %d provider changes, want 1", level, p.mods)
+				}
+			})
+		}
+	}
+}
+
+// TestNeedLevel_JunkFolder holds the junk folder name that the
+// classify level permits (D12.2 N5): the "junk" key of the folders
+// table, in any case and with outer spaces, else "Junk"; Gmail has
+// "SPAM" and ignores the table. An empty value falls back to "Junk".
+//
+// arch: D5.1, D1.2, D12.1
+func TestNeedLevel_JunkFolder(t *testing.T) {
+	cases := []struct {
+		provider string
+		folders  map[string]string
+		want     string
+	}{
+		{"imap", nil, "Junk"},
+		{"jmap", map[string]string{"trash": "Bin"}, "Junk"},
+		{"outlook", map[string]string{"junk": "Junk Email"}, "Junk Email"},
+		{"imap", map[string]string{"JUNK": "INBOX.Spam"}, "INBOX.Spam"},
+		{"imap", map[string]string{"junk": "  "}, "Junk"},
+		{"gmail", map[string]string{"junk": "Receipts"}, "SPAM"},
+	}
+	for _, c := range cases {
+		got := junkFolder(config.Account{Provider: c.provider, Folders: c.folders})
+		if got != c.want {
+			t.Errorf("junkFolder(%s, %v) = %q, want %q", c.provider, c.folders, got, c.want)
+		}
 	}
 }

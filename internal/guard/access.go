@@ -10,18 +10,25 @@ import (
 	"github.com/amsys/mailbag-mcp/internal/config"
 )
 
-// Level is one access level of §3.17. The three levels are ordered:
-// read permits the tools that only look at a mailbox, draft permits a
-// change of a mailbox, and send permits a message to leave.
+// Level is one access level of §3.17. The four levels are ordered:
+// read permits the tools that only look at a mailbox, classify adds
+// the modify changes that sort mail between INBOX and junk, draft
+// permits every other change of a mailbox, and send permits a message
+// to leave.
 //
-// arch: T5.4, §3.17, D5, §10.5
+// arch: T5.4, §3.17, D5, §10.5, D5.1, D1.2, D12.1
 type Level string
 
-// The three levels of §3.17, as accounts.toml spells them.
+// The four levels, as accounts.toml spells them. LevelClassify is the
+// level of an account that a junk classifier uses (D5.1, D1.2 trust
+// boundary 3). It refuses trash, delete, send, draft and folder
+// writes. Only the modify tool asks for it (see needLevel in
+// internal/tools/modify.go).
 const (
-	LevelRead  Level = "read"
-	LevelDraft Level = "draft"
-	LevelSend  Level = "send"
+	LevelRead     Level = "read"
+	LevelClassify Level = "classify"
+	LevelDraft    Level = "draft"
+	LevelSend     Level = "send"
 )
 
 // ErrAccessDenied is returned when the level of an account does not
@@ -33,33 +40,40 @@ const (
 // arch: T5.4, §3.17, D5, D5.1, §10.5
 var ErrAccessDenied = errors.New("guard: the access level of the account does not permit this")
 
-// rank gives the order of the three levels. An unknown level gets the
-// rank of draft, which is the level [config.Load] gives an account
-// that names none (D5). Only a hand-built [config.Account] can carry
-// an unknown level: config.Load fills in "draft" and refuses any
-// value that is not one of the three (config.ErrUnknownAccess).
+// rank gives the order of the four levels: read < classify < draft
+// < send. An unknown level gets the rank of draft, which is the level
+// [config.Load] gives an account that names none (D5). Only a
+// hand-built [config.Account] can carry an unknown level: config.Load
+// fills in "draft" and refuses any value that is not one of the four
+// (config.ErrUnknownAccess).
 //
 // The choice of draft, and not send, is the fail-closed one: a value
 // this function cannot read never permits a message to leave.
+//
+// arch: T5.4, §3.17, D5, D5.1, D12.1
 func rank(l Level) int {
 	switch l {
 	case LevelRead:
 		return 1
+	case LevelClassify:
+		return 2
 	case LevelSend:
-		return 3
+		return 4
 	default:
-		return 2 // draft, and every value this function cannot read
+		return 3 // draft, and every value this function cannot read
 	}
 }
 
 // LevelOf gives the access level of acct, with the default of D5 for
 // an account that names none.
 //
-// arch: T5.4, §3.17, D5
+// arch: T5.4, §3.17, D5, D5.1
 func LevelOf(acct config.Account) Level {
 	switch Level(acct.Access) {
 	case LevelRead:
 		return LevelRead
+	case LevelClassify:
+		return LevelClassify
 	case LevelSend:
 		return LevelSend
 	default:

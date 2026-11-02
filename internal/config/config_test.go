@@ -109,7 +109,7 @@ email    = "me@example.com"
 }
 
 // TestConfig_Load_RejectsUnknownAccess checks the access enum of D5
-// (read | draft | send).
+// (read | classify | draft | send).
 //
 // arch: T1.2, §3.3, D14
 func TestConfig_Load_RejectsUnknownAccess(t *testing.T) {
@@ -122,6 +122,37 @@ access   = "admin"
 	_, err := Load(path)
 	if !errors.Is(err, ErrUnknownAccess) {
 		t.Fatalf("Load: err = %v, want ErrUnknownAccess", err)
+	}
+}
+
+// TestConfig_Load_AcceptsClassify checks that the access enum holds
+// the classify level of D5.1, and that the value reaches the account
+// as written.
+//
+// arch: D5.1, D1.2, D12.1
+func TestConfig_Load_AcceptsClassify(t *testing.T) {
+	path := writeTemp(t, `
+[accounts.sorter]
+provider = "imap"
+email    = "me@example.com"
+access   = "classify"
+
+[accounts.sorter.folders]
+junk = "Spam"
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	acct, ok := c.Account("sorter")
+	if !ok {
+		t.Fatal("account sorter is absent")
+	}
+	if acct.Access != "classify" {
+		t.Errorf("Access = %q, want %q", acct.Access, "classify")
+	}
+	if acct.Folders["junk"] != "Spam" {
+		t.Errorf("Folders[junk] = %q, want %q", acct.Folders["junk"], "Spam")
 	}
 }
 

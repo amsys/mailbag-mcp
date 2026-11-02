@@ -145,3 +145,47 @@ func TestAccess_ErrorNamesTheFixAndNoAddress(t *testing.T) {
 		}
 	}
 }
+
+// TestAccess_ClassifyRank holds the place of the classify level
+// (D5.1): read < classify < draft < send. classify covers read, and
+// does not cover draft or send. A level this build cannot read,
+// "CLASSIFY" in upper case too, still ranks as draft, so it never
+// gets less than the D5 default and never sends.
+//
+// arch: D5.1, D1.2, D12.1
+func TestAccess_ClassifyRank(t *testing.T) {
+	order := []Level{LevelRead, LevelClassify, LevelDraft, LevelSend}
+	for i, have := range order {
+		for j, need := range order {
+			if got, want := Permits(have, need), i >= j; got != want {
+				t.Errorf("Permits(%q, %q) = %v, want %v", have, need, got, want)
+			}
+		}
+	}
+
+	acct := config.Account{Alias: "sorter", Access: "classify"}
+	if got := LevelOf(acct); got != LevelClassify {
+		t.Errorf("LevelOf(classify) = %q, want %q", got, LevelClassify)
+	}
+	if err := Require(acct, LevelClassify); err != nil {
+		t.Errorf("Require(classify) on a classify account: %v", err)
+	}
+	err := Require(acct, LevelDraft)
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("Require(draft) on a classify account = %v, want ErrAccessDenied", err)
+	}
+	for _, want := range []string{"access=classify", "access=draft"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q holds no %q", err, want)
+		}
+	}
+
+	for _, access := range []string{"CLASSIFY", "classifier"} {
+		if got := LevelOf(config.Account{Access: access}); got != LevelDraft {
+			t.Errorf("LevelOf(%q) = %q, want %q (fail closed, D5)", access, got, LevelDraft)
+		}
+		if rank(Level(access)) != rank(LevelDraft) {
+			t.Errorf("rank(%q) = %d, want the draft rank %d", access, rank(Level(access)), rank(LevelDraft))
+		}
+	}
+}

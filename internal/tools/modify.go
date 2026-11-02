@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amsys/mailbag-mcp/internal/config"
 	"github.com/amsys/mailbag-mcp/internal/guard"
 	"github.com/amsys/mailbag-mcp/internal/imap"
 	"github.com/amsys/mailbag-mcp/internal/mail"
@@ -116,9 +117,10 @@ type ModifyOut struct {
 	Note string `json:"note,omitempty"`
 }
 
-// AddModify adds the "modify" tool to srv (§3.16): draft level, one
-// change over at most 500 messages, plus the undo of one earlier
-// operation.
+// AddModify adds the "modify" tool to srv (§3.16): one change over at
+// most 500 messages, plus the undo of one earlier operation. The level
+// it needs comes from the request (needLevel): classify for a sort
+// between INBOX and junk, draft for all else (D5.1).
 //
 // DestructiveHint is false because the journal can reverse the
 // operation (§3.16) and because no message is removed for good: trash
@@ -151,19 +153,19 @@ type modifyTool struct {
 //   - anything else: one change over the ids.
 //
 // The alias is checked first, so an unknown one fails here and never
-// reaches a network call (G10). The access check of §3.17 belongs on
-// the next line, above every branch.
+// reaches a network call (G10). The access check of §3.17 is on the
+// next line, above every branch.
 //
-// arch: T5.3, §3.16, §3.18, App B, C18, H3, G10
+// arch: T5.3, §3.16, §3.18, App B, C18, H3, G10, D5.1, D12.1
 func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error) {
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return ModifyOut{}, err
 	}
-	// §3.17: draft level, above every branch. An undo is a change of
-	// the mailbox as well, and undo: "list" reads the journal of the
-	// changes, so the whole tool sits at one level (§3.16).
-	if err := guard.Require(acct, guard.LevelDraft); err != nil {
+	// §3.17, D5.1: the level comes from the request, above every
+	// branch. needLevel reads the input and the config only, so a
+	// refusal comes before any network call (G10, D12.1 G7).
+	if err := guard.Require(acct, needLevel(acct, in)); err != nil {
 		return ModifyOut{}, err
 	}
 
@@ -186,6 +188,77 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 		return out, nil
 	}
 	return t.reverse(ctx, p, in.Account, token)
+}
+
+// classifyLabels are the labels that need draft level even in
+// add_labels or remove_labels: TRASH trashes or restores a message,
+// SPAM is the Gmail junk label, and DRAFT is the Gmail draft label
+// (D5.1). The compare ignores case and outer spaces, as
+// mapPseudoLabels does.
+var classifyLabels = map[string]bool{"TRASH": true, "SPAM": true, "DRAFT": true}
+
+// needLevel gives the access level that one modify call needs (D5.1,
+// as D12.1 G7 and D12.2 N5 rule it). It reads only the request and the
+// account config, so it makes no network call (G10).
+//
+// classify is enough when the call uses only these:
+//
+//   - read and starred, also through the UNREAD and STARRED labels;
+//   - add_labels and remove_labels with no label of classifyLabels and
+//     no INBOX in remove_labels (that is archive);
+//   - move_to, or INBOX in add_labels, when the target equals INBOX or
+//     the junk folder of the account (junkFolder), in any case.
+//
+// Every other call needs draft: undo (also undo: "list"), trash,
+// archive, and a move to any other folder, a trash folder too.
+//
+// arch: D5.1, D1.2, D12.1, D12.2, G10
+func needLevel(acct config.Account, in ModifyIn) guard.Level {
+	if strings.TrimSpace(in.Undo) != "" || in.Archive || in.Trash {
+		return guard.LevelDraft
+	}
+	if in.MoveTo != "" && !strings.EqualFold(in.MoveTo, "INBOX") &&
+		!strings.EqualFold(in.MoveTo, junkFolder(acct)) {
+		return guard.LevelDraft
+	}
+	for i, list := range [][]string{in.AddLabels, in.RemoveLabels} {
+		for _, raw := range list {
+			label := strings.ToUpper(strings.TrimSpace(raw))
+			if classifyLabels[label] || (i == 1 && label == "INBOX") {
+				return guard.LevelDraft
+			}
+		}
+	}
+	return guard.LevelClassify
+}
+
+// junkFolder gives the name of the junk folder of acct for needLevel
+// (D12.2 N5). Gmail has the system label SPAM. Other providers take
+// the "junk" key of the folders table of accounts.toml; the key
+// ignores case and outer spaces, as imap.ApplyRoleOverrides reads it.
+// With no such key the name is "Junk".
+//
+// Gmail ignores the folders table: there a move_to of a label that
+// does not exist creates it (E4), and a classify account must not
+// write a folder.
+//
+// arch: D5.1, D12.1, D12.2
+func junkFolder(acct config.Account) string {
+	if acct.Provider == "gmail" {
+		return "SPAM"
+	}
+	keys := make([]string, 0, len(acct.Folders))
+	for k := range acct.Folders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		name := acct.Folders[k]
+		if strings.EqualFold(strings.TrimSpace(k), "junk") && strings.TrimSpace(name) != "" {
+			return name
+		}
+	}
+	return "Junk"
 }
 
 // hasChange reports whether the call asks for a change of its own.

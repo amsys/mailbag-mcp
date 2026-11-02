@@ -78,7 +78,11 @@ provider = "imap"
 # email is the account's address. Required, no default.
 email = "user@example.com"
 
-# access is the ceiling this account allows: read, draft or send.
+# access is the ceiling this account allows: read, classify, draft or
+# send. classify reads, and it moves mail only to INBOX or to the junk
+# folder (the "junk" key of folders below, else "Junk"; Gmail: SPAM).
+# It refuses trash, delete, send, draft and folder writes. account add
+# does not take classify: set it here.
 # Default: "draft".
 access = "draft"
 
@@ -181,5 +185,7 @@ reply_match = []
 
 # folders maps a logical name (inbox, sent, drafts, trash, junk) to
 # this account's real folder name, for a provider that does not use
-# the IMAP names. Default: none, so the IMAP names are used.
+# the IMAP names. Default: none, so the IMAP names are used. For an
+# account with access = "classify", the junk key is also the one folder
+# (besides INBOX) that the account may move mail into.
 [accounts.example.folders]

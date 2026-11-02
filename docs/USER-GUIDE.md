@@ -151,10 +151,11 @@ The CLI writes each account as one block in `accounts.toml`. The file
 secret never goes into `accounts.toml`. It goes into the secret store
 (see [Secrets](#secrets)).
 
-Each account has an access level: `read`, `draft` or `send`. The
-default is `draft`. Set it with `--access` at `account add`, or change
-`access` in the account block later. See
-[Access levels](#access-levels).
+Each account has an access level: `read`, `classify`, `draft` or
+`send`. The default is `draft`. Set it with `--access` at `account add`,
+or change `access` in the account block later. `account add` does not
+accept `--access classify`; for that level, edit `access` in the
+account block. See [Access levels](#access-levels).
 
 ### IMAP and SMTP
 
@@ -201,6 +202,8 @@ trash = "Deleted Items"
 ```
 
 The logical names are `inbox`, `sent`, `drafts`, `trash` and `junk`.
+The `junk` name also sets the folder that an account at the `classify`
+level may move mail into (see [Classify level](#classify-level)).
 
 ### Outlook
 
@@ -891,12 +894,42 @@ level is refused before it does any work.
 | Level | Permitted |
 |---|---|
 | `read` | `accounts`, `search`, `read`, `attachment`, `export`, `folders` list, `decrypt`, `templates` list, `gmail_settings` list_filters, get_vacation and get_signature |
-| `draft` | also `read` with `mark_read`, `modify`, `folders` create, rename and delete, `draft`, `bulk`, `unsubscribe` (one-click POST and unsubscribe draft), `templates` save, delete and draft, `gmail_settings` create_filter, delete_filter, set_signature and set_vacation off |
+| `classify` | the `read` tools, and `modify` with only these changes: `move_to` INBOX or the junk folder, `read`, `starred`, and `add_labels` or `remove_labels` that do not name TRASH, SPAM or DRAFT. See [Classify level](#classify-level) |
+| `draft` | also `read` with `mark_read`, `modify` with any change, `folders` create, rename and delete, `draft`, `bulk`, `unsubscribe` (one-click POST and unsubscribe draft), `templates` save, delete and draft, `gmail_settings` create_filter, delete_filter, set_signature and set_vacation off |
 | `send` | also `send`, `gmail_settings` set_vacation on |
 
 On an account with `access = "draft"`, the `draft` tool saves the
 message and tells you that the account cannot send it. Set
 `access = "send"` in the account block to permit sending.
+
+### Classify level
+
+The `classify` level is for a program that sorts mail into INBOX and
+the junk folder. It cannot trash, delete, send, draft or change a
+folder. The order of the levels is `read`, `classify`, `draft`, `send`.
+
+A `modify` call at `classify` is allowed when it uses only these
+changes:
+
+- `move_to` INBOX, or `move_to` the junk folder. The server compares
+  the name you give with the name `INBOX` and with the name of the junk
+  folder, with no regard to case. It does not compare folder roles.
+  A name with a space at the start or the end is not a match.
+- `read` and `starred`.
+- `add_labels` and `remove_labels`, when no label is TRASH, SPAM or
+  DRAFT (in any case), and `remove_labels` does not name INBOX.
+
+The name of the junk folder is the `junk` key under
+`[accounts.<alias>.folders]`. With no such key it is `Junk`. On a Gmail
+account it is always `SPAM`, and the `folders` table has no effect.
+Set `junk` to the real junk folder name of the server. There is no
+other key for this.
+
+These need `draft` at least, so a `classify` account is refused: `trash`,
+`archive`, `undo`, a `move_to` to any other folder (a trash folder
+too), `INBOX` in `remove_labels`, the `read` tool with `mark_read`,
+`bulk`, `draft`, `send`, and every `folders` write. The refusal comes
+before the server contacts the mail provider.
 
 ## Secrets
 

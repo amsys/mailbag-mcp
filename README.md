@@ -35,7 +35,9 @@ search {"query": "is:unread from:billing"}
 - One MCP entry for N mailboxes: IMAP/SMTP, Outlook, Gmail and JMAP.
 - 6 core tools are always on; 14 tools with every toolset on.
 - Secrets in the system keyring, with a file fallback.
-- An access level for each account: `read`, `draft` or `send`.
+- An access level for each account: `read`, `classify`, `draft` or `send`.
+  `classify` is for a junk sorter: it reads, and it moves mail only
+  between INBOX and the junk folder.
 - Untrusted content fences around all text that a sender controls.
 - One static binary, with an optional daemon that shares one sign-in
   between all sessions.

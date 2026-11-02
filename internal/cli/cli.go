@@ -39,6 +39,7 @@ const (
 // usageText is the one usage block. Its first line starts with
 // "usage:" and names the four providers (§3.5).
 const usageText = `usage: mailbag-mcp account add <alias> --provider imap|outlook|gmail|jmap --email E --imap H:P --smtp H:P [--username U] [--access read|draft|send]
+                   (access = "classify" is not a flag value: set it in accounts.toml)
        mailbag-mcp account add <alias> --provider outlook --email E [--tenant T] [--paste]
        mailbag-mcp account add <alias> --provider gmail --email E [--paste]
        mailbag-mcp account add <alias> --provider jmap --email E [--session-url U] [--bearer] [--private-host]

@@ -738,8 +738,8 @@ func TestSend_AttachmentsObeyAttachDirs(t *testing.T) {
 // strings left are an alias this server was given, an id a server
 // gave and a note this server wrote.
 //
-// The test therefore applies the serverOwned branch of the rule in
-// fence_fields_test.go to every string of a DraftOut built from the
+// The test therefore applies the rule for server text outside
+// untrusted to every string of a DraftOut built from the
 // hostile message and of a SendOut: each one must be filled and must
 // carry neither marker text nor a hidden character. A field added
 // later that does carry sender text fails here, which is the signal
@@ -802,7 +802,7 @@ func TestSend_ResultCarriesNoSenderText(t *testing.T) {
 	}
 }
 
-// checkServerOwned applies the serverOwned rule of G3 to every string
+// checkServerOwned applies the G3 rule for server text to every string
 // field of the struct v: filled, no marker text, no hidden character.
 // An unexported field is not on the wire, because encoding/json does
 // not write it, so the rule skips it. Head is a struct, and WrapReq

@@ -133,12 +133,19 @@ func Wrap[In, Out any](logger *slog.Logger, name string, timeout time.Duration, 
 // context with [fencer]. After h succeeds, WrapReq writes its nonce
 // into the [Head] of the result (DU2.1, DU2.2).
 //
+// Then the output gate [checkOut] checks the result (DU4.1). Each
+// string under a key named "untrusted" must be one fence of this
+// response, and each other string must match its strict kind. When the
+// result fails, WrapReq sends an error result with the class
+// output_refused and the path of the field, and none of the output of
+// h. It logs the same path.
+//
 // An error result has the form of DU6.1, built by [errForm]: the
 // nonce, the class of [classOf], the text of a [publicError], and
 // every other error text in a fence. Its typed output is the zero
 // Out with the nonce in its Head.
 //
-// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4, DU2.1, DU2.2, DU6.1, DU6.2, DU6.3
+// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4, DU2.1, DU2.2, DU4.1, DU6.1, DU6.2, DU6.3
 func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duration, h HandlerReq[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -219,6 +226,18 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 		// handler never writes Head and a cached Out gets the nonce
 		// of the response that replays it.
 		setHead(&out, f)
+		// DU4.1: the output gate checks both zones of the result. A
+		// result that fails does not leave the server: the error
+		// result names the path of the field and holds none of the
+		// handler output. The path holds code names and indexes only,
+		// so it is server text.
+		if gErr := checkOut(f, &out); gErr != nil {
+			path := gErr.Error()
+			logger.Error("call-end", "tool", name, "duration", time.Since(start).String(), "error", "output_refused", "path", path)
+			var zero Out
+			setHead(&zero, f)
+			return errResult(errForm(f, "output_refused", path, "")), zero, nil
+		}
 		logger.Info("call-end", "tool", name, "duration", time.Since(start).String())
 		return nil, out, nil
 	}
@@ -285,10 +304,15 @@ func untimed(ctx context.Context) (wait context.Context, timeout time.Duration, 
 	return c.parent, c.timeout, true
 }
 
-// setHead writes the nonce of f into the [Head] of *out. Until every
-// Out embeds Head (T24), an Out with no Head passes with no change.
+// setHead writes the nonce of f into the [Head] of *out. Every Out of
+// a tool embeds Head (DU2.1); TestOut_EveryStringFieldHasZone checks
+// this for each registered tool. An Out with no Head gets no nonce,
+// and on the success path the output gate [checkOut] then refuses it,
+// so no result leaves the server without the nonce. setHead does not
+// panic on such an Out, because the panic branch of [WrapReq] calls it
+// too, and a panic there would end the process.
 //
-// arch: DU2.1, DU6.1
+// arch: DU2.1, DU4.1, DU6.1
 func setHead[Out any](out *Out, f guard.Fencer) {
 	if hd, ok := any(out).(interface{ setFence(string) }); ok {
 		hd.setFence(f.Nonce())

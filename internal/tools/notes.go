@@ -158,6 +158,10 @@ var noteTexts = []string{
 	"{n} of {n} templates shown.",
 	"{n} templates could not be read: each is not a regular file in the templates directory.",
 
+	// accounts: the add hint (addAccountHint) is two forms.
+	"no account yet",
+	"add one in a terminal with `mailbag-mcp account add`",
+
 	// gmail_settings.
 	"gmail_settings works for Gmail accounts only",
 	"{alias} uses {word}",

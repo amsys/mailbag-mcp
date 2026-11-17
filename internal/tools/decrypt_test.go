@@ -229,7 +229,7 @@ func TestDecrypt_RequiresGoodMDC(t *testing.T) {
 		if body := nonceBody(t, out.Untrusted.Body, out.Fence); !strings.Contains(body, "PlainT88 secret line") {
 			t.Errorf("Body = %q, want the plain text inside one fence of the nonce %q", out.Untrusted.Body, out.Fence)
 		}
-		checkFenced(t, "DecryptOut.Untrusted.Body", out.Untrusted.Body)
+		checkFenced(t, "DecryptOut.Untrusted.Body", out.Fence, out.Untrusted.Body)
 		if out.Hidden == 0 {
 			t.Errorf("Hidden = 0, want the hidden character counted")
 		}

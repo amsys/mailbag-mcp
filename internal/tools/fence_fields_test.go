@@ -3,15 +3,22 @@
 
 // Fence walk over the real results of the tools: every string that
 // a sender can set must reach the model in a fence of this response.
+// The static twin of the output gate checks the Out type of every
+// registered tool, and a fixture test checks that no tool note is
+// withheld.
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,100 +28,6 @@ import (
 	"github.com/amsys/mailbag-mcp/internal/mail"
 	"github.com/amsys/mailbag-mcp/internal/verify"
 )
-
-// serverOwned names the result fields that §3.15 keeps outside a
-// fence, because this server wrote them: an id, an account alias, a
-// folder name from LIST, the INTERNALDATE, the flags, a part ref from
-// BODYSTRUCTURE, and a note this server wrote itself.
-//
-// The key is "<struct type>.<field>". Everything not on this list
-// must be fenced. That is the whole point of the list: a field added
-// to a result struct later is not on it, so
-// TestTools_EveryUntrustedFieldFenced fails until somebody either
-// fences the field or writes it here on purpose (G3).
-var serverOwned = map[string]bool{
-	"ReadOut.Account":       true,
-	"ReadOut.Note":          true,
-	"ReadMessage.ID":        true,
-	"ReadMessage.Folder":    true,
-	"ReadMessage.Date":      true,
-	"ReadMessage.Flags":     true,
-	"AttachmentRow.Ref":     true,
-	"AttachmentOut.Account": true,
-	"ExportOut.Account":     true,
-	"DecryptOut.Account":    true,
-	"DecryptOut.ID":         true,
-	"DecryptOut.Note":       true,
-	"ExportOut.Note":        true,
-	"SearchRow.ID":          true,
-	"SearchRow.Account":     true,
-	"SearchRow.Folder":      true,
-	"SearchRow.Date":        true,
-	"SearchRow.Flags":       true,
-	"SearchOut.NextCursor":  true,
-	"SearchOut.Note":        true,
-	"AccountError.Account":  true,
-	// AccountError.Error is the failing provider's own text, already
-	// through guard.Redact (search.go). It is server text today. A
-	// provider error that quotes a sender-chosen name would need a
-	// fence, which internal/tools cannot add without changing how
-	// search.go builds the line.
-	"AccountError.Error": true,
-	"FoldersOut.Account": true,
-	"FolderRow.Name":     true,
-	"FolderRow.Role":     true,
-	// The verify.Signature fields hold only enum words and hex (I11).
-	// The server computes them; verify.clean drops any other value.
-	// The walk keys a field by its own struct type, so the key is
-	// "Signature.<field>", not "ReadMessage.Signature.<field>".
-	"Signature.Type":        true,
-	"Signature.Verdict":     true,
-	"Signature.Fingerprint": true,
-	"Signature.Trust":       true,
-	// DecryptedFile.Type is the media type stdmime.ParseMediaType gave
-	// the DR1G.9 walk. That parse accepts only the RFC 2045 token
-	// grammar (printable US-ASCII, no "[", "]" or whitespace), so a
-	// forged marker or a hidden character cannot survive into it: a
-	// part header holding either makes ParseMediaType fail, and the
-	// walk then falls back to the fixed string "text/plain".
-	"DecryptedFile.Type": true,
-
-	// The S9 tools (DS9.8, IS9.9). UnsubscribeRow.ID is the id the
-	// caller gave; Method and Status are fixed words; DraftID comes
-	// from the provider's APPEND; Note is text this server wrote. The
-	// URL is sender text, so it is not here.
-	"UnsubscribeRow.ID":      true,
-	"UnsubscribeRow.Method":  true,
-	"UnsubscribeRow.Status":  true,
-	"UnsubscribeRow.DraftID": true,
-	"UnsubscribeRow.Note":    true,
-	// BulkRow.ID comes from the search. Undo is a journal record id,
-	// Skipped holds ids from the journal, and Note is server text. An
-	// UndoRow is the journal's own record: its id, its time, the tool
-	// name and a summary that modifySummary wrote.
-	"BulkRow.ID": true,
-	// BulkRow.Date is a time that the server formats as RFC 3339.
-	"BulkRow.Date":    true,
-	"BulkOut.Undo":    true,
-	"BulkOut.Skipped": true,
-	"BulkOut.Note":    true,
-	"UndoRow.ID":      true,
-	"UndoRow.At":      true,
-	"UndoRow.Tool":    true,
-	"UndoRow.Summary": true,
-	// TemplateRow.Name passed config.ValidAlias (letters, digits, '-'
-	// and '_'), so it cannot hold a marker. DraftID and Note come from
-	// the draft tool.
-	"TemplateRow.Name":     true,
-	"TemplatesOut.DraftID": true,
-	"TemplatesOut.Note":    true,
-	// FilterRow.ID is the id Gmail gave. VacationRow.Start and End are
-	// dates this server formatted. Note is server text.
-	"FilterRow.ID":          true,
-	"VacationRow.Start":     true,
-	"VacationRow.End":       true,
-	"GmailSettingsOut.Note": true,
-}
 
 // TestTools_EveryUntrustedFieldFenced holds G3: one field without a
 // fence is enough for an attack, so no hand-written list of fields
@@ -131,14 +44,29 @@ var serverOwned = map[string]bool{
 // carries a forged closing marker and a hidden character, so a field
 // that reaches the result unfenced shows here as an unfenced marker.
 //
-// A field that is not on serverOwned must be non-empty and fenced. An
-// empty value would pass a fence check for free, so an empty one
-// fails too: the fixture has to fill every field, and a new field
-// that nobody filled or fenced fails the same way.
+// Each result goes through the output gate checkOut, as WrapReq does
+// (DU4.1), and through the fill rules of [gatedProblems]: a string
+// under untrusted must be non-empty, because an empty value would pass
+// a fence check for free, and every list must be filled.
 //
 // arch: T4.5, §3.16, §3.15, App B, G3, E12, G6, §10.4, §10.9
 // arch: DS9.8, DS9.9, IS9.8, IS9.9
+// arch: DU4.1, DU2.1, DU3.5, DU9.1, DU12.1
 func TestTools_EveryUntrustedFieldFenced(t *testing.T) {
+	outs, readOut := hostileOuts(t)
+	for _, out := range outs {
+		walkFields(t, reflect.ValueOf(out))
+	}
+	requireSignature(t, readOut)
+}
+
+// hostileOuts runs each fixture of the fence walk and gives the
+// results, one for each tool. It also gives the read result alone, so
+// a caller can check that its messages carry a signature.
+//
+// arch: DU4.1, DU3.5
+func hostileOuts(t *testing.T) (outs []any, readOut ReadOut) {
+	t.Helper()
 	dir := t.TempDir()
 	m := hostileMessage()
 	// A label or keyword is a name that a person or a sender chose
@@ -170,10 +98,9 @@ func TestTools_EveryUntrustedFieldFenced(t *testing.T) {
 	}
 
 	// Note is the one field that no call above fills, because nothing
-	// went wrong. It is server text and it is on serverOwned, so give
-	// it a value here and let the walk judge it like the rest. The text
-	// is one that read and export write, so it matches a form of the
-	// note registry (DU3.5) once these results carry Head.
+	// went wrong. Give it a value here and let the walk judge it like
+	// the rest. The text is one that read and export write, so it
+	// matches a form of the note registry (DU3.5).
 	readOut.Note = "the conversation may be longer than 50 messages"
 	expOut.Note = "the conversation may be longer than 50 messages"
 
@@ -186,10 +113,349 @@ func TestTools_EveryUntrustedFieldFenced(t *testing.T) {
 	tmplOut := hostileTemplates(ctx, t)
 	gsOut := hostileGmailSettings(ctx, t)
 
-	for _, out := range []any{readOut, attOut, expOut, searchOut, foldersOut, decOut, unsubOut, bulkOut, tmplOut, gsOut} {
-		walkFields(t, reflect.ValueOf(out), "")
+	return []any{readOut, attOut, expOut, searchOut, foldersOut, decOut, unsubOut, bulkOut, tmplOut, gsOut}, readOut
+}
+
+// TestTools_NoNoteWithheld holds DU3.5: every note that a tool writes
+// for the fixtures of the fence walk matches a form of the note
+// registry, so no part of it is the fixed note "note withheld". A note
+// that strictNote had to replace shows a form that is missing from
+// notes.go, or a tool that puts provider, sender or model text in a
+// note. Each fixture result whose type has a note field must fill one,
+// or the test cannot see the note of that tool.
+//
+// arch: DU4.1, DU2.1, DU3.5, DU9.1, DU12.1
+func TestTools_NoNoteWithheld(t *testing.T) {
+	outs, _ := hostileOuts(t)
+	for _, out := range outs {
+		v := reflect.ValueOf(out)
+		name := v.Type().Name()
+		var notes []string
+		collectNotes(v, name, &notes)
+		if hasNoteField(v.Type(), map[reflect.Type]bool{}) && len(notes) == 0 {
+			t.Errorf("%s: the fixture fills no note field, so this test cannot see the notes of the tool", name)
+		}
+		for _, n := range notes {
+			path, note, _ := strings.Cut(n, "=")
+			if got, ok := strictNote(note); !ok {
+				t.Errorf("%s = %q matches no form of the note registry; strictNote gives %q (DU3.5)", path, note, got)
+			}
+			if slices.Contains(strings.Split(note, noteSep), noteWithheld) {
+				t.Errorf("%s = %q holds the note %q (DU3.5)", path, note, noteWithheld)
+			}
+		}
 	}
-	requireSignature(t, readOut)
+}
+
+// collectNotes adds to notes each non-empty string of v in a field
+// with the strict kind "note", as "<path>=<value>". It walks the
+// fields that encoding/json writes.
+func collectNotes(v reflect.Value, path string, notes *[]string) {
+	switch v.Kind() {
+	case reflect.Struct:
+		tp := v.Type()
+		for i := 0; i < tp.NumField(); i++ {
+			sf := tp.Field(i)
+			if _, _, skip := jsonField(sf); skip {
+				continue
+			}
+			fv := v.Field(i)
+			fp := path + "." + sf.Name
+			if sf.Tag.Get("strict") == "note" && fv.Kind() == reflect.String {
+				if s := fv.String(); s != "" {
+					*notes = append(*notes, fp+"="+s)
+				}
+				continue
+			}
+			collectNotes(fv, fp, notes)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			collectNotes(v.Index(i), fmt.Sprintf("%s[%d]", path, i), notes)
+		}
+	case reflect.Pointer:
+		if !v.IsNil() {
+			collectNotes(v.Elem(), path, notes)
+		}
+	}
+}
+
+// hasNoteField reports whether tp, or a type in it, has a field with
+// the strict kind "note".
+func hasNoteField(tp reflect.Type, seen map[reflect.Type]bool) bool {
+	switch tp.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return hasNoteField(tp.Elem(), seen)
+	case reflect.Struct:
+		if seen[tp] {
+			return false
+		}
+		seen[tp] = true
+		for i := 0; i < tp.NumField(); i++ {
+			sf := tp.Field(i)
+			if _, _, skip := jsonField(sf); skip {
+				continue
+			}
+			if sf.Tag.Get("strict") == "note" || hasNoteField(sf.Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// toolOutTypes gives the Out type of each tool, by tool name.
+// TestOut_EveryStringFieldHasZone checks that it names every tool that
+// the server registers, so a new tool fails the test until its Out
+// type is here.
+var toolOutTypes = map[string]reflect.Type{
+	"accounts":       reflect.TypeOf(AccountsOut{}),
+	"folders":        reflect.TypeOf(FoldersOut{}),
+	"search":         reflect.TypeOf(SearchOut{}),
+	"read":           reflect.TypeOf(ReadOut{}),
+	"attachment":     reflect.TypeOf(AttachmentOut{}),
+	"export":         reflect.TypeOf(ExportOut{}),
+	"decrypt":        reflect.TypeOf(DecryptOut{}),
+	"modify":         reflect.TypeOf(ModifyOut{}),
+	"draft":          reflect.TypeOf(DraftOut{}),
+	"send":           reflect.TypeOf(SendOut{}),
+	"unsubscribe":    reflect.TypeOf(UnsubscribeOut{}),
+	"bulk":           reflect.TypeOf(BulkOut{}),
+	"templates":      reflect.TypeOf(TemplatesOut{}),
+	"gmail_settings": reflect.TypeOf(GmailSettingsOut{}),
+}
+
+// strictKinds is the closed set of strict kinds of DU3.1. A strict tag
+// that names another kind fails the static twin, because guard.Strict
+// is false for an unknown kind.
+var strictKinds = map[string]bool{
+	"nonce": true, "id": true, "folder": true, "ref": true, "date": true, "day": true,
+	"alias": true, "word": true, "flags": true, "hex": true, "cursor": true, "msgid": true,
+	"owner": true, "note": true,
+}
+
+// TestOut_EveryStringFieldHasZone is the static twin of the output gate
+// (DU4.1). It walks the Out type of every tool that the server
+// registers with every toolset on, and verify.Signature. It fails on a
+// string field outside untrusted that has no strict tag or names an
+// unknown kind, on a number or a bool under untrusted, on an untrusted
+// key that does not hold an object, on a map, an interface or a
+// marshaler type, and on an Out whose first field is not Head. It
+// replaces the hand-kept list of server fields of the old fence walk.
+//
+// arch: DU4.1, DU2.1, DU3.5, DU9.1, DU12.1
+func TestOut_EveryStringFieldHasZone(t *testing.T) {
+	var sets []string
+	for _, g := range Toolsets() {
+		sets = append(sets, g.Name)
+	}
+	res, err := ListTools(slog.New(slog.DiscardHandler), sets...)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	listed := map[string]bool{}
+	for _, tool := range res.Tools {
+		listed[tool.Name] = true
+		if _, ok := toolOutTypes[tool.Name]; !ok {
+			t.Errorf("tool %s has no Out type in toolOutTypes; add it, so the static twin can walk it", tool.Name)
+		}
+	}
+	for name := range toolOutTypes {
+		if !listed[name] {
+			t.Errorf("toolOutTypes names %s, which the server does not register", name)
+		}
+	}
+	for name, tp := range toolOutTypes {
+		for _, p := range outZoneProblems(tp) {
+			t.Errorf("tool %s: %s", name, p)
+		}
+	}
+	sig := reflect.TypeOf(verify.Signature{})
+	for _, p := range typeZoneProblems(sig, sig.Name(), false, "", map[zoneType]bool{}) {
+		t.Errorf("verify.Signature: %s", p)
+	}
+}
+
+// TestOut_StaticTwinFindsEachFault shows that the static twin is not
+// blind: each type below breaks one rule, and the twin names the
+// field that breaks it.
+//
+// arch: DU4.1, DU2.1, DU3.5, DU9.1, DU12.1
+func TestOut_StaticTwinFindsEachFault(t *testing.T) {
+	type zone struct {
+		Text  string `json:"text,omitempty"`
+		Count int    `json:"count"`
+	}
+	type noTag struct {
+		Head
+		Name string `json:"name"`
+	}
+	type badKind struct {
+		Head
+		Name string `json:"name" strict:"subject"`
+	}
+	type numInZone struct {
+		Head
+		Untrusted zone `json:"untrusted"`
+	}
+	type joined struct {
+		Head
+		Untrusted string `json:"untrusted"`
+	}
+	type openMap struct {
+		Head
+		Extra map[string]string `json:"extra"`
+	}
+	type openAny struct {
+		Head
+		Extra any `json:"extra"`
+	}
+	type stamp struct {
+		Head
+		At time.Time `json:"at"`
+	}
+	type noHead struct {
+		Name string `json:"name" strict:"word"`
+	}
+	type headLast struct {
+		Name string `json:"name" strict:"word"`
+		Head
+	}
+	type tagged struct {
+		Head `json:"head"`
+	}
+	type deepTag struct {
+		Head
+		Rows []struct {
+			Labels []string `json:"labels"`
+		} `json:"rows"`
+	}
+	cases := []struct {
+		tp   reflect.Type
+		want string
+	}{
+		{reflect.TypeOf(noTag{}), "noTag.Name"},
+		{reflect.TypeOf(badKind{}), "badKind.Name"},
+		{reflect.TypeOf(numInZone{}), "numInZone.Untrusted.Count"},
+		{reflect.TypeOf(joined{}), "joined.Untrusted"},
+		{reflect.TypeOf(openMap{}), "openMap.Extra"},
+		{reflect.TypeOf(openAny{}), "openAny.Extra"},
+		{reflect.TypeOf(stamp{}), "stamp.At"},
+		{reflect.TypeOf(noHead{}), "noHead"},
+		{reflect.TypeOf(headLast{}), "headLast"},
+		{reflect.TypeOf(tagged{}), "tagged"},
+		{reflect.TypeOf(deepTag{}), "deepTag.Rows[].Labels[]"},
+	}
+	for _, c := range cases {
+		probs := outZoneProblems(c.tp)
+		found := false
+		for _, p := range probs {
+			if strings.HasPrefix(p, c.want+": ") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: problems = %q, want one at %s", c.tp.Name(), probs, c.want)
+		}
+	}
+	type good struct {
+		Head
+		ID        string   `json:"id" strict:"id"`
+		Flags     []string `json:"flags,omitempty" strict:"word"`
+		Size      int64    `json:"size"`
+		Untrusted *zone    `json:"untrusted,omitempty"`
+		Skip      string   `json:"-"`
+	}
+	if p := outZoneProblems(reflect.TypeOf(good{})); len(p) != 1 || !strings.HasPrefix(p[0], "good.Untrusted.Count: ") {
+		t.Errorf("good type: problems = %q, want only the number under untrusted", p)
+	}
+}
+
+// outZoneProblems gives one text for each field of the Out type tp
+// that breaks a rule of the output gate (DU4.1). tp must have Head as
+// its first, embedded field with no json tag.
+func outZoneProblems(tp reflect.Type) []string {
+	name := tp.Name()
+	if tp.Kind() != reflect.Struct || tp.NumField() == 0 || !tp.Field(0).Anonymous || tp.Field(0).Type != headType {
+		return []string{name + ": Head is not the first, embedded field (DU2.1)"}
+	}
+	if _, tagged := tp.Field(0).Tag.Lookup("json"); tagged {
+		return []string{name + ": Head has a json tag, so fence is not the first key (INV-4)"}
+	}
+	return typeZoneProblems(tp, name, false, "", map[zoneType]bool{})
+}
+
+// zoneType is a type and the zone it is walked in.
+type zoneType struct {
+	tp   reflect.Type
+	zone bool
+}
+
+// typeZoneProblems gives one text for each field of type tp, found at
+// path, that breaks a rule of the output gate. zone is true under a
+// field with the JSON name "untrusted"; kind is the strict tag of the
+// field that holds the value. A slice element has the path of its
+// slice and "[]".
+func typeZoneProblems(tp reflect.Type, path string, zone bool, kind string, seen map[zoneType]bool) []string {
+	if tp.Implements(jsonMarshalerType) || reflect.PointerTo(tp).Implements(jsonMarshalerType) ||
+		tp.Implements(textMarshalerType) || reflect.PointerTo(tp).Implements(textMarshalerType) {
+		return []string{path + ": a marshaler type hides its JSON form from the gate"}
+	}
+	switch tp.Kind() {
+	case reflect.String:
+		switch {
+		case zone:
+			return nil
+		case kind == "":
+			return []string{path + ": a string outside untrusted has no strict tag"}
+		case !strictKinds[kind]:
+			return []string{path + ": the strict kind " + kind + " is not a kind of DU3.1"}
+		}
+		return nil
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		if zone {
+			return []string{path + ": a number or a bool is under untrusted"}
+		}
+		return nil
+	case reflect.Pointer:
+		return typeZoneProblems(tp.Elem(), path, zone, kind, seen)
+	case reflect.Slice, reflect.Array:
+		if tp.Elem().Kind() == reflect.Uint8 {
+			return []string{path + ": a byte slice is not allowed"}
+		}
+		return typeZoneProblems(tp.Elem(), path+"[]", zone, kind, seen)
+	case reflect.Struct:
+		// A type is walked once for each zone, so a cycle ends.
+		key := zoneType{tp, zone}
+		if seen[key] {
+			return nil
+		}
+		seen[key] = true
+		var probs []string
+		for i := 0; i < tp.NumField(); i++ {
+			sf := tp.Field(i)
+			name, _, skip := jsonField(sf)
+			if skip {
+				continue
+			}
+			fp := path + "." + sf.Name
+			if name == untrustedKey && !isObject(sf.Type) {
+				probs = append(probs, fp+": the untrusted key must hold an object of named fields (DU5.1)")
+				continue
+			}
+			fk := sf.Tag.Get("strict")
+			if name == "" {
+				fk = ""
+			}
+			probs = append(probs, typeZoneProblems(sf.Type, fp, zone || name == untrustedKey, fk, seen)...)
+		}
+		return probs
+	default:
+		return []string{path + ": a " + tp.Kind().String() + " is not allowed"}
+	}
 }
 
 // hostileDecrypt runs the decrypt handler with a stand-in for gpg
@@ -329,6 +595,12 @@ func hostileTemplates(ctx context.Context, t *testing.T) TemplatesOut {
 	if err := os.WriteFile(filepath.Join(dir, "hostile"+templateSuffix), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A directory with the template suffix is not a regular file, so
+	// the list skips it and says so in its note. The note walk of
+	// TestTools_NoNoteWithheld then sees a real note of this tool.
+	if err := os.Mkdir(filepath.Join(dir, "broken"+templateSuffix), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil {
 		t.Fatalf("templates list: %v", err)
@@ -337,8 +609,11 @@ func hostileTemplates(ctx context.Context, t *testing.T) TemplatesOut {
 	if err != nil {
 		t.Fatalf("templates draft: %v", err)
 	}
-	out.DraftID, out.Note = draft.DraftID, draft.Note
-	if len(out.Templates) != 1 || out.DraftID == "" {
+	out.DraftID = draft.DraftID
+	if draft.Note != "" {
+		out.Note = joinNote(out.Note, draft.Note)
+	}
+	if len(out.Templates) != 1 || out.DraftID == "" || out.Note == "" {
 		t.Fatalf("the templates fixture left a field empty: %+v", out)
 	}
 	return out
@@ -469,54 +744,25 @@ func attInfo() (info mail.AttachmentInfo) {
 	return info
 }
 
-// walkFields visits every exported string of v. It has two modes
-// while the tools move to the two-zone result one group at a time:
+// walkFields judges v, the result of one tool, as [WrapReq] does
+// after the handler, and adds the fill rules of the fence walk (see
+// [gatedProblems]). A result whose type does not embed [Head] fails,
+// because the gate refuses it.
 //
-//   - A struct whose type embeds [Head] is a converted Out. The walk
-//     gives it to [gatedProblems], which runs the output gate checkOut
-//     and the fill rules of this test.
-//   - Any other value is judged by the old rule: path is
-//     "<struct type>.<field>", with no slice index, so one entry of
-//     serverOwned covers every row of a list.
-//
-// arch: DU4.1
-func walkFields(t *testing.T, v reflect.Value, path string) {
+// arch: DU4.1, DU2.1
+func walkFields(t *testing.T, v reflect.Value) {
 	t.Helper()
-	if v.Kind() == reflect.Struct && embedsHead(v.Type()) {
-		for _, p := range gatedProblems(testFencer(t), v) {
-			t.Error(p)
-		}
-		return
-	}
-	switch v.Kind() {
-	case reflect.Struct:
-		tp := v.Type()
-		for i := 0; i < tp.NumField(); i++ {
-			if !tp.Field(i).IsExported() {
-				continue
-			}
-			walkFields(t, v.Field(i), tp.Name()+"."+tp.Field(i).Name)
-		}
-	case reflect.Slice, reflect.Array:
-		if v.Len() == 0 {
-			t.Errorf("%s is empty; this test cannot see the fields inside an empty list, so the fixture must fill it (G3)", path)
-			return
-		}
-		for i := 0; i < v.Len(); i++ {
-			walkFields(t, v.Index(i), path)
-		}
-	case reflect.Pointer, reflect.Interface:
-		if !v.IsNil() {
-			walkFields(t, v.Elem(), path)
-		}
-	case reflect.String:
-		checkFenced(t, path, v.String())
+	for _, p := range gatedProblems(testFencer(t), v) {
+		t.Error(p)
 	}
 }
 
 // embedsHead reports whether tp has an embedded field of type [Head].
 // checkOut then also checks that Head is the first field.
 func embedsHead(tp reflect.Type) bool {
+	if tp.Kind() != reflect.Struct {
+		return false
+	}
 	for i := 0; i < tp.NumField(); i++ {
 		if sf := tp.Field(i); sf.Anonymous && sf.Type == headType {
 			return true
@@ -525,17 +771,21 @@ func embedsHead(tp reflect.Type) bool {
 	return false
 }
 
-// gatedProblems judges v, a struct whose type embeds [Head], and
-// gives one text for each problem. It does what [WrapReq] does after
-// the handler: it sets the nonce of f into a copy of v, then runs
-// checkOut. The gate lets an empty omitempty field pass, so a fixture
-// that leaves a field empty would pass for free. For that reason
-// gatedProblems also keeps the fill rules of the old walk: every
-// slice is filled, every string under untrusted is filled, no string
-// holds U+200B, and no string outside untrusted holds marker text.
+// gatedProblems judges v, the result of one tool, and gives one text
+// for each problem. It does what [WrapReq] does after the handler: it
+// sets the nonce of f into a copy of v, then runs checkOut. The gate
+// lets an empty omitempty field pass, so a fixture that leaves a field
+// empty would pass for free. For that reason gatedProblems also keeps
+// the fill rules of the fence walk: every slice is filled, every
+// string under untrusted is filled, no string holds U+200B, no string
+// outside untrusted holds marker text, and no note holds the fixed
+// note "note withheld" (DU3.5).
 //
-// arch: DU4.1, DU2.1
+// arch: DU4.1, DU2.1, DU3.5
 func gatedProblems(f guard.Fencer, v reflect.Value) []string {
+	if v.Kind() != reflect.Struct || !embedsHead(v.Type()) {
+		return []string{fmt.Sprintf("%s does not embed Head, so the output gate refuses it (DU2.1, DU4.1)", v.Type())}
+	}
 	cp := reflect.New(v.Type()).Elem()
 	cp.Set(v)
 	cp.Addr().Interface().(interface{ setFence(string) }).setFence(f.Nonce())
@@ -543,23 +793,25 @@ func gatedProblems(f guard.Fencer, v reflect.Value) []string {
 	if err := checkOut(f, cp.Interface()); err != nil {
 		probs = append(probs, "output gate refused the result (DU4.1): "+err.Error())
 	}
-	fillProblems(cp, v.Type().Name(), false, &probs)
+	fillProblems(cp, v.Type().Name(), false, "", &probs)
 	return probs
 }
 
 // fillProblems adds to probs each fill problem of v, found at path.
-// zone is true under a field with the JSON name "untrusted". It walks
-// the fields that encoding/json writes, as checkOut does.
-func fillProblems(v reflect.Value, path string, zone bool, probs *[]string) {
+// zone is true under a field with the JSON name "untrusted"; kind is
+// the strict tag of the field that holds v. It walks the fields that
+// encoding/json writes, as checkOut does.
+func fillProblems(v reflect.Value, path string, zone bool, kind string, probs *[]string) {
 	switch v.Kind() {
 	case reflect.Struct:
 		tp := v.Type()
 		for i := 0; i < tp.NumField(); i++ {
-			name, _, skip := jsonField(tp.Field(i))
+			sf := tp.Field(i)
+			name, _, skip := jsonField(sf)
 			if skip {
 				continue
 			}
-			fillProblems(v.Field(i), path+"."+tp.Field(i).Name, zone || name == untrustedKey, probs)
+			fillProblems(v.Field(i), path+"."+sf.Name, zone || name == untrustedKey, sf.Tag.Get("strict"), probs)
 		}
 	case reflect.Slice, reflect.Array:
 		if v.Len() == 0 {
@@ -567,11 +819,11 @@ func fillProblems(v reflect.Value, path string, zone bool, probs *[]string) {
 			return
 		}
 		for i := 0; i < v.Len(); i++ {
-			fillProblems(v.Index(i), fmt.Sprintf("%s[%d]", path, i), zone, probs)
+			fillProblems(v.Index(i), fmt.Sprintf("%s[%d]", path, i), zone, kind, probs)
 		}
 	case reflect.Pointer:
 		if !v.IsNil() {
-			fillProblems(v.Elem(), path, zone, probs)
+			fillProblems(v.Elem(), path, zone, kind, probs)
 		}
 	case reflect.String:
 		s := v.String()
@@ -584,39 +836,31 @@ func fillProblems(v reflect.Value, path string, zone bool, probs *[]string) {
 		if !zone && strings.Contains(s, "UNTRUSTED_") {
 			*probs = append(*probs, fmt.Sprintf("%s is outside untrusted but carries marker text: %q", path, s))
 		}
+		if !zone && kind == "note" && slices.Contains(strings.Split(s, noteSep), noteWithheld) {
+			*probs = append(*probs, fmt.Sprintf("%s holds the note %q: a form is missing from the registry, or the tool put foreign text in it (DU3.5)", path, noteWithheld))
+		}
 	}
 }
 
-// checkFenced applies the rule of §3.15 to one string field.
-func checkFenced(t *testing.T, path, got string) {
+// checkFenced checks that got, found at path, is one fence of the
+// response whose nonce is nonce: the open and the close marker carry
+// that nonce, the body holds no other marker, and the body keeps no
+// hidden character (§3.15, INV-11).
+func checkFenced(t *testing.T, path, nonce, got string) {
 	t.Helper()
-	if serverOwned[path] {
-		if strings.Contains(got, "UNTRUSTED_") {
-			t.Errorf("%s is outside every fence but carries marker text: %q", path, got)
-		}
-		if strings.ContainsRune(got, '​') {
-			t.Errorf("%s is outside every fence but keeps a hidden character: %q", path, got)
-		}
+	raw, err := hex.DecodeString(nonce)
+	if err != nil {
+		t.Fatalf("%s: nonce %q is not hex: %v", path, nonce, err)
+	}
+	f, err := guard.NewFencerFrom(bytes.NewReader(raw))
+	if err != nil || f.Nonce() != nonce {
+		t.Fatalf("%s: no Fencer for nonce %q: %v", path, nonce, err)
+	}
+	if !f.Holds(got) {
+		t.Errorf("%s is not one fence of the nonce %s (G3, §3.15, DU1.1): %q", path, nonce, got)
 		return
 	}
-	if got == "" {
-		t.Errorf("%s is empty; fill it in the fixture, or this test cannot tell whether it is fenced (G3)", path)
-		return
-	}
-	if !strings.HasPrefix(got, "[UNTRUSTED_") || !strings.HasSuffix(got, "]") {
-		t.Errorf("%s is not fenced (G3, §3.15): %q\nFence it in internal/tools, or add it to serverOwned when this server wrote it.", path, got)
-		return
-	}
-	kind, _, ok := strings.Cut(strings.TrimPrefix(got, "[UNTRUSTED_"), "]")
-	if !ok {
-		t.Errorf("%s has no fence kind: %q", path, got)
-		return
-	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(got, "[UNTRUSTED_"+kind+"]\n"), "\n[/UNTRUSTED_"+kind+"]")
-	if strings.Contains(inner, "[UNTRUSTED_") || strings.Contains(inner, "[/UNTRUSTED_") {
-		t.Errorf("%s: the content can close its own fence: %q", path, inner)
-	}
-	if strings.ContainsRune(inner, '​') {
-		t.Errorf("%s keeps a hidden character inside the fence (§3.15): %q", path, inner)
+	if strings.ContainsRune(got, '\u200b') {
+		t.Errorf("%s keeps a hidden character inside the fence (§3.15): %q", path, got)
 	}
 }

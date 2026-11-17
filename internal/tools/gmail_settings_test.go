@@ -111,7 +111,10 @@ func (m *settingsMail) DownloadDirs() []string { return nil }
 // settingsFixture gives a gmail_settings tool over a Gmail account
 // "work" at level access, and its fake Settings.
 func settingsFixture(access string) (*gmailSettingsTool, *settingsWriter) {
-	w := &settingsWriter{}
+	// Gmail gives each filter it creates an id. The output gate of
+	// WrapReq refuses a filter row with no id (DU4.1), so the created
+	// filter of the fixture has one.
+	w := &settingsWriter{created: gmail.Filter{ID: "f0"}}
 	m := &settingsMail{acct: config.Account{Alias: "work", Provider: "gmail", Access: access}, w: w}
 	return &gmailSettingsTool{mail: m}, w
 }
@@ -388,12 +391,12 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 			t.Fatalf("filters = %+v, want one row", out.Filters)
 		}
 		r := out.Filters[0]
-		checkFenced(t, "FilterRow.From", r.Untrusted.From)
-		checkFenced(t, "FilterRow.To", r.Untrusted.To)
-		checkFenced(t, "FilterRow.Subject", r.Untrusted.Subject)
-		checkFenced(t, "FilterRow.Query", r.Untrusted.Query)
-		checkFenced(t, "FilterRow.AddLabels", r.Untrusted.AddLabels[0])
-		checkFenced(t, "FilterRow.RemoveLabels", r.Untrusted.RemoveLabels[0])
+		checkFenced(t, "FilterRow.From", testNonce, r.Untrusted.From)
+		checkFenced(t, "FilterRow.To", testNonce, r.Untrusted.To)
+		checkFenced(t, "FilterRow.Subject", testNonce, r.Untrusted.Subject)
+		checkFenced(t, "FilterRow.Query", testNonce, r.Untrusted.Query)
+		checkFenced(t, "FilterRow.AddLabels", testNonce, r.Untrusted.AddLabels[0])
+		checkFenced(t, "FilterRow.RemoveLabels", testNonce, r.Untrusted.RemoveLabels[0])
 		if r.ID != "f1" {
 			t.Errorf("FilterRow.ID = %q, want f1 outside a fence", r.ID)
 		}
@@ -403,8 +406,8 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkFenced(t, "VacationRow.Subject", vac.Vacation.Untrusted.Subject)
-	checkFenced(t, "VacationRow.Body", vac.Vacation.Untrusted.Body)
+	checkFenced(t, "VacationRow.Subject", testNonce, vac.Vacation.Untrusted.Subject)
+	checkFenced(t, "VacationRow.Body", testNonce, vac.Vacation.Untrusted.Body)
 	if vac.Vacation.Start != "2026-10-14" {
 		t.Errorf("VacationRow.Start = %q, want 2026-10-14 outside a fence", vac.Vacation.Start)
 	}
@@ -413,7 +416,7 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkFenced(t, "GmailSettingsOut.Signature", sig.Signature)
+	checkFenced(t, "GmailSettingsOut.Signature", testNonce, sig.Signature)
 }
 
 // TestGmailSettings_TwoZones holds the two-zone form: the result starts

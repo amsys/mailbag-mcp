@@ -470,12 +470,13 @@ func filledGateOut(f guard.Fencer) gateOut {
 	return out
 }
 
-// TestWalkFields_HeadModeRunsGate shows the two modes of the fence
-// walk: a value whose type embeds Head is judged by checkOut after the
-// nonce is set, as WrapReq does, and the fill rules of the old walk
-// still apply to it, so an empty field cannot pass for free.
+// TestWalkFields_HeadModeRunsGate shows how the fence walk judges a
+// result: checkOut runs after the nonce is set, as WrapReq does, and
+// the fill rules still apply, so an empty field cannot pass for free.
+// A value whose type does not embed Head fails, because the gate is on
+// for every tool and the old walk with its hand-kept list is gone.
 //
-// arch: DU4.1
+// arch: DU4.1, DU2.1, DU3.5, DU9.1, DU12.1
 func TestWalkFields_HeadModeRunsGate(t *testing.T) {
 	f := testFencer(t)
 	if !embedsHead(reflect.TypeOf(gateOut{})) || embedsHead(reflect.TypeOf(gateRow{})) {
@@ -483,6 +484,9 @@ func TestWalkFields_HeadModeRunsGate(t *testing.T) {
 	}
 	if p := gatedProblems(f, reflect.ValueOf(filledGateOut(f))); len(p) != 0 {
 		t.Fatalf("a filled, good result has problems: %q", p)
+	}
+	if p := gatedProblems(f, reflect.ValueOf(gateRow{ID: "m1"})); len(p) != 1 || !strings.Contains(p[0], "does not embed Head") {
+		t.Errorf("a value with no Head: problems = %q, want one that names the missing Head", p)
 	}
 
 	cases := []struct {
@@ -503,6 +507,8 @@ func TestWalkFields_HeadModeRunsGate(t *testing.T) {
 			}},
 		{"marker text outside", "gateOut.Account is outside untrusted but carries marker text",
 			func(g *gateOut) { g.Account = "UNTRUSTED_x" }},
+		{"note withheld", `gateOut.Note holds the note "note withheld"`,
+			func(g *gateOut) { g.Note = "nothing matches" + noteSep + noteWithheld }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

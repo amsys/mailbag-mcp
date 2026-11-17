@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -40,18 +41,30 @@ type FoldersIn struct {
 	NewName string `json:"new_name,omitempty" jsonschema:"name or folder_ref"`
 }
 
-// FolderRow is one line of the folders result (§3.16). A folder name
-// is not sender-controlled, so it carries no fence (§3.15). It comes
-// from the server, so the handler takes its hidden characters and any
-// fence marker out before it goes in here.
+// FolderRow is one line of the folders result (§3.16, DU5.5). The
+// folder_ref, the role and the counts are outside: the ref is the hex
+// of the raw name (DU3.3) and the role is a word of this server. The
+// display name is under Untrusted in one fence, because a folder name
+// can be a sender (a shared folder, a Gmail label).
+//
+// arch: DU5.5, DU3.3, DU5.1
 type FolderRow struct {
-	Name   string `json:"name"`
-	Role   string `json:"role,omitempty"`
-	Total  int    `json:"total"`
-	Unread int    `json:"unread"`
+	FolderRef string          `json:"folder_ref,omitempty" strict:"folder"`
+	Role      string          `json:"role,omitempty" strict:"word"`
+	Total     int             `json:"total"`
+	Unread    int             `json:"unread"`
+	Untrusted FolderUntrusted `json:"untrusted"`
 }
 
-// FoldersOut is the folders tool result (§3.16).
+// FolderUntrusted is the untrusted zone of one folder row: the display
+// name in one fence of the nonce of the response.
+type FolderUntrusted struct {
+	Name string `json:"name,omitempty"`
+}
+
+// FoldersOut is the folders tool result (§3.16, DU5.5). Head gives the
+// nonce. Account and the rows are outside, except the fenced name of
+// each row.
 //
 // Every action answers with the folder list as it is after the call.
 // A create, a rename and a delete report nothing of their own for
@@ -61,7 +74,8 @@ type FolderRow struct {
 // (C11). And a list after the change is the proof that the change
 // happened, in the shape the caller already knows.
 type FoldersOut struct {
-	Account string      `json:"account"`
+	Head
+	Account string      `json:"account" strict:"alias"`
 	Folders []FolderRow `json:"folders"`
 }
 
@@ -95,8 +109,9 @@ type foldersTool struct{ mail Mail }
 // accounts.toml goes over that answer, so a person can name the Sent
 // folder that their server does not mark (C10).
 //
-// arch: T4.5, T5.5, §3.16, §3.10, §3.1, §3.17, G10, C10, C11
+// arch: T4.5, T5.5, §3.16, §3.10, §3.1, §3.17, G10, C10, C11, DU5.5, DU8.1
 func (t *foldersTool) handle(ctx context.Context, in FoldersIn) (FoldersOut, error) {
+	f := fencer(ctx)
 	action := strings.ToLower(strings.TrimSpace(in.Action))
 	if action == "" {
 		action = folderActionList
@@ -106,12 +121,16 @@ func (t *foldersTool) handle(ctx context.Context, in FoldersIn) (FoldersOut, err
 		if err != nil {
 			return FoldersOut{}, err
 		}
-		return t.list(ctx, p, acct, in.Account)
+		return t.list(ctx, f, p, acct, in.Account)
 	}
 	if err := checkFolderArgs(action, in); err != nil {
 		return FoldersOut{}, err
 	}
 
+	name, newName, err := folderNames(action, in)
+	if err != nil {
+		return FoldersOut{}, err
+	}
 	w, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return FoldersOut{}, err
@@ -122,18 +141,18 @@ func (t *foldersTool) handle(ctx context.Context, in FoldersIn) (FoldersOut, err
 	}
 	switch action {
 	case folderActionCreate:
-		err = w.CreateFolder(ctx, in.Name)
+		err = w.CreateFolder(ctx, name)
 	case folderActionRename:
-		err = w.RenameFolder(ctx, in.Name, in.NewName)
+		err = w.RenameFolder(ctx, name, newName)
 	case folderActionDelete:
-		err = w.DeleteFolder(ctx, in.Name)
+		err = w.DeleteFolder(ctx, name)
 	}
 	if err != nil {
 		return FoldersOut{}, err
 	}
 	// The list after the change carries the name the server gave the
 	// folder, which the provider may have changed (C11).
-	return t.list(ctx, w, acct, in.Account)
+	return t.list(ctx, f, w, acct, in.Account)
 }
 
 // checkFolderArgs holds the arguments each action needs, so a call
@@ -153,10 +172,69 @@ func checkFolderArgs(action string, in FoldersIn) error {
 	return nil
 }
 
+// folderNames turns the name arguments into the raw names the provider
+// gets (DU3.3, DU8.1). A rename or delete accepts a folder_ref or a
+// name for the existing folder. A name that create or rename makes is
+// refused when the strip of a fence marker or of a hidden character
+// changes it, or when it holds a control character: the folder would
+// carry text that looks like a fence or an instruction. The error
+// text echoes no part of the name.
+//
+// arch: DU8.1, DU3.3
+func folderNames(action string, in FoldersIn) (name, newName string, err error) {
+	switch action {
+	case folderActionCreate:
+		if err := checkNewFolderName(in.Name); err != nil {
+			return "", "", err
+		}
+		return in.Name, "", nil
+	case folderActionRename:
+		if name, err = folderArg(in.Name); err != nil {
+			return "", "", errFolderRefInput
+		}
+		if err := checkNewFolderName(in.NewName); err != nil {
+			return "", "", err
+		}
+		return name, in.NewName, nil
+	}
+	name, err = folderArg(in.Name)
+	if err != nil {
+		return "", "", errFolderRefInput
+	}
+	return name, "", nil
+}
+
+// errFolderName is the refusal of a new folder name that holds fence
+// marker text, a hidden character or a control character (DU8.1).
+var errFolderName = public("invalid_input", "the folder name holds fence marker text, a hidden character or a control character; choose a plain name")
+
+// errFolderRefInput is the refusal of a bad folder_ref in an input.
+var errFolderRefInput = public("invalid_input", "a folder value that starts with \"=\" must be a folder_ref: \"=\" and 2 to 1024 lowercase hex digits")
+
+// checkNewFolderName refuses a name that changes under
+// guard.StripFenceMarkers or guard.StripInvisible, or that holds a
+// control character.
+//
+// arch: DU8.1
+func checkNewFolderName(s string) error {
+	if guard.StripFenceMarkers(s) != s {
+		return errFolderName
+	}
+	if clean, n := guard.StripInvisible(s); n != 0 || clean != s {
+		return errFolderName
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return errFolderName
+		}
+	}
+	return nil
+}
+
 // list reads the folder tree of one account and builds the result.
 //
 // arch: T4.5, §3.16, §3.10, C10
-func (t *foldersTool) list(ctx context.Context, p Reader, acct config.Account, alias string) (FoldersOut, error) {
+func (t *foldersTool) list(ctx context.Context, f guard.Fencer, p Reader, acct config.Account, alias string) (FoldersOut, error) {
 	list, err := p.Folders(ctx)
 	if err != nil {
 		return FoldersOut{}, err
@@ -164,17 +242,15 @@ func (t *foldersTool) list(ctx context.Context, p Reader, acct config.Account, a
 	imap.ApplyRoleOverrides(list, acct.Folders)
 
 	rows := make([]FolderRow, 0, len(list))
-	for _, f := range list {
-		// The name comes from the server and stays outside every
-		// fence (§3.15). Clean it, so a name cannot forge a fence
-		// boundary or a chat template token in the model's view (G2).
-		//
-		// arch: DH2.5
+	for _, fo := range list {
+		// The name is under untrusted in one fence; Wrap runs the
+		// escaper on it (DU5.1, INV-5). The ref holds the raw name.
 		rows = append(rows, FolderRow{
-			Name:   guard.CleanServerName(f.Name),
-			Role:   f.Role,
-			Total:  f.Total,
-			Unread: f.Unread,
+			FolderRef: folderRef(fo.Name),
+			Role:      fo.Role,
+			Total:     fo.Total,
+			Unread:    fo.Unread,
+			Untrusted: FolderUntrusted{Name: wrapIf(f, fo.Name)},
 		})
 	}
 	return FoldersOut{Account: alias, Folders: rows}, nil

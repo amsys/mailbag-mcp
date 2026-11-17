@@ -186,13 +186,24 @@ func TestServerNames_Cleaned(t *testing.T) {
 			{Name: hostile},
 			{Name: fullName},
 		}}}}
-		out, err := (&foldersTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), FoldersIn{Account: "work"})
+		f := testFencer(t)
+		inner := func(field, s string) string {
+			t.Helper()
+			if !f.Holds(s) {
+				t.Errorf("%s is not one fence of this response: %q", field, s)
+			}
+			return strings.TrimSuffix(strings.TrimPrefix(s, "[UNTRUSTED_"+testNonce+"]\n"), "\n[/UNTRUSTED_"+testNonce+"]")
+		}
+		out, err := (&foldersTool{mail: fm}).handle(withFencer(context.Background(), f), FoldersIn{Account: "work"})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
-		check(t, "FolderRow.Name", out.Folders[0].Name)
-		if got := out.Folders[1].Name; got != "Pay" {
-			t.Errorf("FolderRow.Name = %q, want the NFKC form %q", got, "Pay")
+		checkInner(t, "FolderRow.Untrusted.Name", inner("FolderRow.Untrusted.Name", out.Folders[0].Untrusted.Name))
+		if got := inner("FolderRow.Untrusted.Name", out.Folders[1].Untrusted.Name); got != "Pay" {
+			t.Errorf("FolderRow.Untrusted.Name = %q, want the NFKC form %q", got, "Pay")
+		}
+		if got, err := folderArg(out.Folders[0].FolderRef); err != nil || got != hostile {
+			t.Errorf("folderArg(FolderRef) = %q, %v; want the raw name back", got, err)
 		}
 	})
 }

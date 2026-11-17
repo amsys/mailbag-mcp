@@ -584,7 +584,7 @@ func TestRead_ThreadPreviewsMissingNote(t *testing.T) {
 // created under a permitted root, and the result gives the path and
 // the size and never the content.
 //
-// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9
+// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9, DU5.1, DU5.6, DU6.1, DU3.2, DU6.2, DU12.1
 func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 	dir := realTempDir(t) // under os.TempDir(), one of the permitted roots
 	content := []byte("invoice bytes")
@@ -600,11 +600,12 @@ func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	path := fenceBody(t, out.Path, "PATH")
-	if filepath.Dir(path) != dir {
-		t.Fatalf("path %q is not inside the save dir %q", path, dir)
+	name := nonceBody(t, out.Untrusted.Name, testNonce)
+	path := filepath.Join(out.Dir, name)
+	if out.Dir != dir {
+		t.Fatalf("dir %q is not the save dir %q", out.Dir, dir)
 	}
-	if base := filepath.Base(path); base != "passwd.txt" {
+	if base := name; base != "passwd.txt" {
 		t.Errorf("file name = %q; the sender name must lose its path and its hidden character (G6)", base)
 	}
 	if out.Size != int64(len(content)) {
@@ -614,7 +615,7 @@ func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("file content = %q, %v", got, err)
 	}
-	if strings.Contains(out.Path, string(content)) {
+	if strings.Contains(out.Untrusted.Name+out.Dir, string(content)) {
 		t.Error("the result carries the file content; §3.15 gives the path and the size only")
 	}
 
@@ -631,7 +632,7 @@ func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 // TestAttachment_SecondSaveNeverOverwrites holds §3.15: a name that
 // exists gives "name (1).ext", and the first file keeps its content.
 //
-// arch: T4.5, §3.15, G6, §10.9
+// arch: T4.5, §3.15, G6, §10.9, DU5.1, DU5.6, DU6.1, DU3.2, DU6.2, DU12.1
 func TestAttachment_SecondSaveNeverOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	prov := &readProvider{att: []byte("first"), info: mail.AttachmentInfo{Filename: "report.pdf"}}
@@ -647,7 +648,8 @@ func TestAttachment_SecondSaveNeverOverwrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	p1, p2 := fenceBody(t, first.Path, "PATH"), fenceBody(t, second.Path, "PATH")
+	p1 := filepath.Join(first.Dir, nonceBody(t, first.Untrusted.Name, testNonce))
+	p2 := filepath.Join(second.Dir, nonceBody(t, second.Untrusted.Name, testNonce))
 	if p1 == p2 {
 		t.Fatalf("both saves used %q; a second save must never overwrite the first", p1)
 	}
@@ -669,7 +671,7 @@ func TestAttachment_SecondSaveNeverOverwrites(t *testing.T) {
 // target sits outside both default roots and only download_dirs can
 // let it through.
 //
-// arch: T4.5, §3.15, §3.16, G6, §10.9
+// arch: T4.5, §3.15, §3.16, G6, §10.9, DU5.1, DU5.6, DU6.1, DU3.2, DU6.2, DU12.1
 func TestAttachment_UsesConfiguredDownloadDirs(t *testing.T) {
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
@@ -703,13 +705,13 @@ func TestAttachment_UsesConfiguredDownloadDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("download_dirs holds %q and the save still failed: %v", target, err)
 	}
-	path := fenceBody(t, out.Path, "PATH")
+	path := filepath.Join(out.Dir, nonceBody(t, out.Untrusted.Name, testNonce))
 	want, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		t.Fatalf("eval %s: %v", target, err)
 	}
-	if filepath.Dir(path) != want {
-		t.Errorf("path %q is not inside the configured download dir %q", path, want)
+	if out.Dir != want {
+		t.Errorf("dir %q is not the configured download dir %q", out.Dir, want)
 	}
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, content) { //nolint:gosec // G304: test code; the path is built by the test
 		t.Errorf("file content = %q, want %q", got, content)
@@ -721,7 +723,7 @@ func TestAttachment_UsesConfiguredDownloadDirs(t *testing.T) {
 // name comes from the message id, so no sender text picks a name on
 // disk.
 //
-// arch: T4.5, §3.16, §3.15, App B, G6, §10.9
+// arch: T4.5, §3.16, §3.15, App B, G6, §10.9, DU5.1, DU5.6, DU6.1, DU3.2, DU6.2, DU12.1
 func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 	dir := t.TempDir()
 	m := hostileMessage()
@@ -737,8 +739,8 @@ func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 	if len(out.Files) != 1 {
 		t.Fatalf("Files = %d, want 1", len(out.Files))
 	}
-	path := fenceBody(t, out.Files[0].Path, "PATH")
-	if filepath.Base(path) != "1700000000.4211.INBOX.eml" {
+	path := filepath.Join(out.Files[0].Dir, nonceBody(t, out.Files[0].Untrusted.Name, testNonce))
+	if filepath.Base(path) != "1700000000-4211-494e424f58.eml" {
 		t.Errorf("file name = %q; the name must come from the id", filepath.Base(path))
 	}
 	if got, _ := os.ReadFile(path); string(got) != string(prov.raw) { //nolint:gosec // G304: test code; the path is built by the test
@@ -757,7 +759,7 @@ func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 	if len(out.Files) != 2 {
 		t.Fatalf("thread export wrote %d files, want 2", len(out.Files))
 	}
-	md, err := os.ReadFile(fenceBody(t, out.Files[1].Path, "PATH"))
+	md, err := os.ReadFile(filepath.Join(out.Files[1].Dir, nonceBody(t, out.Files[1].Untrusted.Name, testNonce)))
 	if err != nil {
 		t.Fatalf("read md: %v", err)
 	}

@@ -6,9 +6,9 @@ package tools
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,21 +35,30 @@ type ExportIn struct {
 	SaveDir string `json:"save_dir,omitempty" jsonschema:"default ~/Downloads/mailbag-mcp"`
 }
 
-// SavedFile is one file an export wrote. Path is fenced: the file
-// name is built from the message id, and a caller can hand this tool
-// any id text, so the value is not server data (G3, §3.15).
+// SavedFile is one file an export wrote. Dir is outside: the save
+// root (kind owner). The file name is built from the message id, and
+// a provider can give any id text, so it is under Untrusted in one
+// fence (DU5.6, G3, §3.15).
+//
+// arch: DU5.1, DU5.6
 type SavedFile struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Dir       string              `json:"dir" strict:"owner"`
+	Size      int64               `json:"size"`
+	Untrusted AttachmentUntrusted `json:"untrusted"`
 }
 
-// ExportOut is the export tool result: paths and sizes, never the
-// content (§3.15).
+// ExportOut is the export tool result: save directories, file names
+// and sizes, never the content (§3.15). Note is text this server
+// wrote, checked against the note registry. The error text of a
+// thread that could not be read is in Untrusted.Detail (DU3.5).
+//
+// arch: DU5.1, DU5.6
 type ExportOut struct {
-	Account string      `json:"account"`
-	Files   []SavedFile `json:"files"`
-	// Note is text this server wrote, never sender text.
-	Note string `json:"note,omitempty"`
+	Head
+	Account   string      `json:"account" strict:"alias"`
+	Files     []SavedFile `json:"files"`
+	Note      string      `json:"note,omitempty" strict:"note"`
+	Untrusted *Detail     `json:"untrusted,omitempty"`
 }
 
 // AddExport adds the "export" tool to srv (§3.16): read level, one
@@ -78,39 +87,49 @@ type exportTool struct{ mail Mail }
 // permitted root (G6), and the result gives the path and the size
 // only, never the content (§3.15).
 //
-// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9
+// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9, DU5.1, DU5.6, DU3.2
 func (t *exportTool) handle(ctx context.Context, in ExportIn) (ExportOut, error) {
-	p, _, err := t.mail.Open(ctx, in.Account)
+	f := fencer(ctx)
+	p, acct, err := t.mail.Open(ctx, in.Account)
 	if err != nil {
 		return ExportOut{}, err
 	}
 	if in.ID == "" {
-		return ExportOut{}, errors.New("id is required; take one from a search row")
+		return ExportOut{}, public("invalid_input", "id is required; take one from a search row")
+	}
+	if _, ok := normalizeID(acct.Provider, in.ID); !ok {
+		return ExportOut{}, public("invalid_input", "id is not a valid message id; take one from a search row")
 	}
 	format := strings.ToLower(strings.TrimSpace(in.Format))
 	if format == "" {
 		format = "eml"
 	}
 	if format != "eml" && format != "md" {
-		return ExportOut{}, fmt.Errorf("format %q is not known; use eml or md", in.Format)
+		return ExportOut{}, publicDetail("invalid_input", "format is not known; use eml or md", in.Format)
 	}
 
 	out := ExportOut{Account: in.Account, Files: []SavedFile{}}
 	ids := []string{in.ID}
+	var details []string
 	if in.Thread {
 		tr, terr := p.Thread(ctx, in.ID)
 		if terr != nil {
-			out.Note = addNote(out.Note, "the conversation could not be read; only the message itself is exported: "+errNote(terr))
+			// The note gives the class word; the error text goes
+			// to the detail (DU3.5).
+			out.Note = joinNote(out.Note, "the conversation could not be read")
+			out.Note = joinNote(out.Note, "only the message itself is exported: "+classOf(terr))
+			details = append(details, "conversation: "+terr.Error())
 		} else {
-			ids = threadIDs(tr.Messages, in.ID)
+			ids = threadIDs(acct.Provider, tr.Messages, in.ID)
 			if len(tr.Messages) >= threadCutAt {
-				out.Note = addNote(out.Note, "the conversation may be longer than "+strconv.Itoa(threadCutAt)+" messages; only the newest "+strconv.Itoa(threadCutAt)+" were exported")
+				out.Note = joinNote(out.Note, "the conversation may be longer than "+strconv.Itoa(threadCutAt)+" messages")
+				out.Note = joinNote(out.Note, "only the newest "+strconv.Itoa(threadCutAt)+" were exported")
 			}
 			// The same count-only folder note as read gives (DR1G.4,
 			// I14). Export writes each message in full and shows no
 			// preview, so it gives no previews note (DR1G.18.3).
 			if tr.Skipped > 0 {
-				out.Note = addNote(out.Note, skippedFoldersNote(tr.Skipped))
+				out.Note = joinNote(out.Note, skippedFoldersNote(tr.Skipped))
 			}
 		}
 	}
@@ -124,26 +143,46 @@ func (t *exportTool) handle(ctx context.Context, in ExportIn) (ExportOut, error)
 		if err != nil {
 			return ExportOut{}, err
 		}
-		path, err := writeSaved(dir, roots, fileNameOf(id, format), data)
+		name := "message." + format
+		if norm, ok := normalizeID(acct.Provider, id); ok {
+			name = fileNameOf(norm, format)
+		}
+		path, err := writeSaved(dir, roots, name, data)
 		if err != nil {
 			return ExportOut{}, err
 		}
-		out.Files = append(out.Files, SavedFile{Path: guard.Fence("PATH", path), Size: int64(len(data))})
+		out.Files = append(out.Files, SavedFile{
+			Dir:       dir,
+			Size:      int64(len(data)),
+			Untrusted: AttachmentUntrusted{Name: f.Wrap(filepath.Base(path))},
+		})
 	}
+	out.Untrusted = noteDetail(f, details)
 	return out, nil
 }
 
 // threadIDs lists the ids of a conversation, with the message the
 // caller named always in it.
-func threadIDs(list []*mail.Message, id string) []string {
+//
+// An id of the same message in the old and the new form counts once
+// (DU3.2). An id that does not pass normalizeID is kept, and its file
+// gets the fixed name.
+func threadIDs(kind string, list []*mail.Message, id string) []string {
 	ids := make([]string, 0, len(list)+1)
 	found := false
+	want, wantOK := normalizeID(kind, id)
 	for _, m := range list {
 		if m == nil || m.ID == "" {
 			continue
 		}
-		if m.ID == id {
+		got, ok := normalizeID(kind, m.ID)
+		if m.ID == id || (ok && wantOK && got == want) {
+			if found {
+				continue
+			}
 			found = true
+			ids = append(ids, id)
+			continue
 		}
 		ids = append(ids, m.ID)
 	}

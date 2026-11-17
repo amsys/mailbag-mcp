@@ -5,11 +5,11 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,16 +24,27 @@ type AttachmentIn struct {
 	SaveDir string `json:"save_dir,omitempty" jsonschema:"default ~/Downloads/mailbag-mcp"`
 }
 
-// AttachmentOut is the attachment tool result: the path and the size,
-// never the content (§3.15).
+// AttachmentOut is the attachment tool result: the save directory,
+// the file name and the size, never the content (§3.15).
 //
-// Path is fenced. §3.15 lists an attachment file name as
-// sender-controlled, and the file name is the last part of this path,
-// so the whole value is sender-influenced text (G3).
+// Dir is outside: it is the save root that the owner config or the
+// caller chose, checked by guard.ResolveSaveDir (kind owner). The file
+// name comes from the sender, so it is under Untrusted in one fence
+// (DU5.6, G3). Account and Size are outside.
+//
+// arch: DU5.1, DU5.6
 type AttachmentOut struct {
-	Account string `json:"account"`
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
+	Head
+	Account   string              `json:"account" strict:"alias"`
+	Dir       string              `json:"dir" strict:"owner"`
+	Size      int64               `json:"size"`
+	Untrusted AttachmentUntrusted `json:"untrusted"`
+}
+
+// AttachmentUntrusted is the untrusted zone of [AttachmentOut]: the
+// name of the saved file inside Dir, as one fence (DU5.6).
+type AttachmentUntrusted struct {
+	Name string `json:"name"`
 }
 
 // AddAttachment adds the "attachment" tool to srv (§3.16): read
@@ -73,14 +84,15 @@ type attachmentTool struct{ mail Mail }
 // caps its own fetch, but this tool must not trust a provider to have
 // done so before it writes bytes to a disk.
 //
-// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9
+// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9, DU5.1, DU5.6, DU6.1
 func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (AttachmentOut, error) {
+	fc := fencer(ctx)
 	p, _, err := t.mail.Open(ctx, in.Account)
 	if err != nil {
 		return AttachmentOut{}, err
 	}
 	if in.ID == "" || in.Ref == "" {
-		return AttachmentOut{}, errors.New("id and ref are required; take both from a read result")
+		return AttachmentOut{}, public("invalid_input", "id and ref are required; take both from a read result")
 	}
 	dir, roots, err := saveTarget(in.SaveDir, t.mail.DownloadDirs()...)
 	if err != nil {
@@ -89,7 +101,9 @@ func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (Attachmen
 
 	rc, info, err := p.Attachment(ctx, in.ID, in.Ref)
 	if err != nil {
-		return AttachmentOut{}, fencedErr{kind: "ATTACHMENT", err: err}
+		// A provider error can quote sender text. WrapReq puts the
+		// text of an error of unknown origin in a fence (DU6.1).
+		return AttachmentOut{}, err
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -119,9 +133,14 @@ func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (Attachmen
 		return AttachmentOut{}, closeErr
 	case n > guard.MaxAttachBytes:
 		_ = os.Remove(path)
-		return AttachmentOut{}, fmt.Errorf("this attachment is larger than the limit of %d MB", guard.MaxAttachBytes>>20)
+		return AttachmentOut{}, public("limit", "this attachment is larger than the limit of 25 MB")
 	}
-	return AttachmentOut{Account: in.Account, Path: guard.Fence("PATH", path), Size: n}, nil
+	return AttachmentOut{
+		Account:   in.Account,
+		Dir:       dir,
+		Size:      n,
+		Untrusted: AttachmentUntrusted{Name: fc.Wrap(filepath.Base(path))},
+	}, nil
 }
 
 // saveTarget resolves the directory a save tool writes into and gives
@@ -156,22 +175,3 @@ func saveTarget(dir string, extraRoots ...string) (string, []string, error) {
 	}
 	return cdir, roots, nil
 }
-
-// fencedErr gives the text of err inside a fence and keeps err for
-// errors.Is and errors.As.
-//
-// A provider error can quote sender text. The IMAP provider names the
-// attachments of the message when a ref is not found, and a sender
-// chooses those names (§3.15). Only internal/tools fences, so the
-// whole error text goes in the fence here, the same as
-// AttachmentOut.Path (G3, I10).
-//
-// arch: D4.1, §3.15, G3, I10
-type fencedErr struct {
-	kind string
-	err  error
-}
-
-func (e fencedErr) Error() string { return guard.Fence(e.kind, e.err.Error()) }
-
-func (e fencedErr) Unwrap() error { return e.err }

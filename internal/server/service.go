@@ -9,6 +9,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -43,6 +44,8 @@ type Service struct {
 	idleAt   time.Time // wall time when live last became 0
 	sessions map[*mcp.ServerSession]struct{}
 	now      func() time.Time // wall time only, as imap.wallNow
+
+	cut sync.Map // *mcp.ServerSession to true: the peer closed during a call
 }
 
 // NewService runs the start steps of §3.1 that are not about one
@@ -124,6 +127,7 @@ func NewService(ctx context.Context, version string, logger *slog.Logger) (*Serv
 	cleanUndoJournal(logger)
 
 	s.srv, s.mail = newMCPServer(version, logger)
+	s.srv.AddReceivingMiddleware(s.noteCut)
 
 	// D2.2 wiring continues here, not inside newMCPServer: extras
 	// depends on cfg, which newMCPServer never sees, so NewService
@@ -241,6 +245,23 @@ func (s *Service) Close() {
 	s.cancel()
 	s.bg.Wait()
 	closeMail(s.mail)
+}
+
+// noteCut records a session whose peer closed the stream while a call
+// was in flight. On go-sdk v1.8.0 ServerSession.Wait gives nil for this
+// end, so the cause of the handler context is the only sign of it. A
+// notifications/cancelled message gives the cause context.Canceled, and
+// noteCut does not record it.
+//
+// arch: DH1.2
+func (s *Service) noteCut(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		res, err := next(ctx, method, req)
+		if errors.Is(context.Cause(ctx), io.EOF) {
+			s.cut.Store(req.GetSession(), true)
+		}
+		return res, err
+	}
 }
 
 // track adds ss to the open sessions, or removes it when add is

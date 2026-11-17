@@ -29,7 +29,14 @@ import (
 // owner decision 2026-10-09 at the run gate): S7 to S11 add code, and
 // windows/amd64 had only 85,888 bytes of room under the old budget.
 // The new budget holds for the whole run.
-const sizeBudgetBytes = 15_000_000
+//
+// Raised from 15,000,000 to 15,600,000 (decision D1 of PROMPT-harden.md,
+// owner statement 2026-11-09): go-crypto v1.5.2 fixes panics on bad
+// input in the OpenPGP verifier, and go-sdk v1.8.0 has session end
+// fixes. Together they add about 450 KB.
+//
+// arch: DH1.1
+const sizeBudgetBytes = 15_600_000
 
 // TestBinarySize_Budget builds the release binary the same way a
 // release build does, and checks it stays under the size budget. The

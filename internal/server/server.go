@@ -67,8 +67,8 @@ func recoverBackground(logger *slog.Logger, source string) {
 // logger is passed straight through: it need not be
 // non-nil for safety (mcp.NewServer replaces a nil
 // ServerOptions.Logger with a discard logger before Server.Run ever
-// reads it — go-sdk v1.7.0 mcp/server.go:207-209, mcp/logging.go:
-// 105-110), but this package always passes a live logger anyway, so
+// reads it — go-sdk v1.8.0 mcp/server.go:249-250, mcp/logging.go:
+// 111-116), but this package always passes a live logger anyway, so
 // the §3.19 start/shutdown/exit events actually reach server.log
 // instead of being discarded.
 //

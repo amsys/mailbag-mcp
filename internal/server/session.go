@@ -27,9 +27,15 @@ const (
 
 // serverClosingText is the text of the SDK's ErrServerClosing. The
 // error is in an internal package of the go-sdk, so errors.Is cannot
-// find it. Wait gives it when a reply could not go out because the
-// peer was already gone (go-sdk v1.7.0 internal/jsonrpc2/conn.go,
-// write and shuttingDown).
+// find it. Wait gives it only after an explicit Close of the session,
+// when a reply to a call cannot go out. A stream error that is not EOF
+// does not give this text: Wait gives that error, and endReason maps
+// it to transport-error. When the peer closes during a call, the SDK
+// wraps io.EOF and Wait gives nil, so [Service.noteCut] records that
+// end (go-sdk v1.8.0 internal/jsonrpc2/conn.go, shuttingDown, write
+// and wait).
+//
+// arch: DH1.2
 const serverClosingText = "server is closing"
 
 // nopCloseWriter is the Writer half of the session transport. Its
@@ -79,7 +85,8 @@ func (s *Service) Session(ctx context.Context, rwc io.ReadWriteCloser) error {
 		waitErr = <-waited
 	}
 
-	reason := endReason(waitErr, shutdown)
+	_, cut := s.cut.LoadAndDelete(ss)
+	reason := endReason(waitErr, shutdown, cut)
 	if reason == endTransportError {
 		s.logger.Warn("session-end", "reason", reason, "error", waitErr.Error())
 		return waitErr
@@ -91,13 +98,16 @@ func (s *Service) Session(ctx context.Context, rwc io.ReadWriteCloser) error {
 // endReason maps the result of ServerSession.Wait to the reason of a
 // session end (DS11.2). shutdown is true when Session closed the
 // session because its ctx ended; then the error of Wait does not
-// matter, because closing the stream can make the read fail.
+// matter, because closing the stream can make the read fail. cut is
+// true when [Service.noteCut] saw the peer close during a call.
 //
-// arch: DS11.2, IS11.2
-func endReason(waitErr error, shutdown bool) string {
+// arch: DS11.2, IS11.2, DH1.2
+func endReason(waitErr error, shutdown, cut bool) string {
 	switch {
 	case shutdown:
 		return endShutdown
+	case waitErr == nil && cut:
+		return endPeerGone
 	case waitErr == nil:
 		return endPeerClosed
 	case errors.Is(waitErr, io.EOF), strings.Contains(waitErr.Error(), serverClosingText):

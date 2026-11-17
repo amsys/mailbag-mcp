@@ -1033,8 +1033,8 @@ func TestGmailSettings_MRTRRetry(t *testing.T) {
 		h, w := settingsFixture("send")
 		cs := settingsMRTR(t, h)(nil)
 		res := settingsCall(t, cs, vacationAwayArgs(), "", nil)
-		if !res.IsError || res.NeedsInput() || bulkText(res) != errSettingNoElicitation.Error() {
-			t.Fatalf("result %s, want the fixed refusal", bulkText(res))
+		if !res.IsError || res.NeedsInput() || !isErrForm(bulkText(res), "error", "", errSettingNoElicitation.Error()) {
+			t.Fatalf("result %s, want the error form of the fixed refusal", bulkText(res))
 		}
 		if n := countCalls(w, "SetVacation"); n != 0 {
 			t.Fatalf("SetVacation ran %d times, want 0", n)

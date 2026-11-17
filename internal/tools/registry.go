@@ -12,7 +12,8 @@ import (
 )
 
 // RegisterCore adds the six core tools of D2.1 (accounts, folders,
-// search, read, attachment, export) and the D1.2 middleware to srv.
+// search, read, attachment, export) and the D1.2 and DU6.3 middleware
+// to srv.
 // They are always on. It runs once, before serving starts. The write
 // tools are not here: send and modify are toolsets that
 // [RegisterToolsets] adds, off by default (D2.1, D2.2).
@@ -23,9 +24,9 @@ import (
 // connection at shutdown (§3.1 steps 5 and 7). The same Factory goes
 // to RegisterToolsets, so a toolset uses the same pool.
 //
-// arch: T1.5, T4.5, §3.16, §3.1, §9 U7, D1.2, D2.1, D2.2
+// arch: T1.5, T4.5, §3.16, §3.1, §9 U7, D1.2, D2.1, D2.2, DU6.3
 func RegisterCore(srv *mcp.Server, logger *slog.Logger) *Factory {
-	srv.AddReceivingMiddleware(stripOutputSchema)
+	srv.AddReceivingMiddleware(stripOutputSchema, markCalls)
 	f := NewFactory(logger)
 	AddAccounts(srv, logger, f.AuthState) // DR1G.18.5: the state of this Factory
 	AddFolders(srv, logger, f)

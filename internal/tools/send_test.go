@@ -1070,8 +1070,8 @@ func TestSend_NoElicitationRefuses(t *testing.T) {
 			t.Fatalf("send with no elicitation gave a success result: %+v", res)
 		}
 		text := textOf(t, res)
-		if text != errNoElicitation.Error() {
-			t.Errorf("refusal = %q, want the fixed text %q", text, errNoElicitation.Error())
+		if !isErrForm(text, "error", "", errNoElicitation.Error()) {
+			t.Errorf("refusal = %q, want the error form of the fixed text %q", text, errNoElicitation.Error())
 		}
 		if strings.Contains(text, "allow_without_elicitation") {
 			t.Errorf("refusal %q names the config key; the model must not learn the bypass", text)
@@ -1164,8 +1164,8 @@ func TestSend_ElicitationOutcomes(t *testing.T) {
 				if !res.IsError {
 					t.Fatalf("result = %+v, want an error", res)
 				}
-				if text := textOf(t, res); !strings.HasPrefix(text, notConfirmedText) {
-					t.Errorf("error = %q, want the fixed text %q", text, notConfirmedText)
+				if text := textOf(t, res); !isErrFormPrefix(text, "error", notConfirmedText) {
+					t.Errorf("error = %q, want the error form of the fixed text %q", text, notConfirmedText)
 				}
 			case c.wantSent:
 				if res.IsError {
@@ -1506,8 +1506,8 @@ func TestSend_NonDraftRefusedBeforePrompt(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || textOf(t, res) != errNotDraft.Error() {
-			t.Fatalf("result = %+v, want the fixed error %q", res, errNotDraft.Error())
+		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errNotDraft.Error()) {
+			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errNotDraft.Error())
 		}
 		if asked != 0 {
 			t.Errorf("the client got %d prompts, want 0", asked)
@@ -1521,8 +1521,8 @@ func TestSend_NonDraftRefusedBeforePrompt(t *testing.T) {
 		fm.acct.AllowWithoutElicitation = true
 		h := &sendTool{mail: fm}
 		res := callSendLegacyTool(t, h, sendArgs(), nil)
-		if !res.IsError || textOf(t, res) != errNotDraft.Error() {
-			t.Fatalf("result = %+v, want the fixed error %q", res, errNotDraft.Error())
+		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errNotDraft.Error()) {
+			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errNotDraft.Error())
 		}
 		wantNothingSpent(t, h, prov)
 	})
@@ -1545,8 +1545,8 @@ func TestSend_EmptyKeyRefused(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || textOf(t, res) != errKeyEmpty.Error() {
-			t.Fatalf("key %q: result = %+v, want the fixed error %q", key, res, errKeyEmpty.Error())
+		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errKeyEmpty.Error()) {
+			t.Fatalf("key %q: result = %+v, want the error form of the fixed error %q", key, res, errKeyEmpty.Error())
 		}
 		if asked != 0 {
 			t.Errorf("key %q: the client got %d prompts, want 0", key, asked)
@@ -1581,8 +1581,8 @@ func TestSend_KeyBoundToDraft(t *testing.T) {
 		t.Fatalf("first send: %+v", first)
 	}
 	other := callSendLegacyTool(t, h, argsFor("1700000000.8.Drafts"), accept)
-	if !other.IsError || textOf(t, other) != errKeyOtherDraft.Error() {
-		t.Fatalf("same key, other draft: result = %+v, want the fixed error %q", other, errKeyOtherDraft.Error())
+	if !other.IsError || !isErrForm(textOf(t, other), "error", "", errKeyOtherDraft.Error()) {
+		t.Fatalf("same key, other draft: result = %+v, want the error form of the fixed error %q", other, errKeyOtherDraft.Error())
 	}
 	again := callSendLegacyTool(t, h, argsFor("1700000000.7.Drafts"), accept)
 	if again.IsError || !sendOutOf(t, again).Sent {
@@ -1680,8 +1680,8 @@ func TestSend_SummaryShowsHiddenHTMLText(t *testing.T) {
 		asked++
 		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 	})
-	if !res.IsError || textOf(t, res) != errHTMLNotClean.Error() {
-		t.Fatalf("result = %+v, want the fixed error %q", res, errHTMLNotClean.Error())
+	if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+		t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 	}
 	if asked != 0 {
 		t.Errorf("the client got %d prompts, want 0", asked)
@@ -1745,8 +1745,8 @@ func TestSend_RefusesUncleanHTMLDraft(t *testing.T) {
 					elicit = nil
 				}
 				res := callSendLegacyTool(t, h, sendArgs(), elicit)
-				if !res.IsError || textOf(t, res) != errHTMLNotClean.Error() {
-					t.Fatalf("result = %+v, want the fixed error %q", res, errHTMLNotClean.Error())
+				if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+					t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 				}
 				if asked != 0 {
 					t.Errorf("the client got %d prompts, want 0", asked)
@@ -1803,8 +1803,8 @@ func TestSend_RefusesDeepNestHTML(t *testing.T) {
 				asked++
 				return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 			})
-			if !res.IsError || textOf(t, res) != errHTMLNotClean.Error() {
-				t.Fatalf("result = %+v, want the fixed error %q", res, errHTMLNotClean.Error())
+			if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+				t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 			}
 			if asked != 0 {
 				t.Errorf("the client got %d prompts, want 0", asked)
@@ -2148,8 +2148,24 @@ func TestRegistry_SendReEnableKeepsKeys(t *testing.T) {
 		t.Fatalf("second send IsError = %v, want the first send's %v (the stored result of k-1)",
 			second.IsError, first.IsError)
 	}
-	if textOf(t, second) != textOf(t, first) {
-		t.Fatalf("second send text = %q, want the first send's stored text %q", textOf(t, second), textOf(t, first))
+	// DU6.1, INV-2: an error result carries the nonce of its own
+	// response, so the replay of the stored error has the same class,
+	// public text and fence body under a new nonce.
+	firstText, secondText := textOf(t, first), textOf(t, second)
+	if first.IsError {
+		p1, ok1 := parseErrForm(firstText)
+		p2, ok2 := parseErrForm(secondText)
+		if !ok1 || !ok2 {
+			t.Fatalf("send texts %q and %q, want the error form of DU6.1", firstText, secondText)
+		}
+		if p1.nonce == p2.nonce {
+			t.Errorf("the replay has the nonce %s of the first response, want a new one (INV-2)", p2.nonce)
+		}
+		p2.nonce = p1.nonce
+		secondText = p2.text()
+	}
+	if secondText != firstText {
+		t.Fatalf("second send text = %q, want the first send's stored text %q", secondText, firstText)
 	}
 }
 
@@ -2209,8 +2225,8 @@ func TestSend_TooLongRefusedBeforeLimit(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || textOf(t, res) != want {
-			t.Fatalf("result = %+v, want the fixed error %q", res, want)
+		if !res.IsError || !isErrForm(textOf(t, res), "error", "", want) {
+			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, want)
 		}
 		if asked != 0 {
 			t.Errorf("the client got %d prompts, want 0", asked)
@@ -3019,14 +3035,15 @@ func mrtrRetry(t *testing.T, cs *mcp.ClientSession, args map[string]any, state s
 // acceptSend is the answer of a human who accepts the send.
 var acceptSend = &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}
 
-// wantStale checks that res is the fixed [errConfirmStale] refusal.
+// wantStale checks that res is the fixed [errConfirmStale] refusal in
+// the error form of DU6.1.
 func wantStale(t *testing.T, res *mcp.CallToolResult) {
 	t.Helper()
 	if !res.IsError {
 		t.Fatalf("result = %+v, want the stale-state error", res)
 	}
-	if text := textOf(t, res); text != errConfirmStale.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errConfirmStale.Error())
+	if text := textOf(t, res); !isErrForm(text, "error", "", errConfirmStale.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errConfirmStale.Error())
 	}
 }
 
@@ -3147,8 +3164,8 @@ func TestSend_MRTRNoElicitation(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); text != errNoElicitation.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errNoElicitation.Error())
+	if text := textOf(t, res); !isErrForm(text, "error", "", errNoElicitation.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errNoElicitation.Error())
 	}
 	wantNothingSpent(t, h, prov)
 	if n := len(h.pending.entries); n != 0 {
@@ -3258,8 +3275,8 @@ func TestSend_MRTRDraftChanged(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); text != errDraftChanged.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errDraftChanged.Error())
+	if text := textOf(t, res); !isErrForm(text, "error", "", errDraftChanged.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errDraftChanged.Error())
 	}
 	if len(prov.sentDrafts) != 0 {
 		t.Errorf("SendDraft ran %d times, want 0", len(prov.sentDrafts))
@@ -3320,8 +3337,8 @@ func TestSend_MRTRStoreFull(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); text != errPendingFull.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errPendingFull.Error())
+	if text := textOf(t, res); !isErrForm(text, "error", "", errPendingFull.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errPendingFull.Error())
 	}
 	if asked != 0 {
 		t.Errorf("the client got %d prompts, want 0", asked)
@@ -3411,8 +3428,8 @@ func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 		if !res.IsError {
 			t.Fatalf("result = %+v, want an error", res)
 		}
-		if text := textOf(t, res); text != want.Error() {
-			t.Errorf("error = %q, want the fixed text %q", text, want.Error())
+		if text := textOf(t, res); !isErrForm(text, "error", "", want.Error()) {
+			t.Errorf("error = %q, want the error form of the fixed text %q", text, want.Error())
 		}
 		if n := len(h.limit.at["work"]); n != spent {
 			t.Errorf("the refused call spent a send: %d sends in the window, want %d (IS14.3)", n, spent)
@@ -3493,8 +3510,8 @@ func TestSend_MRTRSessionShareSpendsNoSend(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); text != errPendingSessionFull.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errPendingSessionFull.Error())
+	if text := textOf(t, res); !isErrForm(text, "error", "", errPendingSessionFull.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errPendingSessionFull.Error())
 	}
 	if n := len(h.limit.at["work"]); n != spent {
 		t.Errorf("the refused call spent a send: %d sends in the window, want %d (IS14.7)", n, spent)

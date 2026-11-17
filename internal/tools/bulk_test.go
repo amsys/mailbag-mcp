@@ -853,8 +853,8 @@ func TestBulk_NoElicitationNeedsKey(t *testing.T) {
 		h.mail.(*bulkMail).acct.AllowWithoutElicitation = sendKey
 		res := callBulk(t, h, bulkReadArgs(), nil)
 		text := bulkText(res)
-		if !res.IsError || text != errBulkNoElicitation.Error() {
-			t.Errorf("send key %v: result %v %q, want the error %q", sendKey, res.IsError, text, errBulkNoElicitation)
+		if !res.IsError || !isErrForm(text, "error", "", errBulkNoElicitation.Error()) {
+			t.Errorf("send key %v: result %v %q, want the error form of %q", sendKey, res.IsError, text, errBulkNoElicitation)
 		}
 		if strings.Contains(text, "allow_without_elicitation") {
 			t.Errorf("the refusal names the config key: %q", text)
@@ -1151,14 +1151,15 @@ func bulkRetry(t *testing.T, cs *mcp.ClientSession, args map[string]any, state s
 // bulkApply is the answer of a human who accepts the bulk change.
 var bulkApply = &mcp.ElicitResult{Action: "accept", Content: map[string]any{bulkField: true}}
 
-// bulkWantStale checks that res is the fixed [errConfirmStale] refusal.
+// bulkWantStale checks that res is the fixed [errConfirmStale] refusal
+// in the error form of DU6.1.
 func bulkWantStale(t *testing.T, res *mcp.CallToolResult) {
 	t.Helper()
 	if !res.IsError {
 		t.Fatalf("result = %+v, want the stale-state error", res)
 	}
-	if text := bulkText(res); text != errConfirmStale.Error() {
-		t.Errorf("error = %q, want the fixed text %q", text, errConfirmStale.Error())
+	if text := bulkText(res); !isErrForm(text, "error", "", errConfirmStale.Error()) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", text, errConfirmStale.Error())
 	}
 }
 
@@ -1388,8 +1389,8 @@ func TestBulk_MRTRNoElicitation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CallTool: %v", err)
 		}
-		if !res.IsError || bulkText(res) != errBulkNoElicitation.Error() {
-			t.Errorf("result = %+v, want the fixed error %q", res, errBulkNoElicitation.Error())
+		if !res.IsError || !isErrForm(bulkText(res), "error", "", errBulkNoElicitation.Error()) {
+			t.Errorf("result = %+v %q, want the error form of the fixed error %q", res, bulkText(res), errBulkNoElicitation.Error())
 		}
 		if n := prov.callCount(); n != 0 {
 			t.Errorf("%d change calls, want 0", n)
@@ -1436,8 +1437,8 @@ func TestBulk_MRTRStoreFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
-	if !res.IsError || bulkText(res) != errPendingFull.Error() {
-		t.Errorf("result = %+v, want the fixed error %q", res, errPendingFull.Error())
+	if !res.IsError || !isErrForm(bulkText(res), "error", "", errPendingFull.Error()) {
+		t.Errorf("result = %+v %q, want the error form of the fixed error %q", res, bulkText(res), errPendingFull.Error())
 	}
 	if n := prov.callCount(); n != 0 {
 		t.Errorf("%d change calls, want 0", n)

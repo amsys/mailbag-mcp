@@ -95,7 +95,7 @@ type HandlerReq[In, Out any] func(ctx context.Context, req *mcp.CallToolRequest,
 //     instead of taking down the process (A7);
 //   - a call-start line before h runs and a call-end line after,
 //     on logger, with an error class and never the error text
-//     (§3.19, see errClass);
+//     (§3.19, see classOf);
 //   - the redactor (§3.15) on the text of a failed call, so a secret
 //     that leaked into an error can never reach the client or the
 //     model (B4).
@@ -133,7 +133,12 @@ func Wrap[In, Out any](logger *slog.Logger, name string, timeout time.Duration, 
 // context with [fencer]. After h succeeds, WrapReq writes its nonce
 // into the [Head] of the result (DU2.1, DU2.2).
 //
-// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4, DU2.1, DU2.2
+// An error result has the form of DU6.1, built by [errForm]: the
+// nonce, the class of [classOf], the text of a [publicError], and
+// every other error text in a fence. Its typed output is the zero
+// Out with the nonce in its Head.
+//
+// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4, DU2.1, DU2.2, DU6.1, DU6.2, DU6.3
 func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duration, h HandlerReq[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -144,6 +149,11 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 		ctx, cancel := context.WithTimeout(ctx, effTimeout)
 		defer cancel()
 		ctx = context.WithValue(ctx, untimedKey{}, untimedCall{parent: parent, timeout: effTimeout})
+
+		// DU6.3: tell the tools/call middleware that this call
+		// reached WrapReq, so it leaves the error form of the result
+		// as it is.
+		markHandled(ctx)
 
 		start := time.Now()
 		logger.Info("call-start", "tool", name)
@@ -159,12 +169,15 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 		}
 		ctx = withFencer(ctx, f)
 
+		// DU6.2: a panic has the class internal and its text as the
+		// detail, in a fence. The zero Out carries the nonce (DU6.1).
 		defer func() {
 			if r := recover(); r != nil {
-				res = errResult(fmt.Sprintf("panic: %v", r))
+				res = errResult(errForm(f, "internal", "", fmt.Sprintf("panic: %v", r)))
 				var zero Out
+				setHead(&zero, f)
 				out, err = zero, nil
-				logger.Error("call-end", "tool", name, "duration", time.Since(start).String(), "error", "panic")
+				logger.Error("call-end", "tool", name, "duration", time.Since(start).String(), "error", "internal")
 			}
 		}()
 
@@ -180,7 +193,8 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 			return &mcp.CallToolResult{InputRequests: ir.requests, RequestState: ir.state}, zero, nil
 		}
 		if hErr != nil {
-			logger.Info("call-end", "tool", name, "duration", time.Since(start).String(), "error", errClass(hErr))
+			class := classOf(hErr)
+			logger.Info("call-end", "tool", name, "duration", time.Since(start).String(), "error", class)
 			// go-sdk's generic AddTool path marshals out into
 			// res.StructuredContent whenever the returned err is nil
 			// (mcp/server.go toolForErr), with no regard for
@@ -190,17 +204,21 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 			// unredacted handler output on the wire on every error
 			// call, bypassing the guard.Redact above (B4, §3.15).
 			// Zero it out here, the same way the panic branch below
-			// already does.
+			// already does. The zero Out carries only the nonce
+			// (DU6.1).
+			//
+			// DU6.2: the text of a publicError is server text; its
+			// detail and the whole text of any other error go into a
+			// fence.
 			var zero Out
-			return errResult(hErr.Error()), zero, nil
+			setHead(&zero, f)
+			pub, detail := errParts(hErr)
+			return errResult(errForm(f, class, pub, detail)), zero, nil
 		}
 		// DU2.1: WrapReq sets the nonce after the handler, so a
 		// handler never writes Head and a cached Out gets the nonce
-		// of the response that replays it. Until every Out embeds
-		// Head (T24), an Out with no Head passes with no change.
-		if hd, ok := any(&out).(interface{ setFence(string) }); ok {
-			hd.setFence(f.Nonce())
-		}
+		// of the response that replays it.
+		setHead(&out, f)
 		logger.Info("call-end", "tool", name, "duration", time.Since(start).String())
 		return nil, out, nil
 	}
@@ -267,36 +285,25 @@ func untimed(ctx context.Context) (wait context.Context, timeout time.Duration, 
 	return c.parent, c.timeout, true
 }
 
-// errClass names the kind of a failed call in one word, for the
-// call-end log line.
+// setHead writes the nonce of f into the [Head] of *out. Until every
+// Out embeds Head (T24), an Out with no Head passes with no change.
 //
-// The log gets the class, never the error text. §3.19 keeps a
-// subject, an address, a query and a tool argument out of the log,
-// and an error text can hold all four: a folder name, a search term,
-// a message id and a sender-chosen file name all reach it from the
-// mail layer. guard.Redact removes a secret and a home path, not
-// those. The caller still gets the full, redacted text in the tool
-// result (errResult), and the wire log of MAILBAG_DEBUG still shows
-// the protocol.
-//
-// arch: T1.5, §3.15, §3.19, B4, G5
-func errClass(err error) string {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, ErrUnknownAccount):
-		return "unknown-account"
-	default:
-		return "error"
+// arch: DU2.1, DU6.1
+func setHead[Out any](out *Out, f guard.Fencer) {
+	if hd, ok := any(out).(interface{ setFence(string) }); ok {
+		hd.setFence(f.Nonce())
 	}
 }
 
-// errResult builds an isError tool result whose text has passed
-// through guard.Redact (§3.15, B4).
+// errResult builds an isError tool result with text as its one
+// content block. text is a ready error form (DU6.1), whose parts
+// passed guard.Redact before the fence (§3.15, B4), or the fixed
+// [noNonceText]. A redact of the whole form could take a close marker
+// into a match, so errResult does not redact again.
+//
+// arch: DU6.1, §3.15, B4
 func errResult(text string) *mcp.CallToolResult {
 	res := &mcp.CallToolResult{IsError: true}
-	res.Content = []mcp.Content{&mcp.TextContent{Text: guard.Redact(text)}}
+	res.Content = []mcp.Content{&mcp.TextContent{Text: text}}
 	return res
 }

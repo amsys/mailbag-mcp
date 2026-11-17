@@ -254,8 +254,8 @@ func TestDecrypt_RequiresGoodMDC(t *testing.T) {
 			t.Fatalf("fixture is integrity protected, want no MDC:\n%s", pk)
 		}
 		res, log := callDecrypt(t, decryptFor(pgpMIME(armored)))
-		if got := errText(t, res); got != errDecryptFailed.Error() {
-			t.Errorf("error = %q, want the fixed text %q", got, errDecryptFailed.Error())
+		if got := errText(t, res); !isErrForm(got, "error", "", errDecryptFailed.Error()) {
+			t.Errorf("error = %q, want the error form of the fixed text %q", got, errDecryptFailed.Error())
 		}
 		noLeak(t, res, log, false)
 	})
@@ -299,8 +299,8 @@ func TestDecrypt_RealSMIMEMessageIsOffAndGivesNoText(t *testing.T) {
 	der := runGPG(t, dir, "gpgsm", plainEntity(), "--batch", "--disable-crl-checks", "--disable-policy-checks", "--always-trust", "--encrypt", "-r", "bob@example.org")
 
 	res, log := callDecrypt(t, decryptFor(smimeMIME(der)))
-	if got := errText(t, res); got != errSMIMEDecryptOff {
-		t.Errorf("error = %q, want the fixed text %q", got, errSMIMEDecryptOff)
+	if got := errText(t, res); !isErrForm(got, "error", "", errSMIMEDecryptOff) {
+		t.Errorf("error = %q, want the error form of the fixed text %q", got, errSMIMEDecryptOff)
 	}
 	noLeak(t, res, log, false)
 }
@@ -330,8 +330,8 @@ func TestDecrypt_SMIMEIsOff(t *testing.T) {
 			h := decryptFor(raw)
 			h.gpg = path
 			res, log := callDecrypt(t, h)
-			if got := errText(t, res); got != errSMIMEDecryptOff {
-				t.Errorf("error = %q, want the fixed text %q", got, errSMIMEDecryptOff)
+			if got := errText(t, res); !isErrForm(got, "error", "", errSMIMEDecryptOff) {
+				t.Errorf("error = %q, want the error form of the fixed text %q", got, errSMIMEDecryptOff)
 			}
 			if _, err := os.Stat(argsFile); err == nil {
 				t.Error("an S/MIME message started a program; want no gpgsm run")
@@ -488,8 +488,8 @@ func TestDecrypt_OkayWithoutMDCGivesNoText(t *testing.T) {
 	h := decryptFor(pgpMIME([]byte("x")))
 	h.gpg = path
 	res, log := callDecrypt(t, h)
-	if got := errText(t, res); got != errDecryptFailed.Error() {
-		t.Errorf("error = %q, want %q", got, errDecryptFailed.Error())
+	if got := errText(t, res); !isErrForm(got, "error", "", errDecryptFailed.Error()) {
+		t.Errorf("error = %q, want the error form of the text %q", got, errDecryptFailed.Error())
 	}
 	noLeak(t, res, log, false)
 }
@@ -511,8 +511,8 @@ func TestDecrypt_TimeoutKills(t *testing.T) {
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("the call took %v, want the kill near the %v limit", d, h.limit)
 	}
-	if got := errText(t, res); got != errDecryptTimeout.Error() {
-		t.Errorf("error = %q, want %q", got, errDecryptTimeout.Error())
+	if got := errText(t, res); !isErrForm(got, "error", "", errDecryptTimeout.Error()) {
+		t.Errorf("error = %q, want the error form of the text %q", got, errDecryptTimeout.Error())
 	}
 	noLeak(t, res, log, false)
 }
@@ -525,8 +525,8 @@ func TestDecrypt_NoProgramIsUnsupported(t *testing.T) {
 	h := decryptFor(pgpMIME([]byte("x")))
 	h.gpg = "mailbag-no-such-gpg-T88"
 	res, _ := callDecrypt(t, h)
-	if got := errText(t, res); got != errDecryptUnsupported.Error() {
-		t.Errorf("error = %q, want %q", got, errDecryptUnsupported.Error())
+	if got := errText(t, res); !isErrForm(got, "error", "", errDecryptUnsupported.Error()) {
+		t.Errorf("error = %q, want the error form of the text %q", got, errDecryptUnsupported.Error())
 	}
 }
 
@@ -544,8 +544,8 @@ func TestDecrypt_NotEncrypted(t *testing.T) {
 		h := decryptFor([]byte(raw))
 		h.gpg = path
 		res, _ := callDecrypt(t, h)
-		if got := errText(t, res); got != errNotEncrypted.Error() {
-			t.Errorf("error = %q, want %q", got, errNotEncrypted.Error())
+		if got := errText(t, res); !isErrForm(got, "error", "", errNotEncrypted.Error()) {
+			t.Errorf("error = %q, want the error form of the text %q", got, errNotEncrypted.Error())
 		}
 	}
 	if _, err := os.Stat(argsFile); err == nil {

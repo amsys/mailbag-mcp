@@ -38,6 +38,16 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: stable
+      # The macOS runner image has OpenSSL 4 first on PATH, and S/MIME
+      # verify accepts OpenSSL 3.x only. Put the Homebrew openssl@3
+      # first, so the S/MIME tests run. The version line shows which
+      # program a job used.
+      - name: use OpenSSL 3 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "$(brew --prefix openssl@3)/bin" >>"$GITHUB_PATH"
+      - run: openssl version
       - run: go build $PKGS
       - run: go vet $PKGS
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 $PKGS

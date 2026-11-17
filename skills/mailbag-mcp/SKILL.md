@@ -114,7 +114,9 @@ two files differ.
   with `OpenSSL 3.`, and any other gives verdict `unsupported`. On a
   host with OpenSSL 4 (Arch, from 2026-11-16) the S/MIME tests of
   `internal/verify`, `internal/tools` and `internal/server` fail; run
-  them in a container with OpenSSL 3 (`ubuntu:24.04`). Do not widen
+  them in a container with OpenSSL 3 (`ubuntu:24.04`). The macOS
+  runner image has OpenSSL 4 too (from 2026-11-17), so `test.yml`
+  puts the Homebrew `openssl@3` first on PATH there. Do not widen
   the gate without a check of each exit code and flag: on 4.1.0 a
   `sha1WithRSA` digest alias gives `invalid`, not weak
   (`TestSMIME_DigestAliasIsWeak`). `doctor` and the serve log give the

@@ -129,7 +129,11 @@ func Wrap[In, Out any](logger *slog.Logger, name string, timeout time.Duration, 
 // human does not count against it (D5.2): h gets that wait's context
 // from [untimed], and after the wait it takes a new full deadline.
 //
-// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4
+// Each call gets one new Fencer before h runs. h takes it from the
+// context with [fencer]. After h succeeds, WrapReq writes its nonce
+// into the [Head] of the result (DU2.1, DU2.2).
+//
+// arch: D5.2, DS14.8, T1.5, §3.1, §3.15, A7, B4, DU2.1, DU2.2
 func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duration, h HandlerReq[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -143,6 +147,17 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 
 		start := time.Now()
 		logger.Info("call-start", "tool", name)
+
+		// DU2.2: one Fencer for each call, made before the handler.
+		// When there is no nonce, the result is an error with the
+		// class internal and no nonce line, and nothing else is sent.
+		f, fErr := newFencer()
+		if fErr != nil {
+			logger.Error("call-end", "tool", name, "duration", time.Since(start).String(), "error", "internal")
+			var zero Out
+			return errResult(noNonceText), zero, nil
+		}
+		ctx = withFencer(ctx, f)
 
 		defer func() {
 			if r := recover(); r != nil {
@@ -179,10 +194,28 @@ func WrapReq[In, Out any](logger *slog.Logger, name string, timeout time.Duratio
 			var zero Out
 			return errResult(hErr.Error()), zero, nil
 		}
+		// DU2.1: WrapReq sets the nonce after the handler, so a
+		// handler never writes Head and a cached Out gets the nonce
+		// of the response that replays it. Until every Out embeds
+		// Head (T24), an Out with no Head passes with no change.
+		if hd, ok := any(&out).(interface{ setFence(string) }); ok {
+			hd.setFence(f.Nonce())
+		}
 		logger.Info("call-end", "tool", name, "duration", time.Since(start).String())
 		return nil, out, nil
 	}
 }
+
+// newFencer makes the Fencer of one call. It is [guard.NewFencer];
+// only a test replaces it, to make the error path of DU2.2 step 1.
+// No test in this package runs in parallel, so it has no lock.
+//
+// arch: DU2.2
+var newFencer = guard.NewFencer
+
+// noNonceText is the error text when [WrapReq] cannot make a nonce. It
+// has the class internal and no nonce line (DU2.2 step 1).
+const noNonceText = "error: internal\nthe server could not make a response nonce"
 
 // inputRequired is the signal of a [HandlerReq] that needs an answer
 // from the client before it can complete (MRTR, SEP-2322). The

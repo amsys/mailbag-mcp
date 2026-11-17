@@ -6,14 +6,18 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/amsys/mailbag-mcp/internal/guard"
 )
 
 // textOf returns the text of the first content item of res, failing
@@ -343,4 +347,150 @@ func TestWrapReq_InputRequiredResult(t *testing.T) {
 	if !strings.Contains(logs.String(), "outcome=input_required") {
 		t.Errorf("log has no input_required outcome:\n%s", logs.String())
 	}
+}
+
+// headOut is an Out type with Head as its first field, for the tests
+// of DU2.1 and DU2.2.
+type headOut struct {
+	Head
+	Data string `json:"data"`
+}
+
+// TestWrapReq_SetsFenceAfterHandler holds DU2.1 and DU2.2: WrapReq
+// gives the handler one Fencer in the context and, after the handler,
+// writes the nonce of that Fencer into Head. A value that the handler
+// writes into Head does not reach the result. "fence" is the first key
+// of the JSON of the result (INV-4).
+//
+// arch: DU2.1, DU2.2
+func TestWrapReq_SetsFenceAfterHandler(t *testing.T) {
+	var seen string
+	h := WrapReq(nil, "head", time.Second, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (headOut, error) {
+		seen = fencer(ctx).Nonce()
+		out := headOut{Data: "x"}
+		out.Fence = "forged"
+		return out, nil
+	})
+	res, out, err := h(context.Background(), &mcp.CallToolRequest{}, struct{}{})
+	if err != nil || res != nil {
+		t.Fatalf("WrapReq gave res %+v, err %v; want a success with no ready-made result", res, err)
+	}
+	if !guard.Strict("nonce", seen) {
+		t.Fatalf("handler saw nonce %q, want 16 lowercase hex characters", seen)
+	}
+	if out.Fence != seen {
+		t.Errorf("fence = %q, want the nonce of the handler's Fencer %q", out.Fence, seen)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"fence":"` + seen + `",`; !strings.HasPrefix(string(b), want) {
+		t.Errorf("result JSON = %s, want it to start with %s", b, want)
+	}
+}
+
+// TestWrapReq_NonceIsNewForEachCall holds INV-2 and INV-6: each call
+// gets a new nonce, and an Out that the handler keeps (as the send key
+// store does) gets the nonce of the response that replays it. The kept
+// value itself never holds a nonce.
+//
+// arch: DU2.1, DU2.2
+func TestWrapReq_NonceIsNewForEachCall(t *testing.T) {
+	cached := headOut{Data: "cached"}
+	var seen string
+	h := WrapReq(nil, "replay", time.Second, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (headOut, error) {
+		seen = fencer(ctx).Nonce()
+		return cached, nil
+	})
+	nonces := map[string]bool{}
+	for i := range 3 {
+		_, out, err := h(context.Background(), &mcp.CallToolRequest{}, struct{}{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Fence != seen || !guard.Strict("nonce", out.Fence) {
+			t.Errorf("call %d: fence = %q, handler saw %q; want the same 16-hex nonce", i, out.Fence, seen)
+		}
+		if out.Data != "cached" {
+			t.Errorf("call %d: data = %q, want the kept value", i, out.Data)
+		}
+		nonces[out.Fence] = true
+	}
+	if len(nonces) != 3 {
+		t.Errorf("3 calls gave %d distinct nonces, want 3: %v", len(nonces), nonces)
+	}
+	if cached.Fence != "" {
+		t.Errorf("kept Out holds fence %q, want none (INV-6)", cached.Fence)
+	}
+}
+
+// TestWrapReq_NoNonceGivesInternalError holds DU2.2 step 1: when
+// WrapReq cannot make a nonce, the handler does not run, the result is
+// an error with the class internal and no nonce line, and the typed
+// output is the zero value.
+//
+// arch: DU2.1, DU2.2
+func TestWrapReq_NoNonceGivesInternalError(t *testing.T) {
+	t.Cleanup(func() { newFencer = guard.NewFencer })
+	newFencer = func() (guard.Fencer, error) {
+		return guard.NewFencerFrom(iotest.ErrReader(errors.New("no entropy")))
+	}
+
+	var logs bytes.Buffer
+	called := false
+	h := WrapReq(slog.New(slog.NewTextHandler(&logs, nil)), "nononce", time.Second, func(context.Context, *mcp.CallToolRequest, struct{}) (headOut, error) {
+		called = true
+		return headOut{Data: "should not be sent"}, nil
+	})
+	res, out, err := h(context.Background(), &mcp.CallToolRequest{}, struct{}{})
+	if err != nil {
+		t.Fatalf("WrapReq gave an error instead of an isError result: %v", err)
+	}
+	if called {
+		t.Error("the handler ran with no nonce")
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("result = %+v, want an isError result", res)
+	}
+	text := textOf(t, res)
+	if !strings.HasPrefix(text, "error: internal\n") {
+		t.Errorf("error text = %q, want it to start with the class line %q", text, "error: internal")
+	}
+	if strings.Contains(text, "fence") || strings.Contains(text, "UNTRUSTED") || strings.Contains(text, "entropy") {
+		t.Errorf("error text = %q, want no nonce line, no marker and no source error text", text)
+	}
+	if out != (headOut{}) {
+		t.Errorf("output = %+v, want the zero value", out)
+	}
+	if !strings.Contains(logs.String(), "error=internal") {
+		t.Errorf("call-end line has no class internal:\n%s", logs.String())
+	}
+}
+
+// TestFencer_FromContext holds DU2.2 step 3: fencer gives the Fencer
+// that withFencer put in the context, and the zero Fencer when the
+// context has none. Wrap of the zero Fencer panics, so no marker with
+// no nonce can be written.
+//
+// arch: DU2.1, DU2.2
+func TestFencer_FromContext(t *testing.T) {
+	f := fencer(withFencer(context.Background(), testFencer(t)))
+	if f.Nonce() != testNonce {
+		t.Errorf("fencer nonce = %q, want %q", f.Nonce(), testNonce)
+	}
+	if w := f.Wrap("hello"); !f.Holds(w) {
+		t.Errorf("Wrap gave %q, which the same Fencer does not hold", w)
+	}
+
+	zero := fencer(context.Background())
+	if zero.Nonce() != "" {
+		t.Errorf("fencer of a bare context has nonce %q, want none", zero.Nonce())
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Wrap on the Fencer of a bare context did not panic")
+		}
+	}()
+	_ = zero.Wrap("hello")
 }

@@ -20,13 +20,17 @@ A `search` with no `account` reads all mailboxes in one call:
 ```
 search {"query": "is:unread from:billing"}
 
-{"rows": [
-  {"id": "1700000001.4211.INBOX", "account": "work", "folder": "INBOX",
-   "date": "2026-10-12T08:14:00Z", "flags": "unread",
-   "email": "[UNTRUSTED_EMAIL]\nfrom: Billing <billing@shop.example.com>\nsubject: Invoice 2026-118\n[/UNTRUSTED_EMAIL]"},
-  {"id": "1600000002.977.INBOX", "account": "home", "folder": "INBOX",
-   "date": "2026-10-11T17:40:00Z", "flags": "unread",
-   "email": "[UNTRUSTED_EMAIL]\nfrom: billing@power.example.org\nsubject: Your October bill\n[/UNTRUSTED_EMAIL]"}
+{"_fence": "3fa9c2e17b604d55", "rows": [
+  {"id": "1700000001-4211-494e424f58", "account": "work",
+   "folder_ref": "=494e424f58", "date": "2026-10-12T08:14:00Z", "flags": "unread",
+   "untrusted": {
+     "from": "[UNTRUSTED_3fa9c2e17b604d55]\nBilling <billing@shop.example.com>\n[/UNTRUSTED_3fa9c2e17b604d55]",
+     "subject": "[UNTRUSTED_3fa9c2e17b604d55]\nInvoice 2026-118\n[/UNTRUSTED_3fa9c2e17b604d55]"}},
+  {"id": "1600000002-977-494e424f58", "account": "home",
+   "folder_ref": "=494e424f58", "date": "2026-10-11T17:40:00Z", "flags": "unread",
+   "untrusted": {
+     "from": "[UNTRUSTED_3fa9c2e17b604d55]\nbilling@power.example.org\n[/UNTRUSTED_3fa9c2e17b604d55]",
+     "subject": "[UNTRUSTED_3fa9c2e17b604d55]\nYour October bill\n[/UNTRUSTED_3fa9c2e17b604d55]"}}
 ]}
 ```
 
@@ -38,7 +42,9 @@ search {"query": "is:unread from:billing"}
 - An access level for each account: `read`, `classify`, `draft` or `send`.
   `classify` is for a junk sorter: it reads, and it moves mail only
   between INBOX and the junk folder.
-- Untrusted content fences around all text that a sender controls.
+- Two-zone results: a fresh random nonce in `_fence`, a fence marked with
+  that nonce around each text that a sender controls (under `untrusted`),
+  and a strict check of every other string before the result leaves.
 - One static binary, with an optional daemon that shares one sign-in
   between all sessions.
 

@@ -435,7 +435,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: draftAndUp,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &bulkTool{mail: fx.mail, journal: accessJournal(fx)}
-			out, err := h.run(ctx, BulkIn{Account: "work", Action: "read"}, bulkAcceptAll)
+			out, err := h.run(withFencer(ctx, testFencer(t)), BulkIn{Account: "work", Action: "read"}, bulkAcceptAll)
 			return out.Note, err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.mods == 1 },

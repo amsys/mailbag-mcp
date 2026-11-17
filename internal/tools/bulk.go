@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -60,19 +62,37 @@ type BulkIn struct {
 	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"count and up to 50 matching rows; changes nothing"`
 }
 
-// BulkRow is one sample row. From and Subject are sender text, so each
-// sits in its own fence (§3.15). The id comes from the server.
+// BulkRow is one sample row (DU5.4). The id and the date are outside:
+// the id passed normalizeID for the provider kind (DU3.2), and the
+// date is the server date in RFC 3339, UTC. An id that does not pass
+// is left out of the row. The from line and the subject are sender
+// text, so each sits in its own fence under Untrusted (DU5.1).
 type BulkRow struct {
-	ID      string `json:"id"`
-	From    string `json:"from"`
-	Subject string `json:"subject"`
-	// Date is the server date of the message in RFC 3339. The dry
-	// run fills it (DS14.14).
-	Date string `json:"date,omitempty"`
+	ID string `json:"id,omitempty" strict:"id"`
+	// Date is the server date of the message (DS14.14). A zero time
+	// is left out.
+	Date string `json:"date,omitempty" strict:"date"`
+	// Untrusted holds the fenced sender text of the row (DU5.1).
+	Untrusted BulkUntrusted `json:"untrusted"`
 }
 
-// BulkOut is the bulk tool result (DS9.4).
+// BulkUntrusted is the untrusted zone of one sample row. Each field is
+// one fence of the nonce of the response.
+type BulkUntrusted struct {
+	From    string `json:"from,omitempty"`
+	Subject string `json:"subject,omitempty"`
+}
+
+// BulkOut is the bulk tool result (DS9.4, DU5.4).
+//
+// Head gives the nonce first. Outside: the counts, the undo token, the
+// skipped ids after normalizeID (DU3.2), the undo list and a note of
+// the registry (DU3.5). Each sample row and each undo list row has its
+// own untrusted zone. Untrusted.Detail holds the provider error text
+// of a change that stopped part of the way; the note ends with its
+// class word (DU6.2).
 type BulkOut struct {
+	Head
 	// Count is the count of ids that matched, at most max.
 	Count int `json:"count"`
 	// Applied is the count of ids that changed. After an undo it is
@@ -83,14 +103,19 @@ type BulkOut struct {
 	Gone   int       `json:"gone,omitempty"`
 	Sample []BulkRow `json:"sample,omitempty"`
 	// Undo is the journal record id that reverses this bulk.
-	Undo string `json:"undo,omitempty"`
+	Undo string `json:"undo,omitempty" strict:"id"`
 	// Skipped answers an undo: the ids that changed or went away since
-	// the operation. Undo left them as they are (DS9.5, G17).
-	Skipped []string `json:"skipped,omitempty"`
+	// the operation. Undo left them as they are (DS9.5, G17). The ids
+	// come from the journal and pass normalizeID (DU3.2).
+	Skipped []string `json:"skipped,omitempty" strict:"id"`
 	// Records answers undo: "list", newest first.
 	Records []UndoRow `json:"records,omitempty"`
-	// Note is text this tool wrote.
-	Note string `json:"note,omitempty"`
+	// Note is text this tool wrote: a text of the note registry
+	// (DU3.5).
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the provider error text that the note names by
+	// its class word (DU3.5, DU6.2).
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
 // The fixed notes of the bulk tool.
@@ -149,7 +174,7 @@ var bulkSchema = map[string]any{
 // ask the human. It has the shape of [errNoElicitation]: it does not
 // name the config key, because the model reads this text and only the
 // human may turn the question off.
-var errBulkNoElicitation = errors.New("this client cannot ask the human to confirm a bulk change, so nothing changed; the human can make the change in a mail program")
+var errBulkNoElicitation = public("refused", "this client cannot ask the human to confirm a bulk change, so nothing changed; the human can make the change in a mail program")
 
 // bulkNotConfirmedText is the error text of a question that did not
 // complete: the client failed or the call ended during the wait.
@@ -224,11 +249,22 @@ type pendingBulk struct {
 
 // bulkSet is the match set of one bulk call: the ids, the sample rows
 // of the question, and more, which is true when the set stopped at
-// max.
+// max. The sample holds plain text with no fence, so the pending
+// store keeps no fence and no nonce (INV-6).
 type bulkSet struct {
 	ids    []string
-	sample []BulkRow
+	sample []bulkSample
 	more   bool
+}
+
+// bulkSample is one sample row as the provider gave it, with no fence.
+// [bulkRows] fences it for the result of each response, and
+// [bulkQuestion] shows it to the human with [plainLine].
+//
+// arch: DU5.4, INV-6
+type bulkSample struct {
+	id, from, subject string
+	date              time.Time
 }
 
 // askFunc asks the human to accept message. It gives one of the
@@ -309,10 +345,14 @@ func (t *bulkTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in B
 // as a reader, so no write method can run (IS14.9). The action is not
 // run, so it is not checked. A call with undo is an input error.
 //
-// arch: DS14.14, IS14.9
+// The rows of the result have the shape of DU5.4: the id after
+// normalizeID and the date outside, the sender text in fences.
+//
+// arch: DS14.14, IS14.9, DU5.4, DU3.3
 func (t *bulkTool) dryRun(ctx context.Context, in BulkIn) (BulkOut, error) {
+	f := fencer(ctx)
 	if strings.TrimSpace(in.Undo) != "" {
-		return BulkOut{}, errors.New("dry_run and undo do not go together; send them in two calls")
+		return BulkOut{}, public("invalid_input", "dry_run and undo do not go together; send them in two calls")
 	}
 	p, acct, err := t.mail.Open(ctx, in.Account)
 	if err != nil {
@@ -321,16 +361,20 @@ func (t *bulkTool) dryRun(ctx context.Context, in BulkIn) (BulkOut, error) {
 	if err := guard.Require(acct, guard.LevelRead); err != nil {
 		return BulkOut{}, err
 	}
+	sel, err := in.folderInput()
+	if err != nil {
+		return BulkOut{}, err
+	}
 	limit := in.Max
 	if limit <= 0 {
 		limit = DefaultBulkMax
 	}
 	limit = min(limit, MaxBulkIDs)
-	ids, sample, more, err := collectIDs(ctx, p, in, limit, bulkDryRunSample)
+	ids, sample, more, err := collectIDs(ctx, p, sel, limit, bulkDryRunSample)
 	if err != nil {
 		return BulkOut{}, err
 	}
-	out := BulkOut{Count: len(ids), Sample: sample, Note: bulkDryRunNote}
+	out := BulkOut{Count: len(ids), Sample: bulkRows(f, acct.Provider, sample), Note: bulkDryRunNote}
 	if more {
 		out.Note = joinNote(out.Note, fmt.Sprintf("the set stops at max = %d; more messages can match", limit))
 	}
@@ -484,8 +528,14 @@ func (t *bulkTool) run(ctx context.Context, in BulkIn, ask askFunc) (BulkOut, er
 // place of the id collection: the change runs on the ids of the
 // record (DS14.7). The other steps are the steps of run.
 //
-// arch: DS9.4, DS9.5, DS9.11, DS9.12, DS14.6, DS14.7, IS9.2, IS9.3, IS9.10, IS14.1, H1, H2, H4
+// The folder and move_to accept a name or a folder_ref (DU3.3). The
+// sample rows of the result are made from the plain sample of the set
+// with the Fencer of this call, so a retry fences them with its own
+// nonce (DU5.4, INV-6).
+//
+// arch: DS9.4, DS9.5, DS9.11, DS9.12, DS14.6, DS14.7, IS9.2, IS9.3, IS9.10, IS14.1, H1, H2, H4, DU5.4, DU3.3
 func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask confirmSetFunc) (BulkOut, error) {
+	f := fencer(ctx)
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return BulkOut{}, err
@@ -500,12 +550,19 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 			return BulkOut{}, errConfirmStale
 		}
 		if in.Query != "" || in.Folder != "" || in.Action != "" || in.MoveTo != "" || in.Max != 0 {
-			return BulkOut{}, errors.New("undo takes the call on its own; send the change in a second call")
+			return BulkOut{}, public("invalid_input", "undo takes the call on its own; send the change in a second call")
 		}
-		return t.undo(ctx, p, in.Account, token)
+		return t.undo(ctx, f, p, acct, token)
 	}
 
 	ch, err := bulkChange(in)
+	if err != nil {
+		return BulkOut{}, err
+	}
+	// sel is in with the folder name that a ref holds. The pending
+	// record keeps in as the call gave it, so the retry compares the
+	// same input (DS14.7).
+	sel, err := in.folderInput()
 	if err != nil {
 		return BulkOut{}, err
 	}
@@ -519,13 +576,13 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 	if claim != nil {
 		set, err = claim(acct.Alias)
 	} else {
-		set.ids, set.sample, set.more, err = collectIDs(ctx, p, in, limit, bulkSampleRows)
+		set.ids, set.sample, set.more, err = collectIDs(ctx, p, sel, limit, bulkSampleRows)
 	}
 	if err != nil {
 		return BulkOut{}, err
 	}
 	ids, sample, more := set.ids, set.sample, set.more
-	out := BulkOut{Count: len(ids), Sample: sample}
+	out := BulkOut{Count: len(ids), Sample: bulkRows(f, acct.Provider, sample)}
 	if len(ids) == 0 {
 		out.Note = bulkNothingNote
 		return out, nil
@@ -534,7 +591,7 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 		out.Note = fmt.Sprintf("the set stops at max = %d; more messages can match, and a second bulk call takes them", limit)
 	}
 
-	outcome, err := ask(ctx, acct, set, bulkQuestion(in, ch, len(ids), more, sample))
+	outcome, err := ask(ctx, acct, set, bulkQuestion(sel, ch, len(ids), more, sample))
 	if outcome != "" {
 		t.log().Info("bulk-confirm", "tool", "bulk", "confirm", outcome, "count", len(ids))
 	}
@@ -567,7 +624,7 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 	// return. From here the change completes without the session.
 	dctx, cancel := detach(base, LongTimeout)
 	defer cancel()
-	if err := t.apply(dctx, p, in.Account, ids, ch, &out); err != nil && out.Applied == 0 {
+	if err := t.apply(dctx, f, p, in.Account, ids, ch, &out); err != nil && out.Applied == 0 {
 		// Nothing changed, so the call fails as modify does.
 		return BulkOut{}, err
 	}
@@ -587,9 +644,11 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 // as in modify).
 //
 // It gives the chunk error, if any; the rows that changed are in out.
+// The note names the class word of that error, and its text goes to
+// out.Untrusted.Detail in a fence of f (DU3.5, DU6.2).
 //
-// arch: DS9.4, DS9.5, IS9.3, IRV.9, C14, DS78.5
-func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []string, ch mail.Change, out *BulkOut) error {
+// arch: DS9.4, DS9.5, IS9.3, IRV.9, C14, DS78.5, DU3.5, DU6.2
+func (t *bulkTool) apply(ctx context.Context, f guard.Fencer, p Writer, account string, ids []string, ch mail.Change, out *BulkOut) error {
 	open := t.journal
 	if open == nil {
 		open = undo.Open
@@ -601,7 +660,7 @@ func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []st
 	// The summary goes to the journal with chunk 1, before the count
 	// of changed rows is known. So it names the matched count as
 	// matched; the undo list gives the changed rows in Count (R16-L8).
-	summary := fmt.Sprintf("bulk: %s; %s matched", changeWords(ch), plural(len(ids), "message"))
+	summary := bulkSummary(ch, len(ids))
 
 	var rec undo.Record
 	recorded, journalFailed, unresolved, pending := false, jerr != nil, false, false
@@ -644,8 +703,9 @@ func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []st
 
 	var notes []string
 	if stopErr != nil {
-		notes = append(notes, fmt.Sprintf("the change stopped part of the way: %s; %d of the %d messages changed",
-			errNote(stopErr), out.Applied, len(ids)))
+		notes = append(notes, "the change stopped part of the way: "+classOf(stopErr),
+			fmt.Sprintf("%d of the %d messages changed", out.Applied, len(ids)))
+		out.Untrusted = errDetail(f, stopErr)
 	}
 	if stopErr == nil && out.Applied == 0 {
 		notes = append(notes, "no message changed; every id is gone, because another client expunged or moved the message")
@@ -671,18 +731,35 @@ func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []st
 	case out.Applied > 0:
 		notes = append(notes, "the change is done; this operation has no undo token, because the journal could not be written")
 	}
-	out.Note = strings.Join(notes, "; ")
+	out.Note = strings.Join(notes, noteSep)
 	return stopErr
+}
+
+// bulkSummary is the summary the journal keeps for one bulk (§3.18,
+// DU3.5), in the form of modifySummary. Its first line is a text of
+// the note registry: "bulk: " and the closed action words, then the
+// matched count. A move adds a second line with the words of
+// changeWords, which name the target folder; the undo list shows that
+// line in a fence (undoRow).
+//
+// arch: DS9.5, §3.18, R16-L8, DU3.5
+func bulkSummary(ch mail.Change, matched int) string {
+	s := "bulk: " + actionWords(ch) + noteSep + plural(matched, "message") + " matched"
+	if ch.MoveTo != "" {
+		s += summaryNamesSep + changeWords(ch)
+	}
+	return s
 }
 
 // undo answers undo: "list" and undo: "<token>" through the helpers
 // that modify uses, so either tool reverses the records of both
-// (DS9.5).
+// (DS9.5). f fences the folder names of the undo list rows. The
+// skipped ids pass normalizeID for the provider kind of acct (DU3.2).
 //
-// arch: DS9.5, H3, G17
-func (t *bulkTool) undo(ctx context.Context, p Writer, account, token string) (BulkOut, error) {
+// arch: DS9.5, H3, G17, DU3.2, DU3.5, DU5.4
+func (t *bulkTool) undo(ctx context.Context, f guard.Fencer, p Writer, acct config.Account, token string) (BulkOut, error) {
 	if strings.EqualFold(token, undoListWord) {
-		rows, err := undoList(fencer(ctx), t.journal, account)
+		rows, err := undoList(f, t.journal, acct.Alias)
 		if err != nil {
 			return BulkOut{}, err
 		}
@@ -692,19 +769,19 @@ func (t *bulkTool) undo(ctx context.Context, p Writer, account, token string) (B
 		}
 		return out, nil
 	}
-	r, err := reverseRecord(ctx, t.journal, p, account, token, t.logger)
+	r, err := reverseRecord(ctx, t.journal, p, acct.Alias, token, t.logger)
 	if err != nil {
 		return BulkOut{}, err
 	}
-	out := BulkOut{Applied: len(r.Rows), Skipped: r.Skipped}
+	out := BulkOut{Applied: len(r.Rows), Skipped: normalIDs(acct.Provider, r.Skipped)}
 	if len(r.Rows) == 0 {
 		out.Note = "the operation is marked reversed; no message needed a change to go back"
 	}
 	if len(r.Skipped) > 0 {
-		out.Note = addNote(out.Note, fmt.Sprintf("%d messages changed or gone since the operation were left as they are", len(r.Skipped)))
+		out.Note = joinNote(out.Note, fmt.Sprintf("%d messages changed or gone since the operation were left as they are", len(r.Skipped)))
 	}
 	if r.ExpungePending {
-		out.Note = addNote(out.Note, "the server could not remove the old copies of the moved messages, so they are in two folders")
+		out.Note = joinNote(out.Note, "the server could not remove the old copies of the moved messages, so they are in two folders")
 	}
 	return out, nil
 }
@@ -718,27 +795,52 @@ func joinNote(have, add string) string {
 	return have + "; " + add
 }
 
-// bulkChange checks action and move_to and gives the change.
+// bulkActionHelp is the error text of an action that is missing or
+// not known.
+const bulkActionHelp = "action: name one of read, unread, star, unstar, archive, trash, move"
+
+// bulkChange checks action and move_to and gives the change. move_to
+// accepts a name or a folder_ref (DU3.3). An unknown action is echoed
+// only in the fenced detail of the error (DU6.2, INV-10).
+//
+// arch: DS9.4, DU3.3, DU6.2
 func bulkChange(in BulkIn) (mail.Change, error) {
 	action := strings.ToLower(strings.TrimSpace(in.Action))
 	if action == "" {
-		return mail.Change{}, errors.New("action: name one of read, unread, star, unstar, archive, trash, move")
+		return mail.Change{}, public("invalid_input", bulkActionHelp)
 	}
 	build, ok := bulkActions[action]
 	if !ok {
-		return mail.Change{}, fmt.Errorf("action %q: name one of read, unread, star, unstar, archive, trash, move", serverText(in.Action))
+		return mail.Change{}, publicDetail("invalid_input", bulkActionHelp, in.Action)
 	}
 	ch := build()
-	moveTo := strings.TrimSpace(in.MoveTo)
+	moveTo, err := folderArg(strings.TrimSpace(in.MoveTo))
+	if err != nil {
+		return mail.Change{}, err
+	}
 	switch {
 	case action == "move" && moveTo == "":
-		return mail.Change{}, errors.New("action move needs move_to")
+		return mail.Change{}, public("invalid_input", "action move needs move_to")
 	case action == "move":
 		ch.MoveTo = moveTo
 	case moveTo != "":
-		return mail.Change{}, errors.New("move_to belongs to action move only")
+		return mail.Change{}, public("invalid_input", "move_to belongs to action move only")
 	}
 	return ch, nil
+}
+
+// folderInput gives a copy of in whose folder passed folderArg
+// (DU3.3): a folder_ref decodes to the raw name, and a name loses its
+// fence markers.
+//
+// arch: DU3.3, INV-10
+func (in BulkIn) folderInput() (BulkIn, error) {
+	folder, err := folderArg(in.Folder)
+	if err != nil {
+		return BulkIn{}, err
+	}
+	in.Folder = folder
+	return in, nil
 }
 
 // collectIDs gives the ids of the match set, at most limit, in the
@@ -746,10 +848,14 @@ func bulkChange(in BulkIn) (mail.Change, error) {
 // give the sample; the later pages are ids only (DS9.4). A page with
 // Partial set is refused: the count must be exact (H2, S9-GAP1). more
 // is true when the set stopped at limit and a cursor was left. The
-// sample holds at most sampleN rows.
+// sample holds at most sampleN rows, in plain text. in.Folder is a
+// folder name: the caller decodes a ref first (folderInput).
 //
-// arch: DS9.4, H2, S9-GAP1
-func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (ids []string, sample []BulkRow, more bool, err error) {
+// The note of a Partial page goes to the fenced detail of the error,
+// because it is provider text (DU3.5, DU6.2).
+//
+// arch: DS9.4, H2, S9-GAP1, DU5.4, DU6.2
+func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (ids []string, sample []bulkSample, more bool, err error) {
 	seen := make(map[string]bool, limit)
 	cursor := ""
 	for first := true; ; first = false {
@@ -765,11 +871,10 @@ func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (i
 			return nil, nil, false, err
 		}
 		if page.Partial {
-			note := page.Note
-			if note == "" {
-				note = "the provider filtered part of the query on the client"
+			if page.Note == "" {
+				return nil, nil, false, public("refused", "bulk needs an exact match set; the provider filtered part of the query on the client")
 			}
-			return nil, nil, false, fmt.Errorf("bulk needs an exact match set; %s", note)
+			return nil, nil, false, publicDetail("refused", "bulk needs an exact match set", page.Note)
 		}
 		for i := range page.Messages {
 			m := &page.Messages[i]
@@ -779,7 +884,7 @@ func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (i
 			seen[m.ID] = true
 			ids = append(ids, m.ID)
 			if first && len(sample) < sampleN {
-				sample = append(sample, bulkRow(m))
+				sample = append(sample, bulkSample{id: m.ID, from: addressText(m.From), subject: m.Subject, date: m.Date})
 			}
 		}
 		cursor = page.NextCursor
@@ -792,33 +897,78 @@ func collectIDs(ctx context.Context, p Reader, in BulkIn, limit, sampleN int) (i
 	}
 }
 
-// bulkRow builds one sample row. The sender text goes into one fence
-// for each field, after the steps of toRow: a link that Sanitize
-// makes whole again is defanged (D4.1 item 3).
+// bulkRows gives the sample rows of one result (DU5.4). The id passes
+// normalizeID for the provider kind; an id that does not pass is left
+// out of its row (DU3.2). The from line and the subject each go into
+// one fence of f, after the steps of toSearchRow: a link that Sanitize
+// makes whole again is defanged (D4.1 item 3). An empty text stays
+// empty, so its field is omitted. No sample gives nil.
 //
-// arch: DS9.4, §3.15, D4.1
-func bulkRow(m *mail.Message) BulkRow {
-	fence := func(s string) string {
-		return guard.Fence("EMAIL", mime.DefangLinks(guard.Sanitize(s)))
+// arch: DS9.4, D4.1, DU5.1, DU5.4, DU3.2
+func bulkRows(f guard.Fencer, kind string, sample []bulkSample) []BulkRow {
+	if len(sample) == 0 {
+		return nil
 	}
-	row := BulkRow{ID: m.ID, From: fence(addressText(m.From)), Subject: fence(m.Subject)}
-	if !m.Date.IsZero() {
-		row.Date = m.Date.UTC().Format(time.RFC3339)
+	shown := func(s string) string {
+		if s == "" {
+			return ""
+		}
+		return f.Wrap(mime.DefangLinks(guard.Sanitize(s)))
 	}
-	return row
+	rows := make([]BulkRow, 0, len(sample))
+	for _, s := range sample {
+		id, _ := normalizeID(kind, s.id)
+		rows = append(rows, BulkRow{
+			ID:        id,
+			Date:      dateText(s.date),
+			Untrusted: BulkUntrusted{From: shown(s.from), Subject: shown(s.subject)},
+		})
+	}
+	return rows
 }
 
-// bulkQuestion is the text the human accepts (DS9.4 step 6):
+// plainLineMax is the most runes that [plainLine] gives (DU5.4).
+const plainLineMax = 120
+
+// plainLine makes one line of sender text for the human (DU5.4): it
+// runs guard.Sanitize, so a forged marker loses its bracket and a
+// hidden character goes; it turns each line break, other white space
+// and control character into a space; and it cuts the text to
+// plainLineMax runes. A cut text ends in "…", so the human sees that
+// it was cut. The result holds no marker and no nonce.
+//
+// arch: DU5.4, INV-7
+func plainLine(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r != ' ' && (unicode.IsSpace(r) || unicode.IsControl(r)) {
+			return ' '
+		}
+		return r
+	}, guard.Sanitize(s))
+	if utf8.RuneCountInString(s) <= plainLineMax {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:plainLineMax-1]) + "…"
+}
+
+// bulkQuestion is the text the human accepts (DS9.4 step 6, DU5.4):
 // "<action> <count> messages in <alias>/<folder> that match "<query>".
-// First 5:" and the fenced sample. The alias, the folder and the query
-// are model text, so each loses its hidden characters and its fence
-// markers first (serverText).
-func bulkQuestion(in BulkIn, ch mail.Change, count int, more bool, sample []BulkRow) string {
+// First 5:" and the sample, one line for the from line and one for the
+// subject of each row. The question goes to the human through
+// elicitation or MRTR, so it holds no fence marker and no nonce. The
+// sender text of each row passes [plainLine], and its links are
+// defanged after it (D4.1). The alias, the folder and the query are
+// model text, so each loses its hidden characters and its fence
+// markers first (serverText); the folder name also passes plainLine.
+//
+// arch: DS9.4, DU5.4, D4.1, INV-7
+func bulkQuestion(in BulkIn, ch mail.Change, count int, more bool, sample []bulkSample) string {
 	var b strings.Builder
 	b.WriteString(bulkActionText(ch))
 	fmt.Fprintf(&b, " %s in %s", plural(count, "message"), serverText(in.Account))
 	if in.Folder != "" {
-		b.WriteString("/" + serverText(in.Folder))
+		b.WriteString("/" + plainLine(serverText(in.Folder)))
 	}
 	if q := strings.TrimSpace(in.Query); q != "" {
 		fmt.Fprintf(&b, " that match %q", serverText(q))
@@ -832,9 +982,9 @@ func bulkQuestion(in BulkIn, ch mail.Change, count int, more bool, sample []Bulk
 	fmt.Fprintf(&b, " First %d:", len(sample))
 	for _, r := range sample {
 		b.WriteString("\n- ")
-		b.WriteString(r.From)
+		b.WriteString(mime.DefangLinks(plainLine(r.from)))
 		b.WriteString("\n  ")
-		b.WriteString(r.Subject)
+		b.WriteString(mime.DefangLinks(plainLine(r.subject)))
 	}
 	return b.String()
 }
@@ -851,7 +1001,7 @@ func bulkActionText(ch mail.Change) string {
 	case ch.Trash:
 		return "Trash"
 	default:
-		return "Move to " + serverText(ch.MoveTo) + ":"
+		return "Move to " + plainLine(serverText(ch.MoveTo)) + ":"
 	}
 }
 

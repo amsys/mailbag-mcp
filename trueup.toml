@@ -20,20 +20,16 @@ go = "clean"
 typescript = "clean"
 
 [[keep]]
-id = "secret-content:internal/guard/redact_test.go:27"
+id = "secret-content:internal/guard/redact_test.go:6668ae217204"
 reason = "fake JWT, test input for the redactor"
 
 [[keep]]
-id = "secret-content:internal/server/server_test.go:1633"
+id = "secret-content:internal/server/server_test.go:d9181a541a06"
 reason = "idempotency-key constant in a test, not a secret"
 
 [[keep]]
 id = "prose:internal/mime/html.go"
 reason = "foster parenting is the HTML5 spec term for the tree-builder rule"
-
-[[keep]]
-id = "doc-misplaced:PLAN.md"
-reason = "runner and tierplan read PLAN.md at the root"
 
 [[keep]]
 id = "refcheck:scripts/coverage_gate.sh:6:malformed"

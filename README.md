@@ -49,7 +49,9 @@ go install github.com/amsys/mailbag-mcp@latest
 ```
 
 Or download a release binary from
-<https://github.com/amsys/mailbag-mcp/releases>. Then add an account
+<https://github.com/amsys/mailbag-mcp/releases>. `@latest` does not
+select a pre-release. To install one, give its tag, for example
+`@v0.2.0-alpha.1`. Then add an account
 and connect the client:
 
 ```

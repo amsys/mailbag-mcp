@@ -32,11 +32,31 @@ two files differ.
   (`TestToolsList_Budget`). Raise a budget only with a decision record
   in `PLAN.md`. Never cut a rule, a limit, a unit or a default from a
   description to fit.
-- `TestBinarySize_Budget` caps the stripped binary at 15,000,000 B. The
-  history and each owner decision are in
-  `docs/features/mailbag/size-baseline.md`. The owner puts run-time
-  speed first and size second: do not trade speed for bytes without
-  asking.
+- `TestBinarySize_Budget` caps the stripped binary at 15,600,000 B
+  (`sizeBudgetBytes` in `size_test.go`; 15,000,000 B before DH1.1, which
+  added go-crypto v1.5.2 and go-sdk v1.8.0). Owner statement,
+  2026-11-09: "Binary size is not a problem, bump it." So size is not a
+  stop condition. When the stripped size passes the budget, the budget
+  goes to the next 100,000 B above the measured size, with a new record
+  in `size-baseline.md`. Do not cut code to fit. The history and each
+  owner decision are in `docs/features/mailbag/size-baseline.md`. The
+  owner puts run-time speed first and size second: do not trade speed
+  for bytes without asking.
+- go-sdk is at v1.8.0 and go-crypto at v1.5.2 (DH1.1, DH1.2). On go-sdk
+  v1.8.0 `ServerSession.Wait` returns nil when the peer closes the
+  stream during a call: `internal/jsonrpc2/conn.go` of the SDK wraps
+  `io.EOF` in the write error, and `wait` skips such a write error. So
+  `Wait` alone cannot give the end reason. `NewService` adds the
+  receiving middleware `Service.noteCut`. It marks the session in
+  `Service.cut` when the cause of the handler context is `io.EOF` (the
+  SDK cancels each call in flight with the read error). `Session` takes
+  the mark with `LoadAndDelete` after the wait, and `endReason` gives
+  `peer-gone` for a nil wait error with the mark. A
+  `notifications/cancelled` gives the cause `context.Canceled`, and
+  `noteCut` does not mark it. Keep the `serverClosingText` case of
+  `endReason`: it still covers a real write error.
+  `TestService_SessionEndNeverLogsError` (subtest `peer closes
+  mid-call`).
 - Live tests: `go test -tags live` with `MAILBAG_LIVE_GMAIL=<alias>`
   (`internal/gmail`) or `MAILBAG_LIVE_JMAP=<alias>` (`internal/jmap`).
   `go test ./...` touches no network.
@@ -56,7 +76,10 @@ two files differ.
   carry an SSH signature that `git verify-tag` accepts against
   `.github/allowed_signers` (principal `dev@amsys.cz`, key
   `~/.ssh/id_ed25519_amsys_sign`). Tag with `git tag -s` and
-  `gpg.format=ssh`. GoReleaser makes a draft release; publish runs in
+  `gpg.format=ssh`. A tag with a pre-release part (`v0.2.0-alpha.1`)
+  needs the CHANGELOG section `## [0.2.0-alpha.1]` and gives a GitHub
+  pre-release (`release.prerelease: auto` in `.goreleaser.yaml`).
+  GoReleaser makes a draft release; publish runs in
   the environment `release` and needs the owner's approval (IS12.5).
 - Packages: `nfpms` makes `.deb`, `.rpm` and `.pkg.tar.zst`. They put
   `mailbag-mcp` and `mailbag-setup` in `/usr/bin`, the licence and the
@@ -86,6 +109,16 @@ two files differ.
   version in `test.yml`; run them before a push. staticcheck refuses a
   raw invisible character in a string literal (ST1018): write U+200B as
   `​`, U+202E as `‮`.
+- S/MIME verify needs OpenSSL 3.x: `opensslBinary`
+  (`internal/verify/smime.go`) accepts only a version text that starts
+  with `OpenSSL 3.`, and any other gives verdict `unsupported`. On a
+  host with OpenSSL 4 (Arch, from 2026-11-16) the S/MIME tests of
+  `internal/verify`, `internal/tools` and `internal/server` fail; run
+  them in a container with OpenSSL 3 (`ubuntu:24.04`). Do not widen
+  the gate without a check of each exit code and flag: on 4.1.0 a
+  `sha1WithRSA` digest alias gives `invalid`, not weak
+  (`TestSMIME_DigestAliasIsWeak`). `doctor` and the serve log give the
+  reason word `not_openssl_3`.
 - No published document holds a real client id, secret, token or mail
   address (`TestDocs_NoRealSecrets` scans README.md, SUPPORT.md,
   CHANGELOG.md, docs/*.md and each SKILL.md). Test fixtures use made-up
@@ -515,7 +548,13 @@ two files differ.
   the refusal comes before any network or provider call (G10).
   `TestAccess_ClassifyRank`, `TestModify_ClassifyLevel` (also counts
   provider calls before the refusal), `TestNeedLevel_JunkFolder`,
-  `TestAccess_Matrix`.
+  `TestAccess_Matrix`. Below draft (at classify) the modify tool sets
+  `mail.Change.NoNewLabels`. The Gmail provider then resolves each
+  label of `add_labels` and `move_to` with no create, so an unknown
+  name is refused with the label list and no label is made. Undo and
+  bulk need draft and still create labels (E4).
+  `TestGmail_NoNewLabelsRefusesUnknown`,
+  `TestModify_ClassifySetsNoNewLabels`.
 - G10 Each tool except `accounts` and `search` requires `account`. The
   alias is checked first; an unknown alias fails before any network or
   keyring work. `TestTools_UnknownAccount`.
@@ -544,6 +583,120 @@ two files differ.
   a field after it shows with no `> ` prefix.
   `TestSendSummary_ContentTypeUnreadable`,
   `TestSendSummary_UnicodeLineBreaksFolded`.
+- G15 A forged fence marker can use look-alike letters, a look-alike
+  slash, or another separator (DH2.1, DH2.2, item B1 of
+  `PROMPT-harden.md`). `foldCopy` (`internal/guard/confusable.go`)
+  folds each rune of `foldRunes` to its ASCII letter or `/` on a copy,
+  and `off` maps each byte of the copy to its byte offset in the
+  original. The table holds the NFKC-stable runes of Unicode 18.0.0
+  `confusables.txt` for the letters of UNTRUSTED and for `/`, plus
+  their case forms (`addCaseForms`, through `unicode.SimpleFold`).
+  `markerFoldRe` finds the marker on the copy: ASCII or full-width
+  bracket, any case, and the separator `_`, a space, `-` or none.
+  `escapeMarkers` changes only the bracket rune to U+27E6. All other
+  bytes stay, so a Cyrillic letter stays visible to the reader (I3).
+  Write the table runes and the test letters as escapes (ST1018). The
+  table is a limit: a look-alike that a later Unicode version adds is
+  not in it, and the comment of `foldRunes` names the source version.
+  `foldCopy` leaves out each rune that `skipInFold` names: category
+  Mn, Me or Cf (a variation selector, the soft hyphen, U+034F, U+2063)
+  and the four Hangul fillers. `isInvisible` does not strip these
+  runes, so without the skip one of them inside the word hides the
+  marker from the escape and from the strip. The rune stays in the
+  text and has no item in `off`, so `runeEnd` reads the rune size from
+  the original text, never from the next offset. A precomposed
+  accented letter (U+0143 for N) is not folded: that is a limit.
+  `TestFence_ConfusableMarkerEscaped` (its multi-byte prefix shows a
+  wrong offset), `TestFence_FullWidthMarker`,
+  `TestFence_HiddenRuneInMarker`, `FuzzFence`.
+- G16 `StripFenceMarkers` (outgoing text, M14) runs `StripInvisible`
+  first, then `removeMarkers` in a loop until the text stops changing
+  (DH2.3). Each pass folds a copy with NFKC to find the markers, but
+  deletes original bytes only. A deleted span starts at the bracket
+  rune and ends at the end of the original rune that made the last
+  matched byte, so an NFKC expansion is never cut in half. Never write
+  the NFKC form into outgoing text: owner text keeps its own
+  characters (I4). The separator goes with the marker, so
+  `[UNTRUSTED_EMAIL]` gives `EMAIL]`. Owner text that holds
+  `[untrusted` loses those letters; the send summary shows the result.
+  The loop stops after `stripPasses` (16) passes. Each nested level
+  costs one pass over the whole text, and a 90 KB body with 9000
+  levels took 36 s with no limit. Text that still changes on the last
+  pass goes through `removeBrackets`, which deletes every rune that
+  folds to `[`, so no marker can stay. Do not raise the limit to keep
+  brackets: only attack text has that many levels. Do not test this
+  with a time bound; the bracket of `[keep]` shows which path ran.
+  `TestStripFenceMarkers_Confusable`, `TestStripFenceMarkers_Nested`,
+  `TestStripFenceMarkers_ZeroWidthSplit`,
+  `TestStripFenceMarkers_PassLimit`, `FuzzStripFenceMarkers`.
+- G17 Chat template tokens (DH2.4, B2). `templateTokenRe` also finds
+  `<tool_call>` and `<tool_response>` (Qwen, Hermes),
+  `<function_calls>` and `<function_results>` (Anthropic tool use in
+  text form), `[TOOL_RESULTS]` (Mistral) and `<system>` (chat
+  transcripts), each open and close, and `<invoke`. At the start of a
+  line only, it finds `System:`, `### Instruction:` and
+  `### Response:`. Each family names its runtime in the comment.
+  `escapeTemplateTokens` keeps its form: a token that starts with `<`
+  or `[` loses that byte to U+27E6, any other token gets U+27E6 in
+  front. The pattern runs on all mail text, so keep it to the exact
+  tokens: a mid-line `Human:`, a quoted line and a longer word stay
+  plain text. `TestSanitize_TemplateTokensTable`,
+  `TestSanitize_NFKCAndTemplateTokens`.
+- G18 Server text that can quote a stranger (DH2.5, B3). A provider
+  error in a result field goes through `errNote`
+  (`internal/tools/search.go`), which is
+  `guard.Sanitize(guard.Redact(err.Error()))`. Redact runs first, so
+  NFKC cannot hide a token from it. Use `errNote` at each site that
+  puts an error into a result field (`AccountError.Error` and the
+  notes of read, export, bulk and modify). A folder name or a label
+  word goes through `guard.CleanServerName`, which is
+  `Sanitize(StripFenceMarkers(s))`. The strip comes first, because a
+  field outside the fence must not hold the bare word `UNTRUSTED_`,
+  and Sanitize keeps that word. These fields stay on `serverOwned`
+  (`fence_fields_test.go`). An id is a round-trip key and never
+  changes. Owner choice, 2026-11-09: Sanitize runs NFKC, so a
+  full-width folder name comes back in its NFKC form, and a later call
+  with that name can fail. Known gap: the tool error text in
+  `internal/tools/wrapper.go` passes `guard.Redact` only, because a
+  blanket `Sanitize` there would escape the real fence of a fenced
+  error. `TestSearch_ProviderErrorSanitized`, `TestServerNames_Cleaned`
+  (also pins the NFKC form).
+- G19 The outgoing text of the Gmail settings writes loses every fence
+  marker (DH2.6, B4, M14). `prepareSetting` runs
+  `guard.StripFenceMarkers` on the vacation subject and body that the
+  call gives (before `vacationOf`), the signature body, and the filter
+  `From`, `To`, `Subject`, `Query`, `AddLabels` and `RemoveLabels`. The
+  strip comes before the question, so the human sees the value that
+  leaves (H14). Trap: never strip the merged vacation. The stored subject
+  and body go back to Gmail byte for byte, because `StripInvisible`
+  removes ZWJ, ZWNJ, bidi marks and CR, and `set_vacation` off asks no
+  question (review M1). `compose` strips the
+  draft text, the quote, the forward block, the mailto draft and the
+  templates. A new outgoing text field needs the same strip and a row
+  in the test. `TestOutgoing_NoFenceMarkerAnywhere` (ASCII and
+  look-alike markers in every field, checked at the provider fake),
+  `TestSend_StripsFenceMarkers`.
+- G20 Mail data reaches gpg and openssl on stdin only (DH4.1, B6, I11).
+  No byte of a message goes into an argument or a file path of a child
+  process. `TestChildProcess_ArgsAreFixed` exists in `internal/tools`
+  (gpg, through the `fakeProgram` of `decrypt_test.go`) and in
+  `internal/verify` (openssl, through a `cmsScript` and
+  `fakeOpenssl`), because each fake belongs to its package. Each test
+  puts shell metacharacters, a `--` option and a path in every header
+  and part name, and compares each recorded argv with its fixed list,
+  element by element. A marker file shows that no shell read the
+  message. Both tests skip on Windows. A new child process call needs a
+  fixed list and a row in the test of its package.
+- G21 Reply steering note (DH5.1, C1 of `PROMPT-harden.md`). When the
+  caller gives no `to` and the first Reply-To address of the original
+  differs from its From address (case alone is no difference),
+  `compose` adds the fixed sentence `replyToNote` to the draft note, in
+  either mode. The note names no address: both addresses come from the
+  sender, the draft result is outside every fence (§3.15), and
+  `TestSend_ResultCarriesNoSenderText` forbids sender text there. The
+  human sees both addresses in the draft and in the send
+  confirmation. The note joins any other note and does not replace
+  it. `TestDraft_ReplyToDiffersNote`.
 
 ## H. Bulk and undo (`internal/tools`, `internal/undo`, design `03-design-S9.md`)
 
@@ -638,6 +791,38 @@ two files differ.
   flags. `TestJournal_ExtendWhileRecordOpen` (passes trivially on
   POSIX), `TestReplace_RetriesSharingError`,
   `TestReplace_GivesErrorAfterBudget`, `TestBulk_Detached` (Windows CI).
+- H14 Three Gmail settings writes ask the human each time (DH3, B5):
+  `set_vacation` with `enabled` true, every `set_signature`, and a
+  `create_filter` that marks mail read or removes INBOX or UNREAD (any
+  case, outer spaces trimmed). `set_vacation` off, `delete_filter`,
+  any other filter and the reads do not ask. The order stays:
+  OpenWriter, level check, type assertion, question, change, so a
+  level refusal and the note for another provider come before any
+  question and any record (I9). The question comes from the prepared
+  change (G19). It folds line breaks with `lineBreakFolder`, gives
+  each body line the `> ` prefix and cuts no line or field, because a
+  text that the human does not see must not go out (I7). The H10
+  session grant never covers these questions: `settingSchema` has no
+  `remember` field, `bulkOutcome` reads an accept with `remember` true
+  as a plain accept, and the settings code never reads a grant (I8).
+  On the old protocol `askConfirm` (shared with `askBulk`) asks, and an
+  accept runs on a detached context with a new full deadline, as send
+  does (DS11.9). On the MRTR path the first call stores the prepared
+  change in a `pendingSetting` bound to the session, the account, the
+  action and the SHA-256 of the input. The retry takes the record one
+  time and applies the stored change. It does not read Gmail again, so
+  the value that goes out is the value the human saw, also when the
+  owner edits the setting in Gmail between the question and the
+  answer. A decline, a changed input, another action, another session
+  or a reused or forged state changes nothing (I10). A client that
+  cannot ask needs `[bulk] allow_without_elicitation`; else the call
+  gets `errSettingNoElicitation`, which names no config key.
+  `TestGmailSettings_VacationOnAsks` (also the deadline after an
+  accept and the untimed wait for the human),
+  `TestGmailSettings_SignatureAsks`, `TestGmailSettings_HidingFilterAsks`,
+  `TestGmailSettings_PlainFilterDoesNotAsk`,
+  `TestGmailSettings_DeclineChangesNothing`,
+  `TestGmailSettings_MRTRRetry`, `TestGmailSettings_QuestionShowsAll`.
 
 ## N. Identities and signatures (`internal/config`, `internal/tools`, `internal/cli`, design `03-design-identities.md`)
 
@@ -829,9 +1014,9 @@ The ids in brackets are the invariants of DI8.
   (`inputRequests` key `confirm`) and a single-use `requestState`, and
   act only on the retry. A session on an older protocol keeps
   `ss.Elicit`; `newProtocol(ss)` selects the path. Traps:
-  - go-sdk v1.7.0 fills `ss.InitializeParams()` from the `_meta` of
-    the first new-protocol request, so a client with no `initialize`
-    still reads as 2026-07-28 with its capabilities.
+  - go-sdk v1.7.0 and v1.8.0 both fill `ss.InitializeParams()` from
+    the `_meta` of the first new-protocol request, so a client with no
+    `initialize` still reads as 2026-07-28 with its capabilities.
   - The record lives in daemon memory and is bound to the session
     pointer. A transport with one server session per request would
     give `errConfirmStale` on every retry; stdio and the daemon socket

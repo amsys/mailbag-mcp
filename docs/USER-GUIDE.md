@@ -765,7 +765,7 @@ Change every message that matches a query, after the human confirms (one time, o
 |---|---|---|---|
 | `account` | string | yes | The alias of the account to change. |
 | `action` | string | no | The change for each match: read, unread, star, unstar, archive, trash or move. |
-| `dry_run` | boolean | no | Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. |
+| `dry_run` | boolean | no | Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. On JMAP a from: term matches whole words of the address, so -from:mailer does not exclude noreply@mailer.example.com. Read the listed rows. |
 | `folder` | string | no | The folder to search. The default is INBOX. |
 | `max` | integer | no | The largest count of messages to change. The default is 500 and the limit is 5000. |
 | `move_to` | string | no | The target folder of the move action. |
@@ -878,6 +878,20 @@ Some toolsets have more keys:
   allow_without_elicitation = true
   ```
 
+- `gmail_settings` asks you to confirm three kinds of change, each
+  time: `set_vacation` with `enabled` true, every `set_signature`, and
+  `create_filter` when the filter marks mail as read or removes INBOX
+  or UNREAD. Each one sends text to other people or hides mail, and
+  `undo` cannot reverse it. The question shows the text that will go
+  out, line by line, or the criteria that will hide mail. A vacation
+  that is turned off, a filter that only adds a label or a star, and
+  `delete_filter` do not ask. The choice "do not ask again until
+  reconnect" does not apply: these questions come each time. A client
+  that cannot ask gets a refusal. The `[bulk]` key
+  `allow_without_elicitation` also covers these three questions, so
+  setting it lets such a client change them with no question. There is
+  no separate key.
+
 - `unsubscribe` sends a one-click POST only when the message has a
   DKIM pass from your own mail server. Set `authserv_id` in `[verify]`
   to the name that your server writes in `Authentication-Results`.
@@ -918,6 +932,9 @@ changes:
 - `read` and `starred`.
 - `add_labels` and `remove_labels`, when no label is TRASH, SPAM or
   DRAFT (in any case), and `remove_labels` does not name INBOX.
+  On a Gmail account, each label of `add_labels` must exist. A label
+  that the account does not have is refused, and the error lists the
+  labels. The server creates no label at `classify`.
 
 The name of the junk folder is the `junk` key under
 `[accounts.<alias>.folders]`. With no such key it is `Junk`. On a Gmail
@@ -930,6 +947,30 @@ These need `draft` at least, so a `classify` account is refused: `trash`,
 too), `INBOX` in `remove_labels`, the `read` tool with `mark_read`,
 `bulk`, `draft`, `send`, and every `folders` write. The refusal comes
 before the server contacts the mail provider.
+
+## Autonomous agents
+
+An autonomous agent is a program that runs with no person at the
+keyboard, for example a cron job or a long task that reads your mail.
+Mail text can steer such an agent, and nobody is there to catch it.
+
+- Give an agent the level `read` or `classify`. Never give it `draft`
+  or `send`, unless a human reads every confirmation.
+- At `draft`, `modify` and the `folders` writes keep no confirmation.
+  An agent at that level can move, label and delete mail with no
+  question.
+- At `send`, the confirmation is the only barrier before a mail goes
+  out. A client that answers it by itself removes that barrier. Keep
+  `allow_without_elicitation` off for such a client.
+- Set `attach_dirs` in `accounts.toml`. It is optional, and the
+  default is no list. With no list, `draft` and `send` can attach any
+  file that the server can read, except a hidden path and the config
+  and state directories. With a list, a file must be under one of its
+  entries. Give an autonomous agent a small directory for this:
+
+  ```toml
+  attach_dirs = ["~/mail-attachments"]
+  ```
 
 ## Secrets
 
@@ -957,6 +998,11 @@ The files are here:
 | `server.log`, `undo/` | `~/.local/state/mailbag-mcp/` | `state/` in the directory above | `state\` in the directory above |
 
 `XDG_CONFIG_HOME` and `XDG_STATE_HOME` change the Linux paths.
+
+OpenSSL limit: S/MIME verify needs OpenSSL 3.x. With OpenSSL 4 or with
+no `openssl` program, the signature status of an S/MIME message is
+`unsupported`. Set `openssl_path` to an OpenSSL 3 program to use
+another one.
 
 Windows limits:
 
@@ -1004,6 +1050,9 @@ the recent operations and their tokens.
   touched. The result lists it in `skipped`, and the other messages
   are reversed.
 - An undo of the same operation a second time is refused.
+- On Gmail, a label that `modify` creates at the `draft` level stays
+  after an undo, with no message under it. Delete the empty label in
+  Gmail if you do not want it.
 - The server deletes undo records that are older than 30 days. After
   that, the change cannot be reversed with `undo`.
 
@@ -1045,3 +1094,27 @@ act.
 The server also removes hidden characters from that text, and no tool
 takes a password or a token. Add accounts and secrets in a terminal
 only.
+
+The server does not open or scan a saved file. The `attachment` tool
+writes the bytes of an attachment to a directory under an allowed root
+and gives the path. The file name comes from the sender, so the path in
+the result is inside the `[UNTRUSTED_...]` markers. A name keeps its
+extension, so a file with an executable extension is saved as such.
+Open a saved file only when you trust the sender.
+
+A reply uses the `Reply-To` address of the original message when there
+is one. A sender can set that address to a mailbox of their own. When
+the `Reply-To` address differs from the `From` address and you give no
+`to`, the result of `draft` has a note: the reply goes to the Reply-To
+address of the message, which differs from its From address. The note
+shows no address. Read the `To` line of the draft, and of the send
+confirmation, before you send.
+
+The server cleans the folder names and the label words that it shows.
+It removes forged markers and chat template tokens from them, and it
+normalises the text (NFKC). A folder with a full-width letter in its
+name is therefore shown with the plain letter, and a later call that
+gives the name as shown may not find the folder. The ids that the
+server gives are not changed. The text of an error from one account,
+when it appears in a result note, is cleaned in the same way. The text
+of a tool error has only secrets and home paths removed.

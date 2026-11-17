@@ -6,6 +6,81 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-11-17
+
+This is a pre-release for tests. `go install ...@latest` and the
+"Latest" release on GitHub stay at 0.1.0.
+
+Known issue: S/MIME verify needs OpenSSL 3.x. On a system with
+OpenSSL 4, the signature status of an S/MIME message is `unsupported`.
+Set `openssl_path` to an OpenSSL 3 program.
+
+### Added
+
+- The access level `classify`, between `read` and `draft`. It permits
+  the read tools and `modify` changes that sort mail: a move to INBOX
+  or to the junk folder, `read`, `starred` and labels. It refuses
+  trash, delete, undo, `bulk`, `draft`, `send` and every folder write.
+
+### Security
+
+- At `classify`, a Gmail `add_labels` with a label that the account
+  does not have fails, and the error lists the labels. The server
+  creates no label at this level.
+- A forged fence marker no longer passes the escape. The server folds
+  look-alike letters (Cyrillic, Greek and others) and look-alike
+  slashes to ASCII on a copy, and it accepts `_`, a space, `-` or no
+  separator after UNTRUSTED. The same fold applies to the strip of
+  outgoing text, which never rewrites the owner's own characters.
+- A character with no glyph inside the marker word (a variation
+  selector, a soft hyphen, a combining mark, a Hangul filler) no longer
+  hides a forged fence marker from the escape or from the strip of
+  outgoing text.
+- The strip of outgoing text makes at most 16 passes. A mail body with
+  thousands of nested markers made a reply or a forward use tens of
+  seconds of processor time. Text with more nested levels than the
+  limit loses every square bracket.
+- More chat template tokens are escaped: `<tool_call>`,
+  `<tool_response>`, `<function_calls>`, `<invoke`,
+  `<function_results>`, `[TOOL_RESULTS]`, `<system>` and the
+  line-initial `System:`, `### Instruction:` and `### Response:`.
+  The line-initial `Human:` and `Assistant:` were escaped before.
+- Server text that can quote a stranger goes through `guard.Sanitize`:
+  provider error text in a note, folder names, the folder of a search
+  row or a message, and label words. A folder name is now shown in its
+  NFKC form.
+- The outgoing text of `gmail_settings` (vacation subject and body,
+  signature, filter criteria and labels) has fence markers stripped.
+- `gmail_settings` asks the human to confirm `set_vacation` with
+  `enabled` true, every `set_signature`, and a `create_filter` that
+  marks mail as read or removes INBOX or UNREAD. The question shows
+  the text that goes out. The `[bulk]` key `allow_without_elicitation`
+  also covers these questions. The session grant of `bulk` does not.
+- A test pins that no message byte reaches the arguments of `gpg` and
+  `openssl`: mail data goes in through stdin only.
+- A reply whose `Reply-To` address differs from the `From` address of
+  the original, with no `to` given, gets a note in the `draft` result.
+  The note shows no address.
+
+### Changed
+
+- The size budget of the release binary is 15,600,000 B (was
+  15,000,000 B). The two dependency bumps below add about 450 KB.
+- Update `github.com/ProtonMail/go-crypto` to v1.5.2. It fixes panics
+  on malformed input in the OpenPGP verifier.
+- Update `github.com/modelcontextprotocol/go-sdk` to v1.8.0. A session
+  whose peer closes during a call now ends with the reason `peer-gone`.
+- Update `github.com/emersion/go-smtp` and the `golang.org/x` modules.
+  These are separate dependency updates. Neither main bump needs them.
+- The `bulk` `dry_run` text warns that on JMAP a `from:` term matches
+  whole words of the address.
+- A release tag with a pre-release part, such as `v0.2.0-alpha.1`,
+  makes a GitHub pre-release.
+- The user guide has a section "Autonomous agents", a paragraph on
+  `attach_dirs`, the three `gmail_settings` confirmations, the note
+  that an empty Gmail label stays after an undo, and the note that the
+  server does not open or scan a saved file.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added

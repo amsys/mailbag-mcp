@@ -92,15 +92,18 @@ raise these numbers without a decision record in `PLAN.md`.
 ### Binary size
 
 `TestBinarySize_Budget` (`size_test.go`) builds the stripped binary and
-fails above `sizeBudgetBytes` (15,000,000 B). The measured history and
+fails above `sizeBudgetBytes` (15,600,000 B). The measured history and
 each decision that raised the budget are in
 `docs/features/mailbag/size-baseline.md`. Raise the budget only with a
 new record in that file.
 
 ### Live tests
 
-Two tests run against a real account. They have the build tag `live`
-and need an alias in an environment variable. With no alias, they skip.
+Three test files run against a real account: `internal/gmail/live_test.go`,
+`internal/jmap/live_test.go` and `internal/jmap/live_stalwart_test.go`
+(the limit retry and the junk move, on a Stalwart server). They have
+the build tag `live` and need an alias in an environment variable. With
+no alias, they skip.
 
 | Provider | Command |
 |---|---|
@@ -193,7 +196,9 @@ job starts only when the job before it passes:
    macOS and Windows, each on amd64 and arm64), three Linux packages
    (`.deb`, `.rpm` and `.pkg.tar.zst`) and `checksums.txt`. It
    attests each file in `checksums.txt`, and `checksums.txt` itself,
-   with `actions/attest-build-provenance`.
+   with `actions/attest-build-provenance`. A tag with a pre-release
+   part, such as `v0.2.0-alpha.1`, gives a GitHub pre-release
+   (`release.prerelease: auto`), which is not the "Latest" release.
 4. **publish** runs in the GitHub environment `release`. It waits until
    the owner approves, then makes the draft public with
    `gh release edit <tag> --draft=false`. The first step of the job
@@ -267,6 +272,10 @@ only. `internal/server` has no daemon on Windows, `internal/verify`
 needs OpenSSL 3, and the root e2e tests need the daemon. The steps use
 `bash`. `test.yml` says why in a comment.
 
+On a host with OpenSSL 4, the S/MIME tests of `internal/verify`,
+`internal/tools` and `internal/server` fail, because the server accepts
+OpenSSL 3.x only. Run them in a container that has OpenSSL 3.
+
 staticcheck and govulncheck are pinned by version in `test.yml`, so a
 new release of a tool cannot fail CI with no code change. Run the same
 versions before a push:
@@ -290,7 +299,7 @@ real server, and when.
 | Path | Live-tested on |
 |---|---|
 | IMAP and SMTP | owner mailbox, 2026-09-20 |
-| Outlook | open: owner step DS6.6 (redirect URI, `account add --provider outlook`, `account test`) |
-| Gmail | open: owner step T7.6 (the live test above) |
-| JMAP | open: owner step (`account add --provider jmap`, the live test above) |
-| Daemon on systemd | open: owner step (`service install`, then `systemctl --user enable --now mailbag.socket`) |
+| Outlook | owner mailbox, 2026-10-15 (`account test`, paste sign-in) |
+| Gmail | owner mailbox, 2026-10-15 (`account test` and the live test above) |
+| JMAP | owner Stalwart server, two mailboxes, 2026-10-15 (`account test` and the live test above) |
+| Daemon on systemd | owner host, 2026-10-15 (`service install`, socket activation, two sessions on one daemon) |

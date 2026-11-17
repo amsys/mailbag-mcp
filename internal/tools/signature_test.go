@@ -258,7 +258,7 @@ func TestDraft_SignatureNew(t *testing.T) {
 	if m.HTML != "" {
 		t.Errorf("HTML = %q, want no HTML part (compose_html is false)", m.HTML)
 	}
-	if !strings.Contains(note, "Signature added.") {
+	if !noteHasPart(note, "signature added") {
 		t.Errorf("Note = %q", note)
 	}
 
@@ -266,7 +266,7 @@ func TestDraft_SignatureNew(t *testing.T) {
 	if m.Text != "Hello Ann" {
 		t.Errorf("text = %q, want the own text alone", m.Text)
 	}
-	if !strings.Contains(note, "No signature.") {
+	if !noteHasPart(note, "no signature") {
 		t.Errorf("Note = %q", note)
 	}
 	refuseDraft(t, "signature_on_new = false\n", nil, DraftIn{To: []string{"ann@other.test"}, Body: "Hello\n\n" + ownerSigLost})
@@ -365,14 +365,14 @@ func TestDraft_SignatureForward(t *testing.T) {
 	if want := "FYI\n\n" + f; m.Text != want {
 		t.Errorf("text = %q, want %q", m.Text, want)
 	}
-	if !strings.Contains(note, "No signature.") {
+	if !noteHasPart(note, "no signature") {
 		t.Errorf("Note = %q", note)
 	}
 	m, note = saveDraft(t, "signature_on_forward = true\n", orig, DraftIn{ForwardID: "1", To: []string{"bob@other.test"}, Body: "FYI"})
 	if want := "FYI\n\n-- \n" + ownerSig + "\n\n" + f; m.Text != want {
 		t.Errorf("text = %q, want %q", m.Text, want)
 	}
-	if !strings.Contains(note, "Signature added.") {
+	if !noteHasPart(note, "signature added") {
 		t.Errorf("Note = %q", note)
 	}
 }

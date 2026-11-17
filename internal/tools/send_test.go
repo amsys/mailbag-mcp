@@ -196,7 +196,7 @@ func sendFixture(t *testing.T, prov *writeProvider) (*sendTool, *writeProvider) 
 		prov = &writeProvider{}
 	}
 	if prov.draftID == "" {
-		prov.draftID = "1700000000.99.Drafts"
+		prov.draftID = draftIDNew
 	}
 	if prov.draftRes.ID == "" {
 		prov.draftRes = mail.SendResult{ID: "<draft@example.test>", Sent: true, SavedToSent: true}
@@ -213,6 +213,9 @@ func sendFixture(t *testing.T, prov *writeProvider) (*sendTool, *writeProvider) 
 			// this field the tool saves a draft and never sends, which
 			// the draft path of TestAccess_Matrix covers instead.
 			Access: "send",
+			// The draft tool writes its id in the form of the
+			// provider kind, so the account names one (DU3.2).
+			Provider: "imap",
 		},
 	}
 	return &sendTool{mail: fm}, prov

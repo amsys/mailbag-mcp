@@ -8,7 +8,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	netmail "net/mail"
 	"strings"
@@ -27,7 +26,18 @@ var deliveryHeaders = []string{"Delivered-To", "X-Original-To"}
 // errFromNotIdentity is the refusal of a from value that is not the
 // account address or one of its identities (M13, DI2.2 rule 1). Its
 // text is the text identityFrom has given since T5.2.
-var errFromNotIdentity = errors.New("from must be the address of this account or one of its identities; the accounts tool lists them")
+//
+// arch: DI2.2, DU6.2
+var errFromNotIdentity = public("invalid_input", "from must be the address of this account or one of its identities; the accounts tool lists them")
+
+// errReplyGone and errForwardGone are the errors of a reply_to_id or
+// a forward_id that names no message. Neither echoes the id (INV-10).
+//
+// arch: DI2.1, DU6.2
+var (
+	errReplyGone   = public("not_found", "reply_to_id names no message")
+	errForwardGone = public("not_found", "forward_id names no message")
+)
 
 // picked is the result of [pickIdentity]: the identity of a draft and
 // the From value the draft gets.
@@ -48,9 +58,9 @@ type picked struct {
 //
 // arch: DI2.0, DI2.1
 func readOriginal(ctx context.Context, p Writer, in DraftIn, identityMode bool) (*mail.Message, error) {
-	id, what := in.ReplyToID, "reply_to_id"
+	id, gone := in.ReplyToID, errReplyGone
 	if id == "" {
-		id, what = in.ForwardID, "forward_id"
+		id, gone = in.ForwardID, errForwardGone
 	}
 	if id == "" {
 		return nil, nil
@@ -64,7 +74,7 @@ func readOriginal(ctx context.Context, p Writer, in DraftIn, identityMode bool) 
 		return nil, err
 	}
 	if orig == nil {
-		return nil, errors.New(what + " names no message")
+		return nil, gone
 	}
 	return orig, nil
 }
@@ -189,17 +199,54 @@ func formatFrom(name, addr string) string {
 	return (&netmail.Address{Name: name, Address: addr}).String()
 }
 
-// pickNote is the sentence of the draft Note that tells which identity
-// a draft got, and why (DI2.3). added tells whether the draft carries
-// the signature of that identity.
+// draftNote is the part of the draft result that compose makes: the
+// note, as registry texts joined with "; " (DU3.5, DU12.1 item 3),
+// and the detail for untrusted.detail, as plain text with no fence.
 //
-// arch: DI2.3
-func pickNote(p picked, added bool) string {
-	sig := "No signature."
+// arch: DU3.5, DU5.5
+type draftNote struct {
+	note   string
+	detail string
+}
+
+// pickNote tells which identity a draft got, and why (DI2.3). added
+// tells whether the draft carries the signature of that identity.
+//
+// The note names the pick rule of DI2.2 by its number and says
+// whether the signature was added. It names no address: the picked
+// address can be a catch-all address from the original, which a
+// sender chose. The detail names the From address, the identity and
+// the reason word, and the draft tool puts it in a fence (DU3.5,
+// DU5.5).
+//
+// arch: DI2.3, DU3.5, DU5.5
+func pickNote(p picked, added bool) draftNote {
+	sig := "no signature"
 	if added {
-		sig = "Signature added."
+		sig = "signature added"
 	}
-	return fmt.Sprintf("From %s: identity %s, picked by %s. %s", p.Addr, p.Identity.Email, p.Reason, sig)
+	return draftNote{
+		note:   fmt.Sprintf("the From address was picked by rule %d", pickRule(p.Reason)) + noteSep + sig,
+		detail: fmt.Sprintf("From %s: identity %s, picked by %s.", p.Addr, p.Identity.Email, p.Reason),
+	}
+}
+
+// pickRule gives the number of the DI2.2 rule that a reason word of
+// [pickIdentity] stands for: 1 an explicit from, 2 an identity email
+// of the original, 3 a reply_match pattern, 4 the default identity.
+//
+// arch: DI2.2, DU3.5
+func pickRule(reason string) int {
+	switch reason {
+	case "from":
+		return 1
+	case "to", "cc", "delivered-to":
+		return 2
+	case "reply_match":
+		return 3
+	default:
+		return 4
+	}
 }
 
 // replyDrop is the drop list of a reply in identity mode: the own

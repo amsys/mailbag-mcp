@@ -120,7 +120,7 @@ func identityDraft(t *testing.T, body string, orig *mail.Message) (*draftTool, *
 	if orig == nil {
 		orig = &mail.Message{}
 	}
-	rec := &readRecorder{writeProvider: &writeProvider{msg: orig, draftID: "d1"}}
+	rec := &readRecorder{writeProvider: &writeProvider{msg: orig, draftID: draftIDNew}}
 	return &draftTool{mail: &identityMail{prov: rec, acct: loadAccount(t, body)}}, rec
 }
 
@@ -316,11 +316,13 @@ func TestDraft_IdentityReadsOriginalOnce(t *testing.T) {
 
 // TestDraft_IdentityFromAndNote holds DI2.2 and DI2.3 at the draft
 // tool: in identity mode the saved From is the picked header value,
-// and the Note names the address, the identity and the rule. Outside
-// identity mode the From stays empty and the Note has no such
-// sentence (DI2.0, I2).
+// the Note names the rule by its number and holds no address, and
+// untrusted.detail names the address, the identity and the reason in
+// one fence (DU3.5, DU5.5). Outside identity mode the From stays empty
+// and the result has neither (DI2.0, I2).
 //
 // arch: DI2.0, DI2.1, DI2.2, DI2.3, DI2.4, DI6.1
+// arch: DU5.1, DU5.5, DU3.5, DU6.2
 func TestDraft_IdentityFromAndNote(t *testing.T) {
 	t.Run("identity mode", func(t *testing.T) {
 		h, rec := identityDraft(t, identityTOML, nil)
@@ -333,9 +335,15 @@ func TestDraft_IdentityFromAndNote(t *testing.T) {
 		if got := rec.drafts[0].From; got != `"Sales Team" <sales@example.test>` {
 			t.Errorf("From = %q, want the default identity", got)
 		}
-		want := "From sales@example.test: identity sales@example.test, picked by default. No signature."
-		if !strings.Contains(out.Note, want) {
-			t.Errorf("Note = %q, want it to hold %q", out.Note, want)
+		if want := "the From address was picked by rule 4; no signature"; !strings.HasSuffix(out.Note, noteSep+want) {
+			t.Errorf("Note = %q, want it to end in %q", out.Note, want)
+		}
+		if _, ok := strictNote(out.Note); !ok || strings.Contains(out.Note, "@") {
+			t.Errorf("Note = %q, want registry texts with no address (DU3.5)", out.Note)
+		}
+		want := "From sales@example.test: identity sales@example.test, picked by default."
+		if d := draftDetail(t, out); !strings.Contains(d, want) {
+			t.Errorf("untrusted.detail = %q, want it to hold %q", d, want)
 		}
 		if len(rec.reads) != 0 {
 			t.Errorf("a new draft read %d messages, want 0", len(rec.reads))
@@ -352,8 +360,8 @@ func TestDraft_IdentityFromAndNote(t *testing.T) {
 		if got := rec.drafts[0].From; got != "" {
 			t.Errorf("From = %q, want empty so the provider fills it in", got)
 		}
-		if strings.Contains(out.Note, "picked by") {
-			t.Errorf("Note = %q holds the identity sentence outside identity mode", out.Note)
+		if strings.Contains(out.Note, "picked by") || out.Untrusted != nil {
+			t.Errorf("Note = %q, untrusted = %+v; want no identity text outside identity mode", out.Note, out.Untrusted)
 		}
 	})
 }
@@ -410,8 +418,11 @@ func TestDraft_ReplyAllDropsPicked(t *testing.T) {
 	if got := strings.Join(m.Cc, ","); got != "Desk@Shop.test,bob@other.test,carol@other.test" {
 		t.Errorf("cc = %q", got)
 	}
-	if !strings.Contains(out.Note, "picked by cc") {
+	if !strings.Contains(out.Note, "the From address was picked by rule 2") {
 		t.Errorf("Note = %q", out.Note)
+	}
+	if d := draftDetail(t, out); !strings.Contains(d, "From flat@example.test: identity flat@example.test, picked by cc.") {
+		t.Errorf("untrusted.detail = %q", d)
 	}
 
 	// Without the exact identity, the catch-all address is picked and
@@ -434,9 +445,12 @@ func TestDraft_ReplyAllDropsPicked(t *testing.T) {
 	if got := strings.Join(m.Cc, ","); got != "bob@other.test,carol@other.test" {
 		t.Errorf("cc = %q, want no catch-all address and no own address (DI2.4)", got)
 	}
+	if !strings.Contains(out.Note, "the From address was picked by rule 3") || strings.Contains(out.Note, "shop.test") {
+		t.Errorf("Note = %q, want rule 3 and no catch-all address (DU3.5)", out.Note)
+	}
 	want := "From desk@shop.test: identity support@example.test, picked by reply_match."
-	if !strings.Contains(out.Note, want) {
-		t.Errorf("Note = %q, want it to hold %q", out.Note, want)
+	if d := draftDetail(t, out); !strings.Contains(d, want) {
+		t.Errorf("untrusted.detail = %q, want it to hold %q", d, want)
 	}
 }
 

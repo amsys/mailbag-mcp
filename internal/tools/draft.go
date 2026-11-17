@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The draft tool: it builds one message and saves it in the Drafts
+// folder. Its result has two zones (DU5.1, DU5.5).
 package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -41,19 +42,29 @@ type DraftIn struct {
 // DraftOut is the result of the draft tool: the account and the id of
 // the saved draft. The send tool takes that id.
 //
-// Every field is text this server wrote or an id a server gave, so
-// none of it is fenced (§3.15).
+// Zones (DU5.1, DU5.5):
+//   - Outside: Head, Account (kind alias), DraftID (kind id, in the
+//     form that [normalizeID] writes) and Note (texts of the note
+//     registry, DU3.5).
+//   - Untrusted: Detail, the picked From address and the identity of
+//     a draft in identity mode (DI2.3). The picked address can be a
+//     catch-all address from the original, so a sender chose it.
 //
-// arch: D5.1, D10.3
+// arch: D5.1, D10.3, DU5.1, DU5.5, DU3.5
 type DraftOut struct {
-	Account string `json:"account"`
-	DraftID string `json:"draft_id"`
-	// Note is text this server wrote. It tells how many items the
+	Head
+	Account string `json:"account" strict:"alias"`
+	DraftID string `json:"draft_id" strict:"id"`
+	// Note is text this server wrote, one or more registry texts
+	// joined with "; " (DU12.1 item 3). It tells how many items the
 	// HTML allowlist removed (D5.5), and it tells an account below the
-	// send level how to permit sending. It can also hold the identity
-	// sentence (DI2.3) and the fixed Reply-To sentence (DH5.1). No part
-	// of it is sender text.
-	Note string `json:"note,omitempty"`
+	// send level how to permit sending. It can also give the number of
+	// the pick rule (DI2.2, DI2.3) and the fixed Reply-To sentence
+	// (DH5.1). It holds no address.
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the picked address in a fence of the nonce of
+	// the response.
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
 // AddDraft adds the "draft" tool to srv. The tool builds one message
@@ -90,8 +101,15 @@ type draftTool struct {
 // not clean for any other reason, so a draft of this tool can always
 // go to the confirmation.
 //
-// arch: D5.1, D5.5, D5.2, D10.3, §3.14, §3.17, DI2.3, DH5.1
+// The result names the draft by the id that [normalizeID] writes for
+// the provider kind (DU3.2). A saved draft whose id does not pass
+// gives errDraftIDForm, because the send tool could not take it. The
+// note names the pick rule by its number only; the picked address
+// goes to untrusted.detail (DU3.5, DU5.5).
+//
+// arch: D5.1, D5.5, D5.2, D10.3, §3.14, §3.17, DI2.3, DH5.1, DU5.1, DU5.5, DU3.5, DU6.2
 func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
+	f := fencer(ctx)
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return DraftOut{}, err
@@ -100,7 +118,7 @@ func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 		return DraftOut{}, err
 	}
 	if in.ReplyToID != "" && in.ForwardID != "" {
-		return DraftOut{}, errors.New("reply_to_id and forward_id cannot both be set; one draft is one message")
+		return DraftOut{}, errReplyAndForward
 	}
 	var removed int
 	in.HTML, removed = mime.AllowHTML(in.HTML)
@@ -109,7 +127,7 @@ func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 		// nothing, or save a draft that nobody can send. The check
 		// reads the html field after the cut, so html that the cut
 		// empties is no content (R16-L4).
-		return DraftOut{}, errors.New("the draft has no content; give recipients, a subject, a body, attachments, reply_to_id or forward_id")
+		return DraftOut{}, errDraftEmpty
 	}
 	if _, nested := mime.HTMLToTextCount(in.HTML); nested > 0 {
 		// AllowHTML keeps an allowlist element at any nest depth, but
@@ -119,34 +137,34 @@ func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 		return DraftOut{}, errHTMLNested
 	}
 
-	m, composeNote, cleanup, err := t.compose(ctx, p, acct, in)
+	m, cn, cleanup, err := t.compose(ctx, p, acct, in)
 	defer cleanup()
 	if err != nil {
 		return DraftOut{}, err
 	}
-	id, err := p.SaveDraft(ctx, m, in.DraftID)
+	raw, err := p.SaveDraft(ctx, m, in.DraftID)
 	if err != nil {
 		return DraftOut{}, err
 	}
-	out := DraftOut{Account: in.Account, DraftID: id}
+	id, ok := normalizeID(acct.Provider, raw)
+	if !ok {
+		return DraftOut{}, errDraftIDForm
+	}
+	out := DraftOut{Account: acct.Alias, DraftID: id}
 	if removed > 0 {
 		out.Note = fmt.Sprintf(htmlCutNote, removed)
 	}
 	if guard.Require(acct, guard.LevelSend) != nil {
-		if out.Note != "" {
-			out.Note += " "
-		}
-		out.Note += draftInsteadNote(in.Account, acct, id)
+		out.Note = joinNote(out.Note, draftInsteadNote(acct.Alias, acct, id))
 	}
-	if composeNote != "" {
-		// compose gives the identity sentence in identity mode only
-		// (DI2.0, DI2.3): it names the From address, the identity and
-		// the pick rule. In either mode, compose can also give the
-		// fixed Reply-To sentence of a reply (DH5.1).
-		if out.Note != "" {
-			out.Note += " "
-		}
-		out.Note += composeNote
+	if cn.note != "" {
+		// compose gives the rule number of the identity pick in
+		// identity mode only (DI2.0, DI2.3). In either mode, compose
+		// can also give the fixed Reply-To sentence of a reply (DH5.1).
+		out.Note = joinNote(out.Note, cn.note)
+	}
+	if cn.detail != "" {
+		out.Untrusted = &Detail{Detail: f.Wrap(cn.detail)}
 	}
 	return out, nil
 }
@@ -161,7 +179,27 @@ const htmlCutNote = "%d items removed from html. Only p, br, b, strong, i, em, u
 // show all of the text in full (D5.2, I8). AllowHTML keeps such text
 // at any depth, but the summary's text view stops after a fixed
 // depth, so nothing is saved.
-var errHTMLNested = errors.New("the html field nests elements too deep for the send confirmation to show in full; use less nesting")
+//
+// arch: D5.5, DU6.2
+var errHTMLNested = public("invalid_input", "the html field nests elements too deep for the send confirmation to show in full; use less nesting")
+
+// errReplyAndForward refuses a call that sets both reply_to_id and
+// forward_id.
+//
+// arch: D5.1, DU6.2
+var errReplyAndForward = public("invalid_input", "reply_to_id and forward_id cannot both be set; one draft is one message")
+
+// errDraftEmpty refuses a call with no message content (R16-L4).
+//
+// arch: D5.1, DU6.2
+var errDraftEmpty = public("invalid_input", "the draft has no content; give recipients, a subject, a body, attachments, reply_to_id or forward_id")
+
+// errDraftIDForm is the error of a saved draft whose id does not pass
+// [normalizeID] for the provider kind (DU3.2). The id is not written,
+// and the send tool could not take it, so the call gives no result.
+//
+// arch: DU3.2, DU5.5, DU6.2, INV-10
+var errDraftIDForm = public("error", "the draft was saved, but the mail server gave it an id in a form that this server does not accept; the send tool cannot use it")
 
 // hasContent reports whether the call carries message text of its
 // own. A call with none has nothing to save.

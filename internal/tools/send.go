@@ -1326,9 +1326,10 @@ func fenceSend(f guard.Fencer, out SendOut) SendOut {
 // it before it looks at the error.
 //
 // In identity mode (DI2.0), the From value comes from [pickIdentity]
-// and compose gives the identity sentence of the draft Note (DI2.3).
+// and compose gives the pick rule number in the note and the picked
+// address in the detail of the draft result (DI2.3, DU3.5, DU5.5).
 // Outside identity mode, [identityFrom] checks the from value as it
-// did before DI2, and the identity sentence is absent (I2).
+// did before DI2, and both are absent (I2).
 //
 // A reply with no to list of the caller goes to the Reply-To address
 // of the original. When that address differs from the From address,
@@ -1348,8 +1349,8 @@ func fenceSend(f guard.Fencer, out SendOut) SendOut {
 // lays out the parts. Outside identity mode the body is built as
 // before DI3 (I2).
 //
-// arch: T5.2, §3.14, §3.15, M7, M13, M14, M10, M11, DI2.0, DI2.1, DI2.3, DI6.1, DI3.1, DI3.2, DI3.3, DI3.4, DI3.5, DH5.1
-func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, in DraftIn) (*mail.Outgoing, string, func(), error) {
+// arch: T5.2, §3.14, §3.15, M7, M13, M14, M10, M11, DI2.0, DI2.1, DI2.3, DI6.1, DI3.1, DI3.2, DI3.3, DI3.4, DI3.5, DH5.1, DU3.5, DU5.5
+func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, in DraftIn) (*mail.Outgoing, draftNote, func(), error) {
 	nothing := func() {}
 	mode := acct.IdentityMode()
 
@@ -1358,21 +1359,21 @@ func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, 
 		var err error
 		from, err = identityFrom(in.From, acct)
 		if err != nil {
-			return nil, "", nothing, err
+			return nil, draftNote{}, nothing, err
 		}
 	}
 	if err := guard.ValidateAddresses(in.To); err != nil {
-		return nil, "", nothing, fmt.Errorf("to: %w", err)
+		return nil, draftNote{}, nothing, fmt.Errorf("to: %w", err)
 	}
 	if err := guard.ValidateAddresses(in.Cc); err != nil {
-		return nil, "", nothing, fmt.Errorf("cc: %w", err)
+		return nil, draftNote{}, nothing, fmt.Errorf("cc: %w", err)
 	}
 	if err := guard.ValidateAddresses(in.Bcc); err != nil {
-		return nil, "", nothing, fmt.Errorf("bcc: %w", err)
+		return nil, draftNote{}, nothing, fmt.Errorf("bcc: %w", err)
 	}
 	subject, err := guard.ValidateField(in.Subject)
 	if err != nil {
-		return nil, "", nothing, fmt.Errorf("subject: %w", err)
+		return nil, draftNote{}, nothing, fmt.Errorf("subject: %w", err)
 	}
 
 	// M14: a model can copy a fence marker out of a result it read.
@@ -1395,27 +1396,27 @@ func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, 
 
 	used, err := t.callerAttachments(m, in.Attachments)
 	if err != nil {
-		return nil, "", nothing, err
+		return nil, draftNote{}, nothing, err
 	}
 
 	orig, err := readOriginal(ctx, p, in, mode)
 	if err != nil {
-		return nil, "", nothing, err
+		return nil, draftNote{}, nothing, err
 	}
 	drop := selfAddresses(acct)
-	note := ""
+	var note draftNote
 	var pk picked
 	var own ownBody
 	if mode {
 		pk, err = pickIdentity(acct, in, orig)
 		if err != nil {
-			return nil, "", nothing, err
+			return nil, draftNote{}, nothing, err
 		}
 		m.From = pk.From
 		drop = replyDrop(acct, pk)
 		own, err = prepareOwn(m, pk.Identity, in)
 		if err != nil {
-			return nil, "", nothing, err
+			return nil, draftNote{}, nothing, err
 		}
 		note = pickNote(pk, own.add)
 		// addReply and addForward join their block to m.Text. With
@@ -1427,23 +1428,20 @@ func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, 
 	switch {
 	case in.ReplyToID != "":
 		if err := t.addReply(m, in, orig, drop); err != nil {
-			return nil, "", nothing, err
+			return nil, draftNote{}, nothing, err
 		}
 		if len(in.To) == 0 && replyToDiffers(orig) {
-			if note != "" {
-				note += " "
-			}
-			note += replyToNote
+			note.note = joinNote(note.note, replyToNote)
 		}
 	case in.ForwardID != "":
 		cleanup, err = t.addForward(ctx, p, m, used, orig)
 		if err != nil {
-			return nil, "", cleanup, err
+			return nil, draftNote{}, cleanup, err
 		}
 	}
 	if mode {
 		if err := placeSignature(m, pk.Identity, in, own, m.Text); err != nil {
-			return nil, "", cleanup, err
+			return nil, draftNote{}, cleanup, err
 		}
 	}
 	return m, note, cleanup, nil
@@ -1544,12 +1542,19 @@ func (t *draftTool) callerAttachments(m *mail.Outgoing, paths []string) (int64, 
 		}
 		used += size
 		if used > guard.MaxAttachBytes {
-			return 0, errors.New("the attachments together exceed the 25 MB limit of one message")
+			return 0, errAttachLimit
 		}
 		m.Attachments = append(m.Attachments, resolved)
 	}
 	return used, nil
 }
+
+// errAttachLimit refuses a draft whose attachments together pass the
+// 25 MB limit of one message (M11): the caller's files, the files of a
+// forward, or both.
+//
+// arch: M11, DU6.2
+var errAttachLimit = public("limit", "the attachments together exceed the 25 MB limit of one message")
 
 // addReply fills in the reply fields of m from the message the caller
 // answers (§3.14).
@@ -1658,7 +1663,7 @@ func copyAttachment(ctx context.Context, p Writer, dir string, i int, id string,
 		name = "attachment-" + strconv.Itoa(i+1)
 	}
 	if left <= 0 {
-		return "", 0, errors.New("the attachments together exceed the 25 MB limit of one message")
+		return "", 0, errAttachLimit
 	}
 
 	sub := filepath.Join(dir, strconv.Itoa(i))
@@ -1684,7 +1689,7 @@ func copyAttachment(ctx context.Context, p Writer, dir string, i int, id string,
 		return "", 0, fmt.Errorf("forward attachments: %w", err)
 	}
 	if size > left {
-		return "", 0, errors.New("the attachments together exceed the 25 MB limit of one message")
+		return "", 0, errAttachLimit
 	}
 	return path, size, nil
 }

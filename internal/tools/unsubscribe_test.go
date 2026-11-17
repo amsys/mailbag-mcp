@@ -85,7 +85,7 @@ func unsubFixture(t *testing.T, msgs map[string]*mail.Message) (*unsubscribeTool
 	_, wp := sendFixture(t, nil)
 	prov := &unsubProvider{writeProvider: wp, msgs: msgs}
 	m := &unsubMail{
-		writeMail: &writeMail{alias: "work", prov: wp, acct: config.Account{Email: "me@example.test", Access: "draft"}},
+		writeMail: &writeMail{alias: "work", prov: wp, acct: config.Account{Email: "me@example.test", Access: "draft", Provider: "imap"}},
 		prov:      prov,
 		cfg:       verify.Config{AuthservID: unsubAuthserv},
 	}

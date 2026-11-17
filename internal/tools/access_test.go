@@ -331,7 +331,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: always,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &foldersTool{mail: fx.mail}
-			_, err := h.handle(ctx, FoldersIn{Account: "work"})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), FoldersIn{Account: "work"})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.folders == 1 },
@@ -341,7 +341,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: draftAndUp,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &foldersTool{mail: fx.mail}
-			_, err := h.handle(ctx, FoldersIn{Account: "work", Action: folderActionCreate, Name: "Sorted"})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), FoldersIn{Account: "work", Action: folderActionCreate, Name: "Sorted"})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.creates == 1 },
@@ -350,7 +350,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: always,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &searchTool{mail: fx.mail}
-			_, err := h.handle(ctx, SearchIn{Account: "work"})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), SearchIn{Account: "work"})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.searchs == 1 },
@@ -359,7 +359,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: always,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &readTool{mail: fx.mail}
-			_, err := h.handle(ctx, ReadIn{Account: "work", ID: "1.10.INBOX"})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), ReadIn{Account: "work", ID: "1.10.INBOX"})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.reads == 1 },
@@ -368,7 +368,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: always,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &attachmentTool{mail: fx.mail}
-			_, err := h.handle(ctx, AttachmentIn{Account: "work", ID: "1.10.INBOX", Ref: "2", SaveDir: fx.saveDir})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), AttachmentIn{Account: "work", ID: "1.10.INBOX", Ref: "2", SaveDir: fx.saveDir})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.atts == 1 },
@@ -377,7 +377,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: always,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &exportTool{mail: fx.mail}
-			_, err := h.handle(ctx, ExportIn{Account: "work", ID: "1.10.INBOX", SaveDir: fx.saveDir})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), ExportIn{Account: "work", ID: "1.10.INBOX", SaveDir: fx.saveDir})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.raws == 1 },
@@ -387,7 +387,7 @@ func TestAccess_Matrix(t *testing.T) {
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
 			read := true
-			out, err := h.handle(ctx, ModifyIn{Account: "work", IDs: []string{"1.10.INBOX"}, Read: &read})
+			out, err := h.handle(withFencer(ctx, testFencer(t)), ModifyIn{Account: "work", IDs: []string{"1.10.INBOX"}, Read: &read})
 			return out.Note, err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.mods == 1 },
@@ -396,7 +396,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: draftAndUp,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &draftTool{mail: fx.mail}
-			out, err := h.handle(ctx, accessDraftIn())
+			out, err := h.handle(withFencer(ctx, testFencer(t)), accessDraftIn())
 			return out.Note, err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.drafts == 1 && fx.prov.sent == 0 },
@@ -410,7 +410,7 @@ func TestAccess_Matrix(t *testing.T) {
 		},
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &sendTool{mail: fx.mail}
-			out, err := h.handle(ctx, SendIn{Account: "work", DraftID: "1700000000.9.Drafts"})
+			out, err := h.handle(withFencer(ctx, testFencer(t)), SendIn{Account: "work", DraftID: "1700000000.9.Drafts"})
 			return out.Note, err
 		},
 		ran: func(fx *accessFixture) bool { return fx.prov.sent == 1 },
@@ -426,7 +426,7 @@ func TestAccess_Matrix(t *testing.T) {
 				return 200, nil
 			}
 			h.dkim = func(*mail.Message, verify.Config) bool { return true }
-			_, err := h.handle(ctx, UnsubscribeIn{Account: "work", IDs: []string{"1.10.INBOX"}})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"1.10.INBOX"}})
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.posts == 1 },
@@ -445,7 +445,7 @@ func TestAccess_Matrix(t *testing.T) {
 		want: draftAndUp,
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &templatesTool{mail: fx.mail}
-			out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: "note", Subject: "hello", Body: "text"})
+			out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "note", Subject: "hello", Body: "text"})
 			return out.Note, err
 		},
 		ran: func(fx *accessFixture) bool {
@@ -554,7 +554,7 @@ func TestAccess_DraftFallbackSavesTheMessage(t *testing.T) {
 	fx := newAccessFixture(t, guard.LevelDraft)
 	ctx := context.Background()
 
-	out, err := (&draftTool{mail: fx.mail}).handle(ctx, accessDraftIn())
+	out, err := (&draftTool{mail: fx.mail}).handle(withFencer(ctx, testFencer(t)), accessDraftIn())
 	if err != nil {
 		t.Fatalf("draft: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestAccess_DraftFallbackSavesTheMessage(t *testing.T) {
 		}
 	}
 
-	_, err = (&sendTool{mail: fx.mail}).handle(ctx, SendIn{Account: "work", DraftID: out.DraftID})
+	_, err = (&sendTool{mail: fx.mail}).handle(withFencer(ctx, testFencer(t)), SendIn{Account: "work", DraftID: out.DraftID})
 	if !errors.Is(err, guard.ErrAccessDenied) {
 		t.Fatalf("send on a draft account gave %v, want ErrAccessDenied (D5.1)", err)
 	}
@@ -659,7 +659,7 @@ func TestModify_ClassifyLevel(t *testing.T) {
 				in := c.in
 				in.Account = "work"
 				h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
-				_, err := h.handle(context.Background(), in)
+				_, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 				p := fx.prov
 				calls := p.folders + p.searchs + p.reads + p.raws + p.atts + p.sent + p.drafts + p.mods + p.settings + p.creates
 
@@ -714,7 +714,7 @@ func TestModify_ClassifySetsNoNewLabels(t *testing.T) {
 			fx.mail.acct.Provider = "gmail"
 			h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
 			in := ModifyIn{Account: "work", IDs: []string{"1.10.INBOX"}, AddLabels: []string{"AnyNewName"}}
-			if _, err := h.handle(context.Background(), in); err != nil {
+			if _, err := h.handle(withFencer(context.Background(), testFencer(t)), in); err != nil {
 				t.Fatalf("access=%s: %v", c.level, err)
 			}
 			if fx.prov.mods != 1 {

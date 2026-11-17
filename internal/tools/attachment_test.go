@@ -51,7 +51,7 @@ func TestAttachment_ProviderErrorFenced(t *testing.T) {
 	}
 	h := &attachmentTool{mail: m}
 
-	_, err := h.handle(context.Background(), AttachmentIn{
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), AttachmentIn{
 		Account: "work", ID: "1700000000.4211.INBOX", Ref: "9.9", SaveDir: t.TempDir(),
 	})
 	if err == nil {
@@ -77,7 +77,7 @@ func TestAttachment_BadNameFallsBack(t *testing.T) {
 		dir := t.TempDir()
 		prov := &readProvider{att: []byte("bytes"), info: mail.AttachmentInfo{Filename: name}}
 		h := &attachmentTool{mail: &readMail{alias: "work", prov: prov}}
-		out, err := h.handle(context.Background(), AttachmentIn{
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), AttachmentIn{
 			Account: "work", ID: "1700000000.4211.INBOX", Ref: "2", SaveDir: dir,
 		})
 		if err != nil {
@@ -122,12 +122,12 @@ func TestExport_DownloadDirsAccepted(t *testing.T) {
 
 	// With no download_dirs the target is outside every root. This
 	// half proves the second half cannot pass by accident.
-	if _, err := h.handle(context.Background(), in); err == nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), in); err == nil {
 		t.Fatalf("save dir %q was accepted although no root holds it", target)
 	}
 
 	fm.dirs = []string{target}
-	out, err := h.handle(context.Background(), in)
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if err != nil {
 		t.Fatalf("download_dirs holds %q and export still failed: %v", target, err)
 	}

@@ -252,7 +252,7 @@ func hostileMessage() *mail.Message {
 func TestRead_DateIsInternalDate(t *testing.T) {
 	h := &readTool{mail: &readMail{alias: "work", prov: &readProvider{msg: hostileMessage()}}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: "1700000000.4211.INBOX"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: "1700000000.4211.INBOX"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestRead_HiddenRemovedCount(t *testing.T) {
 	}
 	h := &readTool{mail: &readMail{alias: "work", prov: &readProvider{msg: m}}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestRead_HiddenRemovedCount(t *testing.T) {
 	// A plain body: no run was removed and the parts agree, so the
 	// two keys stay off the wire.
 	m.HiddenRemoved, m.PartsDiffer = 0, false
-	out, err = h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRead_TruncatesAndContinues(t *testing.T) {
 	prov := &readProvider{msg: m}
 	h := &readTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MaxChars: 30})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MaxChars: 30})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestRead_TruncatesAndContinues(t *testing.T) {
 		t.Errorf("the provider was asked for %d characters; ask for one more than the limit, so truncated needs no second fetch", prov.lastOpts.MaxChars)
 	}
 
-	out, err = h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MaxChars: 30, Offset: row.NextOffset})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MaxChars: 30, Offset: row.NextOffset})
 	if err != nil {
 		t.Fatalf("handle at offset: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestRead_ThreadKeepsTheBodyOfTheNamedMessage(t *testing.T) {
 	prov := &readProvider{msg: m, thread: []*mail.Message{older, &headerOnly}}
 	h := &readTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestRead_ThreadKeepsTheBodyOfTheNamedMessage(t *testing.T) {
 
 	// A conversation that fails is a note, not a failed call.
 	prov.threadErr = errors.New("thread search timed out")
-	out, err = h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("a failed thread search must not fail the read: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestRead_ThreadRowsShowPreview(t *testing.T) {
 	prov := &readProvider{msg: m, thread: []*mail.Message{older, m}}
 	h := &readTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestRead_ThreadCutNote(t *testing.T) {
 
 	const cutPhrase = "may be longer than"
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestRead_ThreadCutNote(t *testing.T) {
 	// verify.MaxInput on purpose for other tests), so this checks for
 	// the absence of the cut phrase, not an empty Note.
 	prov.thread = full[:2]
-	out, err = h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestRead_ThreadSkippedNote(t *testing.T) {
 	prov := &readProvider{msg: m, thread: []*mail.Message{m}, threadSkipped: 2}
 	h := &readTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestRead_ThreadPreviewsMissingNote(t *testing.T) {
 	prov := &readProvider{msg: m, thread: []*mail.Message{m}, threadPreviewsMissing: 3}
 	h := &readTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, Thread: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, Thread: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 	}
 	h := &attachmentTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), AttachmentIn{
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), AttachmentIn{
 		Account: "work", ID: "1700000000.4211.INBOX", Ref: "2.1", SaveDir: dir,
 	})
 	if err != nil {
@@ -597,7 +597,7 @@ func TestAttachment_SavesInsideRootAndReturnsPathOnly(t *testing.T) {
 	// A save_dir outside every permitted root is refused before any
 	// download (G6).
 	outside := filepath.Join(t.TempDir(), "..", "..", "..", "etc")
-	if _, err := h.handle(context.Background(), AttachmentIn{
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), AttachmentIn{
 		Account: "work", ID: "1700000000.4211.INBOX", Ref: "2.1", SaveDir: outside,
 	}); err == nil {
 		t.Errorf("save_dir %q was accepted; it is outside every permitted root", outside)
@@ -614,12 +614,12 @@ func TestAttachment_SecondSaveNeverOverwrites(t *testing.T) {
 	h := &attachmentTool{mail: &readMail{alias: "work", prov: prov}}
 	in := AttachmentIn{Account: "work", ID: "1700000000.4211.INBOX", Ref: "2.1", SaveDir: dir}
 
-	first, err := h.handle(context.Background(), in)
+	first, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 	prov.att = []byte("second")
-	second, err := h.handle(context.Background(), in)
+	second, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
@@ -670,12 +670,12 @@ func TestAttachment_UsesConfiguredDownloadDirs(t *testing.T) {
 
 	// With no download_dirs the target is outside every root. This
 	// half proves that the second half cannot pass by accident.
-	if _, err := h.handle(context.Background(), in); err == nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), in); err == nil {
 		t.Fatalf("save dir %q was accepted although no root holds it", target)
 	}
 
 	fm.dirs = []string{target}
-	out, err := h.handle(context.Background(), in)
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if err != nil {
 		t.Fatalf("download_dirs holds %q and the save still failed: %v", target, err)
 	}
@@ -706,7 +706,7 @@ func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 	prov := &readProvider{msg: m, thread: []*mail.Message{older, m}, raw: []byte("From: ann\r\n\r\nbody\r\n")}
 	h := &exportTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, SaveDir: dir})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, SaveDir: dir})
 	if err != nil {
 		t.Fatalf("eml export: %v", err)
 	}
@@ -726,7 +726,7 @@ func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 
 	// A markdown export of the conversation writes one file for each
 	// message and keeps the sender text out of the file name.
-	out, err = h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Thread: true, Format: "md", SaveDir: dir})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Thread: true, Format: "md", SaveDir: dir})
 	if err != nil {
 		t.Fatalf("md export: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestExport_WritesFilesAndReturnsPaths(t *testing.T) {
 		t.Errorf("a subject with a line break made a second heading:\n%s", md)
 	}
 
-	if _, err := h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Format: "pdf", SaveDir: dir}); err == nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Format: "pdf", SaveDir: dir}); err == nil {
 		t.Error("format \"pdf\" was accepted; only eml and md exist")
 	}
 }
@@ -769,7 +769,7 @@ func TestExport_ThreadCutNote(t *testing.T) {
 	prov := &readProvider{msg: m, thread: full, raw: []byte("From: ann\r\n\r\nbody\r\n")}
 	h := &exportTool{mail: &readMail{alias: "work", prov: prov}}
 
-	out, err := h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -783,7 +783,7 @@ func TestExport_ThreadCutNote(t *testing.T) {
 
 	// A short thread gets no cut note.
 	prov.thread = full[:2]
-	out, err = h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -800,16 +800,16 @@ func TestReadTools_UnknownAccount(t *testing.T) {
 	fm := &readMail{alias: "work", prov: &readProvider{msg: hostileMessage()}}
 	ctx := context.Background()
 
-	if _, err := (&readTool{mail: fm}).handle(ctx, ReadIn{Account: "nope", ID: "x"}); !errors.Is(err, ErrUnknownAccount) {
+	if _, err := (&readTool{mail: fm}).handle(withFencer(ctx, testFencer(t)), ReadIn{Account: "nope", ID: "x"}); !errors.Is(err, ErrUnknownAccount) {
 		t.Errorf("read: %v; want ErrUnknownAccount", err)
 	}
-	if _, err := (&attachmentTool{mail: fm}).handle(ctx, AttachmentIn{Account: "nope", ID: "x", Ref: "1"}); !errors.Is(err, ErrUnknownAccount) {
+	if _, err := (&attachmentTool{mail: fm}).handle(withFencer(ctx, testFencer(t)), AttachmentIn{Account: "nope", ID: "x", Ref: "1"}); !errors.Is(err, ErrUnknownAccount) {
 		t.Errorf("attachment: %v; want ErrUnknownAccount", err)
 	}
-	if _, err := (&exportTool{mail: fm}).handle(ctx, ExportIn{Account: "nope", ID: "x"}); !errors.Is(err, ErrUnknownAccount) {
+	if _, err := (&exportTool{mail: fm}).handle(withFencer(ctx, testFencer(t)), ExportIn{Account: "nope", ID: "x"}); !errors.Is(err, ErrUnknownAccount) {
 		t.Errorf("export: %v; want ErrUnknownAccount", err)
 	}
-	if _, err := (&readTool{mail: fm}).handle(ctx, ReadIn{Account: "work"}); err == nil {
+	if _, err := (&readTool{mail: fm}).handle(withFencer(ctx, testFencer(t)), ReadIn{Account: "work"}); err == nil {
 		t.Error("read with no id was accepted")
 	}
 }
@@ -837,7 +837,7 @@ func TestRead_MarkReadSetsSeenThroughModify(t *testing.T) {
 	fm := &markReadMail{alias: "work", prov: prov, level: guard.LevelDraft}
 	h := &readTool{mail: fm}
 
-	out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MarkRead: true})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MarkRead: true})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -859,7 +859,7 @@ func TestRead_MarkReadSetsSeenThroughModify(t *testing.T) {
 	m2 := *m
 	m2.Flags = mail.Flags{Seen: true}
 	prov.msg = &m2
-	if _, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
 		t.Fatalf("handle on an already-seen message: %v", err)
 	}
 	if len(prov.modified) != 0 {
@@ -881,7 +881,7 @@ func TestRead_MarkReadNeedsDraftAccess(t *testing.T) {
 	fm := &markReadMail{alias: "work", prov: prov, level: guard.LevelRead}
 	h := &readTool{mail: fm}
 
-	_, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MarkRead: true})
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MarkRead: true})
 	if !errors.Is(err, guard.ErrAccessDenied) {
 		t.Fatalf("err = %v, want ErrAccessDenied; mark_read needs draft access", err)
 	}
@@ -891,7 +891,7 @@ func TestRead_MarkReadNeedsDraftAccess(t *testing.T) {
 
 	// A plain read at access=read is still permitted; only mark_read
 	// climbs to draft.
-	if _, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID}); err != nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID}); err != nil {
 		t.Fatalf("a plain read at access=read was refused: %v", err)
 	}
 }
@@ -1015,7 +1015,7 @@ func TestRead_SignatureFetchesOnlyWhenHinted(t *testing.T) {
 				strings.Repeat("more body text. ", 40)}
 		h, prov := newTool(plain, "From: a\r\n\r\nx\r\n", verify.Config{})
 		for _, off := range []int{0, 100, 200} {
-			out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: plain.ID, Offset: off, MaxChars: 100})
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: plain.ID, Offset: off, MaxChars: 100})
 			if err != nil {
 				t.Fatalf("handle offset %d: %v", off, err)
 			}
@@ -1043,7 +1043,7 @@ func TestRead_SignatureFetchesOnlyWhenHinted(t *testing.T) {
 			t.Fatalf("the zero value of SignedHint is %v, want unknown: the gate would fail open", m.SignedHint)
 		}
 		h, prov := newTool(m, raw, verify.Config{PGPKeysDir: dir, AuthservID: "mx.example.net"})
-		out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1062,7 +1062,7 @@ func TestRead_SignatureFetchesOnlyWhenHinted(t *testing.T) {
 			From:       mail.Address{Name: "Ann", Address: "ann@example.test"}, Body: "plain text",
 			AuthResults: "Authentication-Results: mx.example.net; dkim=pass header.d=example.test\r\n"}
 		h, prov := newTool(m, "From: a\r\n\r\nx\r\n", verify.Config{AuthservID: "mx.example.net"})
-		out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1081,7 +1081,7 @@ func TestRead_SignatureFetchesOnlyWhenHinted(t *testing.T) {
 			pgpSigned(t, e, "Content-Type: text/plain; charset=utf-8\r\n\r\nsigned text\r\n")
 		m, rawb := signedMessage(raw)
 		h, prov := newTool(m, string(rawb), verify.Config{PGPKeysDir: dir})
-		out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1097,7 +1097,7 @@ func TestRead_SignatureFetchesOnlyWhenHinted(t *testing.T) {
 		big, _ := signedMessage("")
 		big.Size = verify.MaxInput + 1
 		h, prov := newTool(big, "From: a\r\n\r\nx\r\n", verify.Config{})
-		out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: big.ID})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: big.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1129,7 +1129,7 @@ func TestRead_SignatureNotGatedByProviderView(t *testing.T) {
 		From: mail.Address{Name: "Ann", Address: "ann@example.test"}, Body: "signed text"}
 	fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: []byte(nameless)}},
 		cfg: verify.Config{PGPKeysDir: dir}}
-	out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -1157,7 +1157,7 @@ func TestRead_SignatureNotGatedByProviderView(t *testing.T) {
 		cfg: verify.Config{PGPKeysDir: dir}}
 	var got []string
 	for _, off := range []int{0, 200} {
-		out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: im.ID, Offset: off})
+		out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: im.ID, Offset: off})
 		if err != nil {
 			t.Fatalf("handle offset %d: %v", off, err)
 		}
@@ -1232,7 +1232,7 @@ func TestRead_SignatureLimitsGiveUnsupported(t *testing.T) {
 			m, raw := signedMessage(c.raw)
 			fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: raw}},
 				cfg: verify.Config{PGPKeysDir: dir}}
-			out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+			out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 			if err != nil {
 				t.Fatalf("handle: %v", err)
 			}
@@ -1321,7 +1321,7 @@ func TestRead_VerifyStopsAtDeadline(t *testing.T) {
 	verifyCheckDone = func() { baseDone <- struct{}{} }
 	fm, id := newFm()
 	start := time.Now()
-	if _, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: id}); err != nil {
+	if _, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: id}); err != nil {
 		t.Fatalf("handle (baseline): %v", err)
 	}
 	select {
@@ -1357,7 +1357,7 @@ func TestRead_VerifyStopsAtDeadline(t *testing.T) {
 	verifyCheckDone = func() { deadlineDone <- struct{}{} }
 	fm, id = newFm()
 	start = time.Now()
-	if _, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: id}); err != nil {
+	if _, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: id}); err != nil {
 		t.Fatalf("handle (deadline): %v", err)
 	}
 	// The cushion scales with the uncancelled walk so it stays under half of full on plain and -race runs.
@@ -1393,7 +1393,7 @@ func TestRead_UnsignedPartsShowSignedEntityOnly(t *testing.T) {
 	fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: rawb}},
 		cfg: verify.Config{PGPKeysDir: dir}}
 
-	out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -1435,7 +1435,7 @@ func TestRead_InlineBodyIsCheckedBlockOnly(t *testing.T) {
 	fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: []byte(raw)}},
 		cfg: verify.Config{PGPKeysDir: dir}}
 
-	out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -1467,7 +1467,7 @@ func TestRead_NotCheckedNoteWhenNoRaw(t *testing.T) {
 		prov := &readProvider{msg: m, raw: rawb, rawErr: errors.New("imap: short read")}
 		fm := &sigMail{readMail: &readMail{alias: "work", prov: prov}, cfg: verify.Config{}}
 
-		out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1485,7 +1485,7 @@ func TestRead_NotCheckedNoteWhenNoRaw(t *testing.T) {
 		prov := &rawCounter{readProvider: &readProvider{msg: big, raw: rawb}}
 		h := &readTool{mail: &rawMail{readMail: &readMail{alias: "work"}, prov: prov, cfg: verify.Config{}}}
 
-		out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: big.ID})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: big.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1544,7 +1544,7 @@ func TestRead_CheckNotFinishedNote(t *testing.T) {
 			prov := &rawCounter{readProvider: &readProvider{msg: m, raw: rawb}}
 			h := &readTool{mail: &rawMail{readMail: &readMail{alias: "work"}, prov: prov}}
 
-			out, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 			if err != nil {
 				t.Fatalf("handle: %v", err)
 			}
@@ -1581,7 +1581,7 @@ func TestRead_BodyTextAloneMakesNoBlock(t *testing.T) {
 		fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: []byte(raw)}},
 			cfg: verify.Config{}}
 
-		out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1603,7 +1603,7 @@ func TestRead_BodyTextAloneMakesNoBlock(t *testing.T) {
 		fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: []byte(raw)}},
 			cfg: verify.Config{}}
 
-		out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+		out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 		if err != nil {
 			t.Fatalf("handle: %v", err)
 		}
@@ -1654,7 +1654,7 @@ func signedRead(t *testing.T, dir, raw, providerBody string) ReadMessage {
 	m.Body = providerBody
 	fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: rawb}},
 		cfg: verify.Config{PGPKeysDir: dir}}
-	out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -1747,7 +1747,7 @@ func TestRead_MarkReadJournaled(t *testing.T) {
 	j := undo.New(t.TempDir())
 	h := &readTool{mail: fm, journal: func() (*undo.Journal, error) { return j, nil }}
 
-	if _, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	recs, err := j.List("work", 0)
@@ -1770,7 +1770,7 @@ func TestRead_MarkReadJournaled(t *testing.T) {
 	m2 := *m
 	m2.Flags = mail.Flags{Seen: true}
 	prov.msg = &m2
-	if _, err := h.handle(context.Background(), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID, MarkRead: true}); err != nil {
 		t.Fatalf("handle on a seen message: %v", err)
 	}
 	if recs, _ := j.List("work", 0); len(recs) != 1 {
@@ -1911,7 +1911,7 @@ func opaqueRead(t *testing.T, content string) ReadOut {
 	t.Helper()
 	m, raw := opaqueSigned(t, content)
 	fm := &sigMail{readMail: &readMail{alias: "work", prov: &readProvider{msg: m, raw: raw}}}
-	out, err := (&readTool{mail: fm}).handle(context.Background(), ReadIn{Account: "work", ID: m.ID})
+	out, err := (&readTool{mail: fm}).handle(withFencer(context.Background(), testFencer(t)), ReadIn{Account: "work", ID: m.ID})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

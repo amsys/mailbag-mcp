@@ -76,7 +76,7 @@ func saveDraft(t *testing.T, extra string, orig *mail.Message, in DraftIn) (*mai
 	t.Helper()
 	h, rec := identityDraft(t, sigTOML(extra), orig)
 	in.Account = "work"
-	out, err := h.handle(context.Background(), in)
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if err != nil {
 		t.Fatalf("draft: %v", err)
 	}
@@ -92,7 +92,7 @@ func refuseDraft(t *testing.T, extra string, orig *mail.Message, in DraftIn) {
 	t.Helper()
 	h, rec := identityDraft(t, sigTOML(extra), orig)
 	in.Account = "work"
-	_, err := h.handle(context.Background(), in)
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 	if !errors.Is(err, errSignatureInBody) {
 		t.Fatalf("err = %v, want errSignatureInBody", err)
 	}
@@ -221,7 +221,7 @@ func TestSignature_NotIdentityMode(t *testing.T) {
 		{Account: "work", ReplyToID: "1", Body: body},
 		{Account: "work", ForwardID: "1", Body: body},
 	} {
-		if _, err := h.handle(context.Background(), in); err != nil {
+		if _, err := h.handle(withFencer(context.Background(), testFencer(t)), in); err != nil {
 			t.Fatalf("draft: %v", err)
 		}
 	}
@@ -483,13 +483,13 @@ func TestDraft_SignatureNearCopyForwardAndTemplates(t *testing.T) {
 	rec := &readRecorder{writeProvider: &writeProvider{msg: &mail.Message{}, draftID: "d1"}}
 	h := &templatesTool{mail: &identityMail{prov: rec, acct: loadAccount(t, sigTOML(""))}}
 	ctx := context.Background()
-	if _, err := h.handle(ctx, TemplatesIn{
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "save", Name: "near",
 		Subject: "quote", Body: "Dear Ann,\n\n" + ownerSigLost,
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	_, err := h.handle(ctx, TemplatesIn{
+	_, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "draft", Name: "near", To: []string{"ann@other.test"},
 	})
 	if !errors.Is(err, errSignatureInBody) {

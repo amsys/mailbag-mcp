@@ -109,7 +109,7 @@ func TestSearch_DeadlineReturnsPartial(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	out, err := h.handle(ctx, SearchIn{})
+	out, err := h.handle(withFencer(ctx, testFencer(t)), SearchIn{})
 	if err != nil {
 		t.Fatalf("handle: %v (one slow mailbox must not fail the call)", err)
 	}
@@ -143,7 +143,7 @@ func TestSearch_OneFailingAccountKeepsTheRest(t *testing.T) {
 	}}
 	h := &searchTool{mail: fm}
 
-	out, err := h.handle(context.Background(), SearchIn{Query: "a OR b"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Query: "a OR b"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSearch_RowIsFenced(t *testing.T) {
 	}}
 	h := &searchTool{mail: fm}
 
-	out, err := h.handle(context.Background(), SearchIn{Account: "work"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Account: "work"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -202,13 +202,13 @@ func TestSearch_RowIsFenced(t *testing.T) {
 func TestSearch_BadSinceFailsTheCall(t *testing.T) {
 	h := &searchTool{mail: &fakeMail{provs: map[string]*fakeProvider{"work": {}}}}
 
-	if _, err := h.handle(context.Background(), SearchIn{Account: "work", Since: "yesterday"}); err == nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Account: "work", Since: "yesterday"}); err == nil {
 		t.Fatal("since \"yesterday\" was accepted; want a clear error")
 	} else if !strings.Contains(err.Error(), "RFC 3339") {
 		t.Errorf("error does not say what a since value looks like: %v", err)
 	}
 
-	if _, err := h.handle(context.Background(), SearchIn{Cursor: "abc"}); err == nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Cursor: "abc"}); err == nil {
 		t.Fatal("a cursor with no account was accepted; a cursor belongs to one provider (§3.9)")
 	}
 }
@@ -231,7 +231,7 @@ func TestSearch_NoteReachesOut(t *testing.T) {
 	}}
 	h := &searchTool{mail: fm}
 
-	out, err := h.handle(context.Background(), SearchIn{Account: "work"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Account: "work"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestFolders_RoleOverride(t *testing.T) {
 	}
 	h := &foldersTool{mail: fm}
 
-	out, err := h.handle(context.Background(), FoldersIn{Account: "work"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), FoldersIn{Account: "work"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -308,14 +308,14 @@ imap = "mail.example.test:993"
 	defer cancel()
 
 	for _, alias := range []string{"nope", "../etc", ""} {
-		if _, err := (&foldersTool{mail: f}).handle(ctx, FoldersIn{Account: alias}); err == nil {
+		if _, err := (&foldersTool{mail: f}).handle(withFencer(ctx, testFencer(t)), FoldersIn{Account: alias}); err == nil {
 			t.Errorf("folders account=%q was accepted", alias)
 		} else if !errors.Is(err, ErrUnknownAccount) {
 			t.Errorf("folders account=%q: %v; want ErrUnknownAccount", alias, err)
 		}
 	}
 
-	if _, err := (&searchTool{mail: f}).handle(ctx, SearchIn{Account: "nope"}); err == nil {
+	if _, err := (&searchTool{mail: f}).handle(withFencer(ctx, testFencer(t)), SearchIn{Account: "nope"}); err == nil {
 		t.Error("search account=\"nope\" was accepted")
 	} else if !errors.Is(err, ErrUnknownAccount) {
 		t.Errorf("search account=\"nope\": %v; want ErrUnknownAccount", err)
@@ -423,7 +423,7 @@ func TestSearch_PreviewDefangedAfterSanitize(t *testing.T) {
 	}}
 	h := &searchTool{mail: fm}
 
-	out, err := h.handle(context.Background(), SearchIn{Account: "work"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Account: "work"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestSearch_DefangsSubjectAndName(t *testing.T) {
 	}}
 	h := &searchTool{mail: fm}
 
-	out, err := h.handle(context.Background(), SearchIn{Account: "work"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), SearchIn{Account: "work"})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

@@ -47,7 +47,7 @@ func limitFixture(t *testing.T) (*sendTool, *writeProvider, *limitClock) {
 // the send tool sends only a saved draft.
 func sendOnce(t *testing.T, h *sendTool, account string) error {
 	t.Helper()
-	_, err := h.handle(context.Background(), SendIn{
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), SendIn{
 		Account: account,
 		DraftID: "1700000000.99.Drafts",
 	})
@@ -104,7 +104,7 @@ func TestSend_RateLimit(t *testing.T) {
 		h, prov, _ := limitFixture(t)
 		d := &draftTool{mail: h.mail}
 		for i := 0; i < sendsPerWindow*2; i++ {
-			_, err := d.handle(context.Background(), DraftIn{
+			_, err := d.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 				Account: "work",
 				To:      []string{"ann@example.test"},
 				Subject: "hello",
@@ -125,7 +125,7 @@ func TestSend_RateLimit(t *testing.T) {
 	t.Run("a refused message spends nothing", func(t *testing.T) {
 		h, _, _ := limitFixture(t)
 		for i := 0; i < sendsPerWindow*2; i++ {
-			_, err := h.handle(context.Background(), SendIn{
+			_, err := h.handle(withFencer(context.Background(), testFencer(t)), SendIn{
 				Account: "work",
 				DraftID: " ",
 			})
@@ -153,14 +153,14 @@ func TestSend_RateLimit(t *testing.T) {
 	t.Run("a send draft counts", func(t *testing.T) {
 		h, prov, _ := limitFixture(t)
 		for i := 0; i < sendsPerWindow; i++ {
-			if _, err := h.handle(context.Background(), SendIn{
+			if _, err := h.handle(withFencer(context.Background(), testFencer(t)), SendIn{
 				Account: "work",
 				DraftID: "1700000000.99.Drafts",
 			}); err != nil {
 				t.Fatalf("send draft %d: %v", i+1, err)
 			}
 		}
-		if _, err := h.handle(context.Background(), SendIn{
+		if _, err := h.handle(withFencer(context.Background(), testFencer(t)), SendIn{
 			Account: "work",
 			DraftID: "1700000000.99.Drafts",
 		}); err == nil {

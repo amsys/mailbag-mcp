@@ -128,7 +128,7 @@ func TestGmailSettings_FiltersMissingParts(t *testing.T) {
 		{ID: "f1"},
 		{ID: "f2", From: "news@example.test", MarkRead: true},
 	}
-	out, err := h.handle(context.Background(), GmailSettingsIn{Account: "work", Action: "list_filters"})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), GmailSettingsIn{Account: "work", Action: "list_filters"})
 	if err != nil {
 		t.Fatalf("list_filters: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestGmailSettings_VacationOnNeedsSend(t *testing.T) {
 	}
 
 	h, w := settingsFixture("draft")
-	_, err := h.handle(ctx, in)
+	_, err := h.handle(withFencer(ctx, testFencer(t)), in)
 	if !errors.Is(err, guard.ErrAccessDenied) {
 		t.Fatalf("vacation on at draft: err = %v, want ErrAccessDenied", err)
 	}
@@ -193,7 +193,7 @@ func TestGmailSettings_VacationOnNeedsSend(t *testing.T) {
 
 	// The days come back as the person wrote them.
 	w.vac = got
-	back, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "get_vacation"})
+	back, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "get_vacation"})
 	if err != nil {
 		t.Fatalf("get_vacation: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestGmailSettings_VacationOnNeedsSend(t *testing.T) {
 
 	// A missing enabled never picks the lower level.
 	h, w = settingsFixture("send")
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation"}); err == nil || len(w.calls) != 0 {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "set_vacation"}); err == nil || len(w.calls) != 0 {
 		t.Errorf("set_vacation with no enabled: err = %v, calls = %v; want an error and no call", err, w.calls)
 	}
 }
@@ -234,7 +234,7 @@ func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 		c.in.Account = "work"
 		if c.below != "" {
 			h, w := settingsFixture(c.below)
-			if _, err := h.handle(ctx, c.in); !errors.Is(err, guard.ErrAccessDenied) || len(w.calls) != 0 {
+			if _, err := h.handle(withFencer(ctx, testFencer(t)), c.in); !errors.Is(err, guard.ErrAccessDenied) || len(w.calls) != 0 {
 				t.Errorf("%s at %s: err = %v, calls = %v; want ErrAccessDenied and no call", c.in.Action, c.below, err, w.calls)
 			}
 		}
@@ -249,13 +249,13 @@ func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 	}
 
 	h, w := settingsFixture("draft")
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err != nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err != nil {
 		t.Fatal(err)
 	}
 	if w.gotVac.Enabled {
 		t.Error("vacation off reached SetVacation as on")
 	}
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "forward_all"}); err == nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "forward_all"}); err == nil {
 		t.Error("an unknown action gave no error")
 	}
 }
@@ -276,7 +276,7 @@ func TestGmailSettings_VacationKeepsFieldsNotGiven(t *testing.T) {
 
 	h, w := settingsFixture("send")
 	w.vac = stored
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err != nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err != nil {
 		t.Fatalf("vacation off: %v", err)
 	}
 	want := stored
@@ -296,7 +296,7 @@ func TestGmailSettings_VacationKeepsFieldsNotGiven(t *testing.T) {
 
 	h, w = settingsFixture("send")
 	w.err = errors.New("gmail: HTTP 500 backendError")
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err == nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(false)}); err == nil {
 		t.Error("a failed read of the current setting gave no error")
 	}
 	if strings.Join(w.calls, ",") != "Vacation" {
@@ -314,7 +314,7 @@ func TestGmailSettings_NotGmailGivesNote(t *testing.T) {
 	m := &settingsMail{acct: config.Account{Alias: "home", Provider: "imap", Access: "draft"}, w: plainWriter{}}
 	h := &gmailSettingsTool{mail: m}
 
-	out, err := h.handle(ctx, GmailSettingsIn{Account: "home", Action: "list_filters"})
+	out, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "home", Action: "list_filters"})
 	if err != nil {
 		t.Fatalf("list_filters on imap: %v", err)
 	}
@@ -323,12 +323,12 @@ func TestGmailSettings_NotGmailGivesNote(t *testing.T) {
 		t.Errorf("out = %+v, want only the note %q", out, want)
 	}
 
-	_, err = h.handle(ctx, GmailSettingsIn{Account: "home", Action: "set_vacation", Enabled: boolPtr(true)})
+	_, err = h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "home", Action: "set_vacation", Enabled: boolPtr(true)})
 	if !errors.Is(err, guard.ErrAccessDenied) {
 		t.Errorf("vacation on at draft on imap: err = %v, want ErrAccessDenied before the note", err)
 	}
 
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "nobody", Action: "list_filters"}); !errors.Is(err, ErrUnknownAccount) {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "nobody", Action: "list_filters"}); !errors.Is(err, ErrUnknownAccount) {
 		t.Errorf("unknown alias: err = %v, want ErrUnknownAccount", err)
 	}
 }
@@ -352,7 +352,7 @@ func TestGmailSettings_ScopeText(t *testing.T) {
 	}
 
 	w.err = errors.New("gmail: HTTP 500 backendError")
-	if _, err := h.handle(context.Background(), GmailSettingsIn{Account: "work", Action: "get_vacation"}); err == nil || errors.Is(err, gmail.ErrScope) {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), GmailSettingsIn{Account: "work", Action: "get_vacation"}); err == nil || errors.Is(err, gmail.ErrScope) {
 		t.Errorf("other error: err = %v, want it unchanged", err)
 	}
 }
@@ -375,11 +375,11 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 	w.vac = gmail.Vacation{Enabled: true, Subject: evil("vs"), Body: evil("vb"), Start: time.Date(2026, 10, 14, 0, 0, 0, 0, time.Local)}
 	w.sig = evil("sig")
 
-	list, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "list_filters"})
+	list, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "list_filters"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "create_filter", From: "x@example.test"})
+	created, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "create_filter", From: "x@example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 		}
 	}
 
-	vac, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "get_vacation"})
+	vac, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "get_vacation"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 		t.Errorf("VacationRow.Start = %q, want 2026-10-14 outside a fence", vac.Vacation.Start)
 	}
 
-	sig, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "get_signature"})
+	sig, err := h.handle(withFencer(ctx, testFencer(t)), GmailSettingsIn{Account: "work", Action: "get_signature"})
 	if err != nil {
 		t.Fatal(err)
 	}

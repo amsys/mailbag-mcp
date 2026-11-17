@@ -299,7 +299,7 @@ func TestDraft_IdentityReadsOriginalOnce(t *testing.T) {
 					in.ForwardID = "1"
 					in.To = []string{"bob@other.test"}
 				}
-				if _, err := h.handle(context.Background(), in); err != nil {
+				if _, err := h.handle(withFencer(context.Background(), testFencer(t)), in); err != nil {
 					t.Fatalf("draft: %v", err)
 				}
 				if len(rec.reads) != 1 {
@@ -324,7 +324,7 @@ func TestDraft_IdentityReadsOriginalOnce(t *testing.T) {
 func TestDraft_IdentityFromAndNote(t *testing.T) {
 	t.Run("identity mode", func(t *testing.T) {
 		h, rec := identityDraft(t, identityTOML, nil)
-		out, err := h.handle(context.Background(), DraftIn{
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 			Account: "work", To: []string{"ann@other.test"}, Subject: "hi", Body: "text",
 		})
 		if err != nil {
@@ -343,7 +343,7 @@ func TestDraft_IdentityFromAndNote(t *testing.T) {
 	})
 	t.Run("not identity mode", func(t *testing.T) {
 		h, rec := identityDraft(t, plainTOML, nil)
-		out, err := h.handle(context.Background(), DraftIn{
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 			Account: "work", To: []string{"ann@other.test"}, Subject: "hi", Body: "text",
 		})
 		if err != nil {
@@ -365,7 +365,7 @@ func TestDraft_IdentityFromAndNote(t *testing.T) {
 // arch: DI2.0, DI2.1, DI2.2, DI2.3, DI2.4, DI6.1
 func TestDraft_IdentityCatchAllFromRefused(t *testing.T) {
 	h, rec := identityDraft(t, identityTOML, nil)
-	_, err := h.handle(context.Background(), DraftIn{
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 		Account: "work", To: []string{"ann@other.test"}, Body: "text", From: "desk@shop.test",
 	})
 	if !errors.Is(err, errFromNotIdentity) {
@@ -392,7 +392,7 @@ func TestDraft_ReplyAllDropsPicked(t *testing.T) {
 		Body:    "where is it",
 	}
 	h, rec := identityDraft(t, identityTOML, orig)
-	out, err := h.handle(context.Background(), DraftIn{
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 		Account: "work", ReplyToID: "1", ReplyAll: true, Body: "on its way",
 	})
 	if err != nil {
@@ -418,7 +418,7 @@ func TestDraft_ReplyAllDropsPicked(t *testing.T) {
 	// leaves the recipient list.
 	orig.Cc = []mail.Address{{Address: "carol@other.test"}}
 	h, rec = identityDraft(t, identityTOML, orig)
-	out, err = h.handle(context.Background(), DraftIn{
+	out, err = h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 		Account: "work", ReplyToID: "1", ReplyAll: true, Body: "on its way",
 	})
 	if err != nil {

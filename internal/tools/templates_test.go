@@ -61,12 +61,12 @@ func TestTemplates_SaveReplacesSameName(t *testing.T) {
 		{"First subject", "first body"},
 		{"Second subject", "second body"},
 	} {
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: "ooo", Subject: s.subject, Body: s.body}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "ooo", Subject: s.subject, Body: s.body}); err != nil {
 			t.Fatalf("save %q: %v", s.subject, err)
 		}
 	}
 
-	out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestTemplates_SaveReplacesSameName(t *testing.T) {
 		t.Errorf("subject = %q, want the second save", out.Templates[0].Subject)
 	}
 
-	if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "draft", Name: "ooo", To: []string{"ann@example.test"}}); err != nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "draft", Name: "ooo", To: []string{"ann@example.test"}}); err != nil {
 		t.Fatalf("draft: %v", err)
 	}
 	if len(prov.drafts) != 1 || prov.drafts[0].Text != "second body" || prov.drafts[0].Subject != "Second subject" {
@@ -115,7 +115,7 @@ func TestTemplates_LinkOutOfRootRefused(t *testing.T) {
 	}
 	symlinkOrSkip(t, outside, filepath.Join(dir, "evil.md"))
 
-	_, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "draft", Name: "evil", To: []string{"ann@example.test"}})
+	_, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "draft", Name: "evil", To: []string{"ann@example.test"}})
 	if err == nil {
 		t.Fatal("draft through a link out of the directory: no error")
 	}
@@ -126,7 +126,7 @@ func TestTemplates_LinkOutOfRootRefused(t *testing.T) {
 		t.Errorf("SaveDraft ran %d times through a link out of the directory", len(prov.drafts))
 	}
 
-	out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestTemplates_SaveDoesNotFollowLink(t *testing.T) {
 	link := filepath.Join(dir, "x.md")
 	symlinkOrSkip(t, victim, link)
 
-	if _, err := h.handle(context.Background(), TemplatesIn{Account: "work", Action: "save", Name: "x", Subject: "s", Body: "new body"}); err != nil {
+	if _, err := h.handle(withFencer(context.Background(), testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "x", Subject: "s", Body: "new body"}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	got, err := os.ReadFile(victim) //nolint:gosec // G304: test code; the path is built by the test
@@ -197,7 +197,7 @@ func TestTemplates_Mode0600(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, name := range []string{"a", "b"} {
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: name, Subject: "s", Body: "b"}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: name, Subject: "s", Body: "b"}); err != nil {
 			t.Fatalf("save %s: %v", name, err)
 		}
 	}
@@ -240,7 +240,7 @@ func TestTemplates_NameMustMatchAlias(t *testing.T) {
 	}
 	for _, name := range []string{"", ".", "..", "../up", "a/b", "a.b", "a b", "ä"} {
 		for _, action := range []string{"save", "delete", "draft"} {
-			_, err := h.handle(ctx, TemplatesIn{Account: "work", Action: action, Name: name, Subject: "s", Body: "b", To: []string{"ann@example.test"}})
+			_, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: action, Name: name, Subject: "s", Body: "b", To: []string{"ann@example.test"}})
 			if err == nil || !strings.Contains(err.Error(), "needs a name") {
 				t.Errorf("%s name %q: err = %v, want the name rule", action, name, err)
 			}
@@ -256,7 +256,7 @@ func TestTemplates_NameMustMatchAlias(t *testing.T) {
 		t.Errorf("a refused name saved %d drafts", len(prov.drafts))
 	}
 	for _, name := range []string{"ooo", "Out-of_office2"} {
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: name, Subject: "s"}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: name, Subject: "s"}); err != nil {
 			t.Errorf("save %q: %v", name, err)
 		}
 	}
@@ -271,14 +271,14 @@ func TestTemplates_NameMustMatchAlias(t *testing.T) {
 func TestTemplates_DraftFillsVars(t *testing.T) {
 	h, prov, _ := templatesFixture(t)
 	ctx := context.Background()
-	if _, err := h.handle(ctx, TemplatesIn{
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "save", Name: "ooo",
 		Subject: "Out of office until {{date}}",
 		Body:    "Back on {{date}}. Ask {{who}}. {{date}}",
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	out, err := h.handle(ctx, TemplatesIn{
+	out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "draft", Name: "ooo",
 		To:   []string{"ann@example.test"},
 		Cc:   []string{"bob@example.test"},
@@ -315,13 +315,13 @@ func TestTemplates_DraftFillsVars(t *testing.T) {
 func TestTemplates_MissingVarListed(t *testing.T) {
 	h, prov, _ := templatesFixture(t)
 	ctx := context.Background()
-	if _, err := h.handle(ctx, TemplatesIn{
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "save", Name: "t",
 		Subject: "Hi {{name}}", Body: "On {{date}} at {{time}}, {{name}}.",
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	_, err := h.handle(ctx, TemplatesIn{
+	_, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{
 		Account: "work", Action: "draft", Name: "t",
 		To: []string{"ann@example.test"}, Vars: map[string]string{"time": "10:00"},
 	})
@@ -349,7 +349,7 @@ func TestTemplates_ListReadsSubjectOnly(t *testing.T) {
 	h, _, dir := templatesFixture(t)
 	ctx := context.Background()
 
-	out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	out, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil || len(out.Templates) != 0 {
 		t.Fatalf("list before the first save = %+v, %v; want an empty list", out, err)
 	}
@@ -358,7 +358,7 @@ func TestTemplates_ListReadsSubjectOnly(t *testing.T) {
 		{"zeta", "Zeta subject", "ZETA-BODY-TEXT"},
 		{"alpha", "Alpha subject", "ALPHA-BODY-TEXT\nmore"},
 	} {
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: s.name, Subject: s.subject, Body: s.body}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: s.name, Subject: s.subject, Body: s.body}); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
@@ -366,7 +366,7 @@ func TestTemplates_ListReadsSubjectOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err = h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	out, err = h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestTemplates_ListReadsSubjectOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err = h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	out, err = h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "list"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -411,21 +411,21 @@ func TestTemplates_SizeCap(t *testing.T) {
 	ctx := context.Background()
 	head := len("Subject: s\n\n")
 
-	_, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: "big", Subject: "s", Body: strings.Repeat("x", templateMaxBytes-head+1)})
+	_, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "big", Subject: "s", Body: strings.Repeat("x", templateMaxBytes-head+1)})
 	if err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Fatalf("save over the cap: err = %v, want the size refusal", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "big.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a refused save left big.md: %v", err)
 	}
-	if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: "full", Subject: "s", Body: strings.Repeat("x", templateMaxBytes-head)}); err != nil {
+	if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "full", Subject: "s", Body: strings.Repeat("x", templateMaxBytes-head)}); err != nil {
 		t.Fatalf("save at the cap: %v", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, "hand.md"), []byte("Subject: s\n\n"+strings.Repeat("y", templateMaxBytes)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.handle(ctx, TemplatesIn{Account: "work", Action: "draft", Name: "hand", To: []string{"ann@example.test"}})
+	_, err = h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "draft", Name: "hand", To: []string{"ann@example.test"}})
 	if err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Errorf("draft of a file over the cap: err = %v, want the size refusal", err)
 	}
@@ -452,7 +452,7 @@ func TestTemplates_Levels(t *testing.T) {
 				}
 				fx := newAccessFixture(t, level)
 				h := &templatesTool{mail: fx.mail}
-				_, err := h.handle(context.Background(), TemplatesIn{
+				_, err := h.handle(withFencer(context.Background(), testFencer(t)), TemplatesIn{
 					Account: "work", Action: action, Name: "keep",
 					Subject: "changed", To: []string{"ann@example.test"},
 					Vars: map[string]string{"n": "1"},
@@ -499,7 +499,7 @@ func TestTemplates_Levels(t *testing.T) {
 		dir := templatesHome(t)
 		fx := newAccessFixture(t, guard.LevelSend)
 		h := &templatesTool{mail: fx.mail}
-		_, err := h.handle(context.Background(), TemplatesIn{Account: "nobody", Action: "save", Name: "x", Subject: "s"})
+		_, err := h.handle(withFencer(context.Background(), testFencer(t)), TemplatesIn{Account: "nobody", Action: "save", Name: "x", Subject: "s"})
 		if !errors.Is(err, ErrUnknownAccount) {
 			t.Fatalf("err = %v, want ErrUnknownAccount", err)
 		}
@@ -512,7 +512,7 @@ func TestTemplates_Levels(t *testing.T) {
 		templatesHome(t)
 		fx := newAccessFixture(t, guard.LevelDraft)
 		h := &templatesTool{mail: fx.mail}
-		_, err := h.handle(context.Background(), TemplatesIn{Account: "work", Action: "delete", Name: "gone"})
+		_, err := h.handle(withFencer(context.Background(), testFencer(t)), TemplatesIn{Account: "work", Action: "delete", Name: "gone"})
 		if err == nil || !strings.Contains(err.Error(), `template "gone" does not exist`) {
 			t.Errorf("err = %v, want the missing template named", err)
 		}

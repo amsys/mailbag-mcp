@@ -158,14 +158,14 @@ func TestGmailSettings_VacationOnAsks(t *testing.T) {
 		h, w := settingsFixture("send")
 		ctx := context.Background()
 		in := GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(true), Subject: "Away"}
-		if _, err := h.handle(ctx, in); !errors.Is(err, errSettingNoElicitation) {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), in); !errors.Is(err, errSettingNoElicitation) {
 			t.Fatalf("handle error = %v, want the fixed refusal", err)
 		}
 		if w.gotVac.Enabled || strings.Contains(strings.Join(w.calls, ","), "SetVacation") {
 			t.Fatalf("calls = %v, want no write", w.calls)
 		}
 		h.mail.(*settingsMail).acct.BulkAllowWithoutElicitation = true
-		if _, err := h.handle(ctx, in); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), in); err != nil {
 			t.Fatalf("handle with the key: %v", err)
 		}
 		if !w.gotVac.Enabled {
@@ -674,7 +674,7 @@ func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 
 	t.Run("draft fields", func(t *testing.T) {
 		h, prov := draftFixture(t, nil)
-		_, err := h.handle(ctx, DraftIn{
+		_, err := h.handle(withFencer(ctx, testFencer(t)), DraftIn{
 			Account: "work", To: []string{"ann@example.test"},
 			Subject: markedText("dsub"), Body: markedText("dbody"), HTML: "<p>" + markedText("dhtml") + "</p>",
 		})
@@ -701,7 +701,7 @@ func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 	t.Run("reply quote", func(t *testing.T) {
 		msg := orig()
 		h, prov := draftFixture(t, &writeProvider{msg: msg})
-		if _, err := h.handle(ctx, DraftIn{Account: "work", ReplyToID: msg.ID, Body: "ok"}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), DraftIn{Account: "work", ReplyToID: msg.ID, Body: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 		m := prov.drafts[0]
@@ -713,7 +713,7 @@ func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 	t.Run("forward block", func(t *testing.T) {
 		msg := orig()
 		h, prov := draftFixture(t, &writeProvider{msg: msg})
-		if _, err := h.handle(ctx, DraftIn{Account: "work", To: []string{"bob@example.test"}, ForwardID: msg.ID}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), DraftIn{Account: "work", To: []string{"bob@example.test"}, ForwardID: msg.ID}); err != nil {
 			t.Fatal(err)
 		}
 		m := prov.drafts[0]
@@ -725,7 +725,7 @@ func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 	t.Run("mailto draft", func(t *testing.T) {
 		target := "<mailto:leave@news.example.test?subject=" + url.QueryEscape(markedText("msub")) + "&body=" + url.QueryEscape(markedText("mbody")) + ">"
 		h, prov, _ := unsubFixture(t, map[string]*mail.Message{"a": listMsg("news@news.example.test", []string{target}, nil, "")})
-		out, err := h.handle(ctx, UnsubscribeIn{Account: "work", IDs: []string{"a"}})
+		out, err := h.handle(withFencer(ctx, testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -738,10 +738,10 @@ func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 
 	t.Run("template draft", func(t *testing.T) {
 		h, prov, _ := templatesFixture(t)
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: "t1", Subject: markedText("tsub"), Body: markedText("tbody")}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "save", Name: "t1", Subject: markedText("tsub"), Body: markedText("tbody")}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "draft", Name: "t1", To: []string{"ann@example.test"}}); err != nil {
+		if _, err := h.handle(withFencer(ctx, testFencer(t)), TemplatesIn{Account: "work", Action: "draft", Name: "t1", To: []string{"ann@example.test"}}); err != nil {
 			t.Fatal(err)
 		}
 		checkNoMarker(t, "subject", prov.drafts[0].Subject, "tsub")

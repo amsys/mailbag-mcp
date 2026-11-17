@@ -30,7 +30,7 @@ func TestExport_ThreadSkippedNote(t *testing.T) {
 	fm := &readMail{alias: "work", prov: prov, dirs: []string{dir}}
 	h := &exportTool{mail: fm}
 
-	out, err := h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestExport_NoPreviewsNote(t *testing.T) {
 	fm := &readMail{alias: "work", prov: prov, dirs: []string{dir}}
 	h := &exportTool{mail: fm}
 
-	out, err := h.handle(context.Background(), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), ExportIn{Account: "work", ID: m.ID, Thread: true, SaveDir: dir})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

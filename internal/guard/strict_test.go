@@ -70,7 +70,7 @@ func TestStrict_Grammars(t *testing.T) {
 		{"msgid", "<a b@example.com>", false},
 		{"owner", "me@example.com", true},
 		{"owner", "me\x00@example.com", false},
-		{"owner", "a​b", false},
+		{"owner", "a\u200bb", false},
 		{"owner", "[UNTRUSTED_x]", false},
 		{"owner", "", false},
 		{"note", "anything", false},

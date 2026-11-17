@@ -302,15 +302,6 @@ func buildQuery(in SearchIn) (mail.Query, error) {
 	return q, nil
 }
 
-// errNote gives the text of a provider error for a result field. A
-// provider error can quote a stranger, so the text goes through
-// Sanitize. Redact runs first, so NFKC cannot hide a token from it.
-//
-// arch: DH2.5
-func errNote(err error) string {
-	return guard.Sanitize(guard.Redact(err.Error()))
-}
-
 // accountError gives the error line of one account (DU5.2, DU6.2):
 // the class word outside, and the error text in a fence after the
 // redactor. Redact runs before the Sanitize of Wrap, so NFKC cannot
@@ -322,7 +313,7 @@ func accountError(f guard.Fencer, alias string, err error) AccountError {
 }
 
 // errDetail gives the untrusted detail of an error: its text after
-// guard.Redact, in one fence of f. It is the two-zone twin of errNote:
+// guard.Redact, in one fence of f. It replaces the old errNote:
 // a note outside ends with the class word, and this detail carries the
 // text (DU3.5).
 //

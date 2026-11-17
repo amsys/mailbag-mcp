@@ -545,7 +545,9 @@ func TestGmailSettings_DeleteFilterAsks(t *testing.T) {
 			if asked != 0 || !res.IsError || !isErrForm(text, "not_found", errFilterNotFound.Error(), "") {
 				t.Fatalf("id %q: asked %d, result %s, want the not_found form with no detail", id, asked, text)
 			}
-			if strings.Contains(text, "f9") || strings.Contains(text, "obey") {
+			// The first line is the random nonce; its hex can hold "f9".
+			_, body, _ := strings.Cut(text, "\n")
+			if strings.Contains(body, "f9") || strings.Contains(body, "obey") {
 				t.Errorf("id %q: error %q echoes the id", id, text)
 			}
 			if got := strings.Join(rec.calls, ","); got != "ListFilters" {

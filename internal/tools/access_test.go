@@ -426,7 +426,7 @@ func TestAccess_Matrix(t *testing.T) {
 				return 200, nil
 			}
 			h.dkim = func(*mail.Message, verify.Config) bool { return true }
-			_, err := h.handle(withFencer(ctx, testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"1.10.INBOX"}})
+			_, err := h.run(withFencer(ctx, testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"1.10.INBOX"}}, nil, unsubAcceptAll)
 			return "", err
 		},
 		ran: func(fx *accessFixture) bool { return fx.posts == 1 },

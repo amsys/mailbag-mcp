@@ -190,6 +190,14 @@ type Account struct {
 	// gives back. When it is true, bulk changes mail for a client that
 	// cannot ask the human (DS9.4). The default is false.
 	BulkAllowWithoutElicitation bool
+
+	// UnsubscribeAllowWithoutElicitation is the file-level key
+	// [unsubscribe] allow_without_elicitation, copied into each
+	// account block. The unsubscribe tool reads it from the account
+	// that OpenWriter gives back. When it is true, unsubscribe sends a
+	// one-click POST for a client that cannot ask the human (DU8.1).
+	// The default is false.
+	UnsubscribeAllowWithoutElicitation bool
 }
 
 // rawFile and rawAccount mirror the TOML shape of accounts.toml
@@ -203,6 +211,7 @@ type rawFile struct {
 	ToolTimeout  string                `toml:"tool_timeout"`
 	Send         rawSend               `toml:"send"`
 	Bulk         rawBulk               `toml:"bulk"`
+	Unsubscribe  rawUnsubscribe        `toml:"unsubscribe"`
 	Verify       rawVerify             `toml:"verify"`
 	Decrypt      rawDecrypt            `toml:"decrypt"`
 	Accounts     map[string]rawAccount `toml:"accounts"`
@@ -216,6 +225,12 @@ type rawSend struct {
 // rawBulk is the [bulk] table of accounts.toml (DS9.4). It has the
 // same shape as rawSend.
 type rawBulk struct {
+	AllowWithoutElicitation bool `toml:"allow_without_elicitation"`
+}
+
+// rawUnsubscribe is the [unsubscribe] table of accounts.toml (DU8.1).
+// It has the same shape as rawBulk.
+type rawUnsubscribe struct {
 	AllowWithoutElicitation bool `toml:"allow_without_elicitation"`
 }
 
@@ -598,6 +613,8 @@ func validateIn(raw rawFile, modTime time.Time, dir string) (*snapshot, error) {
 
 			AllowWithoutElicitation:     raw.Send.AllowWithoutElicitation,
 			BulkAllowWithoutElicitation: raw.Bulk.AllowWithoutElicitation,
+
+			UnsubscribeAllowWithoutElicitation: raw.Unsubscribe.AllowWithoutElicitation,
 		}
 		if acct.Provider == "jmap" {
 			if _, err := JMAPSessionURL(acct); err != nil {

@@ -35,6 +35,11 @@ allow_without_elicitation = false
 # cannot ask the human to confirm (DS9.4). Default: false.
 allow_without_elicitation = false
 
+[unsubscribe]
+# allow_without_elicitation lets unsubscribe send a one-click POST for
+# a client that cannot ask the human to confirm (DU8.1). Default: false.
+allow_without_elicitation = false
+
 [verify]
 # authserv_id is the only Authentication-Results authority whose DKIM
 # result counts. Default: "", so no DKIM result counts.

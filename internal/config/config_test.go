@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 // TestAlias_Pattern checks the rule of B17: an alias becomes a keyring
@@ -834,6 +836,84 @@ email    = "me@example.org"
 		_, err := Load(writeTemp(t, "[bulk]\nallow_without_elicitaton = true\n"+accounts))
 		if !errors.Is(err, ErrUnknownKey) {
 			t.Fatalf("Load: err = %v, want ErrUnknownKey", err)
+		}
+	})
+}
+
+// TestLoad_UnsubscribeAllowWithoutElicitation checks the [unsubscribe]
+// table, the twin of [bulk]. Its one key, allow_without_elicitation, is
+// copied into each account. The default is false. The key is separate
+// from the [send] and [bulk] keys: one of them set to true does not set
+// another. An unknown key in the table is refused. The template gives
+// the key with its default.
+//
+// arch: DU8.1
+func TestLoad_UnsubscribeAllowWithoutElicitation(t *testing.T) {
+	const accounts = `
+[accounts.work]
+provider = "imap"
+email    = "me@example.com"
+
+[accounts.home]
+provider = "imap"
+email    = "me@example.org"
+`
+	cases := []struct {
+		name                string
+		head                string
+		wantUnsub, wantBulk bool
+		wantSend            bool
+	}{
+		{"no tables gives false", "", false, false, false},
+		{"unsubscribe true", "[unsubscribe]\nallow_without_elicitation = true\n", true, false, false},
+		{"unsubscribe false", "[unsubscribe]\nallow_without_elicitation = false\n", false, false, false},
+		{"bulk true leaves unsubscribe false", "[bulk]\nallow_without_elicitation = true\n", false, true, false},
+		{"send true leaves unsubscribe false", "[send]\nallow_without_elicitation = true\n", false, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Load(writeTemp(t, c.head+accounts))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			for _, alias := range []string{"work", "home"} {
+				acc, ok := cfg.Account(alias)
+				if !ok {
+					t.Fatalf("Account(%s) not found", alias)
+				}
+				if acc.UnsubscribeAllowWithoutElicitation != c.wantUnsub {
+					t.Errorf("%s: UnsubscribeAllowWithoutElicitation = %v, want %v", alias, acc.UnsubscribeAllowWithoutElicitation, c.wantUnsub)
+				}
+				if acc.BulkAllowWithoutElicitation != c.wantBulk {
+					t.Errorf("%s: BulkAllowWithoutElicitation = %v, want %v", alias, acc.BulkAllowWithoutElicitation, c.wantBulk)
+				}
+				if acc.AllowWithoutElicitation != c.wantSend {
+					t.Errorf("%s: AllowWithoutElicitation = %v, want %v", alias, acc.AllowWithoutElicitation, c.wantSend)
+				}
+			}
+		})
+	}
+
+	t.Run("unknown key in [unsubscribe] is refused", func(t *testing.T) {
+		_, err := Load(writeTemp(t, "[unsubscribe]\nallow_without_elicitaton = true\n"+accounts))
+		if !errors.Is(err, ErrUnknownKey) {
+			t.Fatalf("Load: err = %v, want ErrUnknownKey", err)
+		}
+	})
+
+	t.Run("template gives the key with its default", func(t *testing.T) {
+		var raw rawFile
+		meta, err := toml.DecodeFile(templatePath, &raw)
+		if err != nil {
+			t.Fatalf("DecodeFile(%s): %v", templatePath, err)
+		}
+		for _, tag := range tomlTags(t, rawUnsubscribe{}) {
+			if !meta.IsDefined("unsubscribe", tag) {
+				t.Errorf("template is missing key %q in [unsubscribe]", tag)
+			}
+		}
+		if raw.Unsubscribe != (rawUnsubscribe{}) {
+			t.Errorf("template [unsubscribe] = %+v, want the default %+v", raw.Unsubscribe, rawUnsubscribe{})
 		}
 	})
 }

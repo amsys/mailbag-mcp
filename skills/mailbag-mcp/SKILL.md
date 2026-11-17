@@ -1104,6 +1104,22 @@ The ids in brackets are the invariants of DI8.
   from the configured `authserv_id`; never a GET.
   `TestUnsubscribe_OneClickPostsWhenDKIMPass`, `TestUnsubscribe_NeverGET`,
   `TestUnsubscribe_ProductionClientIsGuarded`.
+- DU8.1 a one-click POST also needs the human: `unsubscribe` uses
+  `WrapReq`, plans every id first (reads only, no POST, no draft),
+  then asks one question for the call (count and host of each POST,
+  never the path or query: they can hold a list token). Only then do
+  the POSTs and mailto drafts run. A decline gives each one-click row
+  status `declined` and its fenced link; drafts still save. The MRTR
+  record `pendingUnsub` keeps the plan (plain URLs, no fence, INV-6),
+  bound to session, account and ids, so the retry posts to the URLs
+  the human saw and reads no message again. A client that cannot ask
+  needs `[unsubscribe] allow_without_elicitation` (not the `[bulk]`
+  key); else `errUnsubNoElicitation`, and nothing at all runs. A test
+  that calls `handle` direct with no session gets that refusal: the
+  `unsubFixture` account sets the key, and `access_test` passes
+  `unsubAcceptAll` to `run`. `TestUnsubscribe_OneClickAsksFirst`,
+  `TestUnsubscribe_NoElicitationRefused`, `TestUnsubscribe_MRTRRetry`,
+  `TestLoad_UnsubscribeAllowWithoutElicitation`.
 - DS9 `unsubscribe` and `templates` make drafts; no mail leaves through
   them. `TestUnsubscribe_MailtoMakesDraft`, `TestTemplates_DraftFillsVars`.
 - DS9 templates never follow a link out of their directory; files are

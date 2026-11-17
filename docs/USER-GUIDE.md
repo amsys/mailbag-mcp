@@ -898,6 +898,22 @@ Some toolsets have more keys:
   Without that pass, the tool saves an unsubscribe draft for a
   `mailto:` address, or gives you the link to open.
 
+  Before it sends a one-click POST, `unsubscribe` asks you one
+  question for the call. The question shows the number of POSTs and
+  the host of each one. It does not show the path of the link, because
+  the path can hold a token. If you do not accept, no POST goes out:
+  each one-click row gets the status `declined` and the link to open.
+  The drafts for `mailto:` addresses are saved in both cases, because
+  a draft does not leave. A client that cannot ask gets a refusal, and
+  then the call saves no draft and sends nothing. The `[bulk]` key
+  does not cover this question. To let such a client send one-click
+  POSTs with no question, set:
+
+  ```toml
+  [unsubscribe]
+  allow_without_elicitation = true
+  ```
+
 - `gmail_settings` works for Gmail accounts only.
 
 ## Access levels

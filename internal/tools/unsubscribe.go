@@ -5,7 +5,9 @@
 // List-Unsubscribe header of each message id and does one of four
 // things: an RFC 8058 one-click POST through the guarded client, a
 // draft for a mailto URL, a link for the person, or nothing. It never
-// sends mail (G19, IS9.6) and never makes a GET (IS9.1).
+// sends mail (G19, IS9.6) and never makes a GET (IS9.1). A one-click
+// POST goes out only after the human accepts one question for the
+// call, through elicitation or MRTR (DU8.1).
 
 package tools
 
@@ -18,12 +20,15 @@ import (
 	"net/http"
 	netmail "net/mail"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amsys/mailbag-mcp/internal/config"
 	"github.com/amsys/mailbag-mcp/internal/guard"
 	"github.com/amsys/mailbag-mcp/internal/mail"
+	"github.com/amsys/mailbag-mcp/internal/mime"
 	"github.com/amsys/mailbag-mcp/internal/verify"
 )
 
@@ -42,8 +47,9 @@ type UnsubscribeIn struct {
 
 // UnsubscribeRow is the result for one id. Method is one of
 // one_click, draft, link or none. Status is one of done, draft_saved,
-// see_link, not_authenticated, no_header or failed. Both are words of
-// the strict kind word (no space, no hyphen).
+// see_link, not_authenticated, no_header, declined or failed. Both are
+// words of the strict kind word (no space, no hyphen). declined is a
+// one-click row whose POST the human did not accept (DU8.1).
 //
 // Zones (DU5.1, DU5.6): Index (the place of the id in the input), ID
 // (only when [normalizeID] accepts it, in its new form), Method,
@@ -94,6 +100,7 @@ const (
 	unsubStatusNoAuth   = "not_authenticated"
 	unsubStatusNoHeader = "no_header"
 	unsubStatusFailed   = "failed"
+	unsubStatusDeclined = "declined"
 )
 
 // The two header names that the tool reads (RFC 2369, RFC 8058).
@@ -115,18 +122,82 @@ const (
 	unsubNotePostFailed = "the one-click POST failed or was redirected; open the link"
 	unsubNoteTimeUp     = "the call ran out of time before this id; run it again for this id"
 	unsubNoteDraftSend  = "the draft is not sent; send it with the send tool"
+	unsubNoteDeclined   = "not sent: the human did not confirm; open the link"
 )
+
+// errUnsubNoElicitation is the fixed refusal for a client that cannot
+// ask the human about a one-click POST. Like [errBulkNoElicitation],
+// it does not name the config key, because the model reads this text
+// and only the human may turn the question off.
+//
+// arch: DU8.1
+var errUnsubNoElicitation = public("refused", "this client cannot ask the human to confirm a one-click unsubscribe, so nothing was sent and no draft was saved; the human can open the unsubscribe link in a mail program")
+
+// unsubSchema is the requested schema of the one-click question. It
+// has the field apply of the bulk question, so [bulkOutcome] reads the
+// answer. It has no remember field: no session grant covers a POST.
+//
+// arch: DU8.1
+var unsubSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		bulkField: map[string]any{
+			"type":        "boolean",
+			"title":       "Send the unsubscribe requests",
+			"description": "Set to true to send the one-click POSTs above.",
+		},
+	},
+	"required": []string{bulkField},
+}
 
 // unsubscribeTool holds the handler and its two seams. client is the
 // guarded client that post uses in production; it is a field so that
 // TestUnsubscribe_ProductionClientIsGuarded can check it (DS9.12).
+// pending keeps each open one-click question of the MRTR path
+// (DU8.1); its zero value works.
 type unsubscribeTool struct {
-	mail   Mail
-	draft  *draftTool
-	client *http.Client
-	post   func(ctx context.Context, rawURL string) (status int, err error)
-	dkim   func(msg *mail.Message, cfg verify.Config) bool
+	mail    Mail
+	draft   *draftTool
+	client  *http.Client
+	post    func(ctx context.Context, rawURL string) (status int, err error)
+	dkim    func(msg *mail.Message, cfg verify.Config) bool
+	pending pendingStore[pendingUnsub]
 }
+
+// pendingUnsub is the record of one open one-click question on the
+// MRTR path. The retry must give the same session, account and ids.
+// steps is the plan that the question showed, so the retry posts to
+// the URLs that the human saw and reads no message again. The steps
+// hold plain URLs with no fence, so the record keeps no fence and no
+// nonce (INV-6).
+//
+// arch: DU8.1, INV-6
+type pendingUnsub struct {
+	session *mcp.ServerSession
+	account string
+	ids     []string
+	steps   []unsubStep
+}
+
+// unsubStep is the plan of one id: the row as far as the read decides
+// it, and the URL of the row. A step whose row has no status still has
+// its action to run: a one-click POST (method one_click) or a mailto
+// draft (method draft). A link step keeps its URL for the fence of the
+// response. u is plain sender text with no fence.
+//
+// arch: DS9.3, DU8.1
+type unsubStep struct {
+	row UnsubscribeRow
+	u   *url.URL
+}
+
+// unsubConfirm asks about the one-click POSTs of steps and gives a
+// confirm outcome of send.go. message is the text of the question.
+type unsubConfirm func(ctx context.Context, acct config.Account, steps []unsubStep, message string) (string, error)
+
+// unsubClaim is the claim step of the MRTR retry. It gets the alias
+// that OpenWriter gave and gives the steps of the record.
+type unsubClaim func(account string) ([]unsubStep, error)
 
 // newUnsubscribeTool builds the production tool: post goes through
 // guard.NewHTTPClient (HTTPS only, the dial-time address check, no
@@ -156,13 +227,144 @@ func addUnsubscribe(srv *mcp.Server, logger *slog.Logger, h *unsubscribeTool) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "unsubscribe",
 		Description: "Unsubscribe from the lists of messages by id: a one-click POST, a draft, or the link.",
-	}, Wrap(logger, "unsubscribe", DefaultTimeout, h.handle))
+	}, WrapReq(logger, "unsubscribe", DefaultTimeout, h.handleReq))
 }
 
-// handle runs the access check first, then one row for each id.
+// handleReq is the handler that [addUnsubscribe] registers. It uses
+// [WrapReq], because it asks the human through the session of the
+// call, as bulk does (DU8.1).
 //
-// arch: DS9.3, G18, G19, IS9.1, IS9.6
+// A session on a protocol before [elicitCutoffProtocol] asks the human
+// through the session of req. Such a session that gives a request
+// state gets [errConfirmStale].
+//
+// A session on [elicitCutoffProtocol] or later uses the MRTR path. A
+// call with no request state is the first call: when the plan has a
+// one-click POST, it gives the question as an [inputRequired] value
+// and does nothing else. A call with a request state is the retry: it
+// takes the record of that state and runs the stored plan with the
+// answer.
+//
+// arch: DU8.1, DS14.1, DS14.6, DS14.7, DS14.8
+func (t *unsubscribeTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in UnsubscribeIn) (UnsubscribeOut, error) {
+	ss := sessionOf(req)
+	state, answers := retryOf(req)
+	if !newProtocol(ss) {
+		if state != "" {
+			return UnsubscribeOut{}, errConfirmStale
+		}
+		return t.run(ctx, in, nil, unsubAsk(ss))
+	}
+	if state == "" {
+		return t.run(ctx, in, nil, func(_ context.Context, acct config.Account, steps []unsubStep, message string) (string, error) {
+			return t.askFirst(ss, acct, in, steps, message)
+		})
+	}
+	claim := func(account string) ([]unsubStep, error) {
+		return t.claimPending(ss, state, account, in)
+	}
+	return t.run(ctx, in, claim, func(context.Context, config.Account, []unsubStep, string) (string, error) {
+		return bulkAnswer(answers), nil
+	})
+}
+
+// handle runs one call with no session. A call whose plan has a
+// one-click POST is refused, unless the account has [unsubscribe]
+// allow_without_elicitation = true (DU8.1).
+//
+// arch: DS9.3, DU8.1
 func (t *unsubscribeTool) handle(ctx context.Context, in UnsubscribeIn) (UnsubscribeOut, error) {
+	return t.run(ctx, in, nil, unsubAsk(nil))
+}
+
+// unsubNoAsk is the rule for a client that cannot ask: the account key
+// [unsubscribe] allow_without_elicitation gives
+// [confirmNoElicitAllowed]; else the call gets
+// [errUnsubNoElicitation] (DU8.1, the rule of bulk in DS14.2).
+func unsubNoAsk(acct config.Account) (string, error) {
+	if acct.UnsubscribeAllowWithoutElicitation {
+		return confirmNoElicitAllowed, nil
+	}
+	return confirmNoElicitRefused, errUnsubNoElicitation
+}
+
+// unsubAsk gives the question of one call on the session ss. A nil ss
+// has no way to ask, so it follows [unsubNoAsk]. The wait for the
+// answer is the wait of [askConfirm].
+//
+// arch: DU8.1, D5.2
+func unsubAsk(ss *mcp.ServerSession) unsubConfirm {
+	return func(ctx context.Context, acct config.Account, _ []unsubStep, message string) (string, error) {
+		if !canElicit(ss) {
+			return unsubNoAsk(acct)
+		}
+		return askConfirm(ctx, ss, acct, message, unsubSchema, notConfirmedText)
+	}
+}
+
+// askFirst is the question of the first call on the MRTR path. It
+// keeps a record of the plan and gives the question as an
+// [inputRequired] value with the outcome [confirmPending]. A full
+// store or a full session share gives its fixed refusal, and nobody is
+// asked. A repeat first call with the same session, account and ids
+// takes the place of the open record and gets a new state, so the old
+// state is then stale (DS14.13).
+//
+// arch: DU8.1, DS14.3, DS14.6, DS14.12, DS14.13
+func (t *unsubscribeTool) askFirst(ss *mcp.ServerSession, acct config.Account, in UnsubscribeIn, steps []unsubStep, message string) (string, error) {
+	if !canElicit(ss) {
+		return unsubNoAsk(acct)
+	}
+	place, _, err := t.pending.hold(ss, func(r pendingUnsub) bool {
+		return r.session == ss && r.account == acct.Alias && slices.Equal(r.ids, in.IDs)
+	})
+	if err != nil {
+		return "", err
+	}
+	state, err := place.fill(pendingUnsub{
+		session: ss,
+		account: acct.Alias,
+		ids:     slices.Clone(in.IDs),
+		steps:   slices.Clone(steps),
+	})
+	if err != nil {
+		return "", err
+	}
+	return confirmPending, &inputRequired{
+		requests: mcp.InputRequestMap{confirmInputID: &mcp.ElicitParams{
+			Mode:            "form",
+			Message:         message,
+			RequestedSchema: unsubSchema,
+		}},
+		state: state,
+	}
+}
+
+// claimPending is the claim step of the retry. It takes the record of
+// state, so the state works one time only. It gives [errConfirmStale]
+// when the store has no open record of state, or when the session, the
+// account or the ids of the record differ from the retry.
+//
+// arch: DU8.1, DS14.7, IS14.2
+func (t *unsubscribeTool) claimPending(ss *mcp.ServerSession, state, account string, in UnsubscribeIn) ([]unsubStep, error) {
+	rec, ok := t.pending.take(state)
+	if !ok || rec.session != ss || rec.account != account || !slices.Equal(rec.ids, in.IDs) {
+		return nil, errConfirmStale
+	}
+	return rec.steps, nil
+}
+
+// run runs one call: the access check and the checks of the ids, then
+// the plan of each id (or the plan of the record on the MRTR retry),
+// then one question when the plan has a one-click POST, then the
+// POSTs and drafts. Nothing leaves and no draft is saved before the
+// answer. Only an accept, or a client that cannot ask on an account
+// with the config key, lets a POST out; any other answer gives each
+// one-click row the status declined and its link.
+//
+// arch: DS9.3, DU8.1, G18, G19, IS9.1, IS9.6, D5.2
+func (t *unsubscribeTool) run(ctx context.Context, in UnsubscribeIn, claim unsubClaim, ask unsubConfirm) (UnsubscribeOut, error) {
+	f := fencer(ctx)
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return UnsubscribeOut{}, err
@@ -176,59 +378,171 @@ func (t *unsubscribeTool) handle(ctx context.Context, in UnsubscribeIn) (Unsubsc
 	if len(in.IDs) > MaxUnsubscribeIDs {
 		return UnsubscribeOut{}, fmt.Errorf("ids: %d ids, and one call takes %d at most", len(in.IDs), MaxUnsubscribeIDs)
 	}
-	var cfg verify.Config
-	if src, ok := t.mail.(verifyConfigSource); ok {
-		cfg = src.VerifyConfig()
-	}
-	f := fencer(ctx)
-	out := UnsubscribeOut{Rows: make([]UnsubscribeRow, 0, len(in.IDs))}
-	for i, id := range in.IDs {
-		if ctx.Err() != nil {
-			// The rows before this one may hold a POST that was sent,
-			// so the call gives them, not an error.
-			out.Rows = append(out.Rows, UnsubscribeRow{Index: i, ID: rowID(acct.Provider, id), Method: unsubMethodNone, Status: unsubStatusFailed, Note: unsubNoteTimeUp})
-			continue
+	var steps []unsubStep
+	if claim != nil {
+		if steps, err = claim(acct.Alias); err != nil {
+			return UnsubscribeOut{}, err
 		}
-		out.Rows = append(out.Rows, t.one(ctx, f, p, cfg, in.Account, acct.Provider, i, id))
+	} else {
+		var cfg verify.Config
+		if src, ok := t.mail.(verifyConfigSource); ok {
+			cfg = src.VerifyConfig()
+		}
+		steps = t.plan(ctx, p, cfg, acct.Provider, in.IDs)
 	}
-	return out, nil
+	post := false
+	if oneClickCount(steps) > 0 {
+		outcome, err := ask(ctx, acct, steps, unsubQuestion(in.Account, steps))
+		if err != nil {
+			return UnsubscribeOut{}, err
+		}
+		switch outcome {
+		case confirmAccept, confirmAcceptSession:
+			// An accept with remember true is only an accept: no
+			// grant covers a POST. D5.2: the wait for the human does
+			// not count against the tool deadline, so the POSTs and
+			// drafts get a full deadline of their own.
+			post = true
+			if wait, timeout, ok := untimed(ctx); ok {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(wait, timeout)
+				defer cancel()
+				ctx = withFencer(ctx, f)
+			}
+		case confirmNoElicitAllowed:
+			// No wait came first; the POSTs keep the tool deadline.
+			post = true
+		}
+	}
+	return t.execute(ctx, f, in.Account, steps, post), nil
 }
 
-// one gives the row of one id, in the order of DS9.3: one-click, then
-// mailto, then the link, then nothing.
-func (t *unsubscribeTool) one(ctx context.Context, f guard.Fencer, p Writer, cfg verify.Config, account, kind string, index int, id string) UnsubscribeRow {
+// plan reads each id and gives its step, in input order. It sends no
+// POST and saves no draft, so a question can come between the plan
+// and [unsubscribeTool.execute].
+//
+// arch: DS9.3, DU8.1
+func (t *unsubscribeTool) plan(ctx context.Context, p Writer, cfg verify.Config, kind string, ids []string) []unsubStep {
+	steps := make([]unsubStep, 0, len(ids))
+	for i, id := range ids {
+		if ctx.Err() != nil {
+			row := UnsubscribeRow{Index: i, ID: rowID(kind, id)}
+			row.Method, row.Status, row.Note = unsubMethodNone, unsubStatusFailed, unsubNoteTimeUp
+			steps = append(steps, unsubStep{row: row})
+			continue
+		}
+		steps = append(steps, t.planOne(ctx, p, cfg, kind, i, id))
+	}
+	return steps
+}
+
+// planOne gives the step of one id, in the order of DS9.3: one-click,
+// then mailto, then the link, then nothing.
+func (t *unsubscribeTool) planOne(ctx context.Context, p Writer, cfg verify.Config, kind string, index int, id string) unsubStep {
 	row := UnsubscribeRow{Index: index, ID: rowID(kind, id)}
 	m, err := p.Read(ctx, id, mail.ReadOpts{Headers: []string{hdrListUnsubscribe, hdrListUnsubscribePost}})
 	if err != nil || m == nil {
 		row.Method, row.Status, row.Note = unsubMethodNone, unsubStatusFailed, unsubNoteReadFailed
-		return row
+		return unsubStep{row: row}
 	}
 	lists := m.Headers[hdrListUnsubscribe]
 	if len(lists) == 0 {
 		row.Method, row.Status = unsubMethodNone, unsubStatusNoHeader
-		return row
+		return unsubStep{row: row}
 	}
 	httpsURL, mailtoURL := unsubscribeURLs(lists)
 	postOK := len(lists) == 1 && oneClickHeader(m.Headers[hdrListUnsubscribePost])
-	if httpsURL != nil && postOK {
-		if t.dkim(m, cfg) {
-			return t.oneClick(ctx, f, row, httpsURL)
-		}
+	if httpsURL != nil && postOK && t.dkim(m, cfg) {
+		row.Method = unsubMethodOneClick
+		return unsubStep{row: row, u: httpsURL}
 	}
 	if mailtoURL != nil {
-		return t.mailto(ctx, row, account, mailtoURL)
+		row.Method = unsubMethodDraft
+		return unsubStep{row: row, u: mailtoURL}
 	}
 	if httpsURL != nil {
 		row.Method, row.Status = unsubMethodLink, unsubStatusSeeLink
-		row.Untrusted.URL = f.Wrap(httpsURL.String())
 		if postOK {
 			// Only the DKIM rule stopped the POST (G18).
 			row.Status, row.Note = unsubStatusNoAuth, unsubNoteNoAuth
 		}
-		return row
+		return unsubStep{row: row, u: httpsURL}
 	}
 	row.Method, row.Status, row.Note = unsubMethodNone, unsubStatusNoHeader, unsubNoteNoURL
-	return row
+	return unsubStep{row: row}
+}
+
+// pendingAction reports whether s still has its action to run: a
+// one-click POST or a mailto draft.
+func (s unsubStep) pendingAction() bool {
+	return s.row.Status == ""
+}
+
+// oneClickCount gives the number of one-click POSTs of steps.
+func oneClickCount(steps []unsubStep) int {
+	n := 0
+	for _, s := range steps {
+		if s.pendingAction() && s.row.Method == unsubMethodOneClick {
+			n++
+		}
+	}
+	return n
+}
+
+// execute gives the row of each step. A step that the read decided
+// keeps its row; a link row gets its URL in a fence of f. A one-click
+// step sends its POST when post is true, and else gets the status
+// declined and its link. A mailto step saves its draft. When ctx ends,
+// each step that is left gives the time-up row; the rows before it may
+// hold a POST that was sent, so the call gives them, not an error.
+//
+// arch: DS9.3, DU8.1, DU5.1
+func (t *unsubscribeTool) execute(ctx context.Context, f guard.Fencer, account string, steps []unsubStep, post bool) UnsubscribeOut {
+	out := UnsubscribeOut{Rows: make([]UnsubscribeRow, 0, len(steps))}
+	for _, s := range steps {
+		row := s.row
+		switch {
+		case !s.pendingAction():
+			if row.Method == unsubMethodLink {
+				row.Untrusted.URL = f.Wrap(s.u.String())
+			}
+		case ctx.Err() != nil:
+			row.Method, row.Status, row.Note = unsubMethodNone, unsubStatusFailed, unsubNoteTimeUp
+		case row.Method == unsubMethodOneClick && !post:
+			row.Status, row.Note = unsubStatusDeclined, unsubNoteDeclined
+			row.Untrusted.URL = f.Wrap(s.u.String())
+		case row.Method == unsubMethodOneClick:
+			row = t.oneClick(ctx, f, row, s.u)
+		default:
+			row = t.mailto(ctx, row, account, s.u)
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	return out
+}
+
+// unsubQuestion is the text that the human accepts (DU8.1): the count
+// of one-click POSTs, the account, and the host of each POST URL, one
+// line for each POST in row order. The path and the query of a URL are
+// not shown, because they can hold a token of the list. The question
+// goes to the human through elicitation or MRTR, so it holds no fence
+// marker and no nonce (INV-7): the alias is model text and loses its
+// hidden characters and fence markers (serverText); each host is
+// sender text and also passes [plainLine], and its links are defanged
+// after it (D4.1), as in [bulkQuestion].
+//
+// arch: DU8.1, INV-7, D4.1
+func unsubQuestion(account string, steps []unsubStep) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Send %s for account %s? Each POST asks a mailing list to stop its mail to this account, and it cannot be undone here. The host of each POST:",
+		plural(oneClickCount(steps), "one-click unsubscribe POST"), serverText(account))
+	for _, s := range steps {
+		if s.pendingAction() && s.row.Method == unsubMethodOneClick {
+			b.WriteString("\n- ")
+			b.WriteString(mime.DefangLinks(plainLine(serverText(s.u.Hostname()))))
+		}
+	}
+	return b.String()
 }
 
 // rowID gives the id of a row in the form [normalizeID] writes, or the

@@ -22,6 +22,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/amsys/mailbag-mcp/internal/config"
 	"github.com/amsys/mailbag-mcp/internal/guard"
 	"github.com/amsys/mailbag-mcp/internal/mail"
@@ -88,13 +90,16 @@ type postLog struct {
 
 // unsubFixture gives a production tool over the fakes, with its post
 // seam replaced by a counter that answers 200. The dkim seam is the
-// production one, and the [verify] config names unsubAuthserv.
+// production one, and the [verify] config names unsubAuthserv. The
+// account has [unsubscribe] allow_without_elicitation = true, so a
+// direct handle call with no session sends a one-click POST (DU8.1);
+// the tests of the question set it to false or use a session.
 func unsubFixture(t *testing.T, msgs map[string]*mail.Message) (*unsubscribeTool, *unsubProvider, *postLog) {
 	t.Helper()
 	_, wp := sendFixture(t, nil)
 	prov := &unsubProvider{writeProvider: wp, msgs: msgs}
 	m := &unsubMail{
-		writeMail: &writeMail{alias: "work", prov: wp, acct: config.Account{Email: "me@example.test", Access: "draft", Provider: "imap"}},
+		writeMail: &writeMail{alias: "work", prov: wp, acct: config.Account{Email: "me@example.test", Access: "draft", Provider: "imap", UnsubscribeAllowWithoutElicitation: true}},
 		prov:      prov,
 		cfg:       verify.Config{AuthservID: unsubAuthserv},
 	}
@@ -640,4 +645,412 @@ func TestUnsubscribe_RowsHaveIndexAndNormalizedID(t *testing.T) {
 	if s, _ := z["url"].(string); len(z) != 1 || !testFencer(t).Holds(s) {
 		t.Errorf("row JSON %s: untrusted = %v, want one fenced url", b, z)
 	}
+}
+
+// unsubAcceptAll is the question step of a human who accepts each
+// one-click question.
+func unsubAcceptAll(context.Context, config.Account, []unsubStep, string) (string, error) {
+	return confirmAccept, nil
+}
+
+// unsubIDMailto is the id of the mailto list of [unsubAsking].
+const unsubIDMailto = "1-4-494e424f58"
+
+// unsubAsking gives a fixture whose account has no config escape, so a
+// one-click POST needs the human (DU8.1). It has three ids: two
+// one-click lists on two hosts, with a token in the path and the
+// query, and one mailto list.
+func unsubAsking(t *testing.T) (*unsubscribeTool, *unsubProvider, *postLog) {
+	t.Helper()
+	h, prov, log := unsubFixture(t, map[string]*mail.Message{
+		unsubIDA:      listMsg("news@news.example.test", []string{"<https://news.example.test/unsub/s3cret?t=tok3n>"}, oneClickPosts, passAuth("news.example.test")),
+		unsubIDB:      listMsg("deals@shop.example.test", []string{"<https://lists.shop.example.test/u?t=tok3n>"}, oneClickPosts, passAuth("shop.example.test")),
+		unsubIDMailto: listMsg("club@club.example.test", []string{"<mailto:leave@club.example.test>"}, nil, ""),
+	})
+	h.mail.(*unsubMail).acct.UnsubscribeAllowWithoutElicitation = false
+	return h, prov, log
+}
+
+// unsubArgs are the arguments of a call over the three ids of
+// [unsubAsking].
+func unsubArgs() map[string]any {
+	return map[string]any{"account": "work", "ids": []string{unsubIDA, unsubIDB, unsubIDMailto}}
+}
+
+// unsubOutOf decodes the structured result of one unsubscribe call.
+func unsubOutOf(t *testing.T, res *mcp.CallToolResult) UnsubscribeOut {
+	t.Helper()
+	if res.IsError {
+		t.Fatalf("unsubscribe failed: %s", bulkText(res))
+	}
+	b, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured content: %v", err)
+	}
+	var out UnsubscribeOut
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("decode structured content %s: %v", b, err)
+	}
+	return out
+}
+
+// checkUnsubQuestion fails unless ep is the one-click question of
+// [unsubAsking]: the count, the account and the two hosts, one line
+// each; no path, no query, no fence marker and no nonce; and the
+// schema field apply with no remember field.
+func checkUnsubQuestion(t *testing.T, ep *mcp.ElicitParams) {
+	t.Helper()
+	msg := ep.Message
+	for _, want := range []string{"2 one-click unsubscribe POSTs", "account work", "\n- news.example.test", "\n- lists.shop.example.test"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("question %q does not hold %q", msg, want)
+		}
+	}
+	for _, bad := range []string{"s3cret", "tok3n", "/unsub", "UNTRUSTED", "mailto", "club.example.test"} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("question %q holds %q", msg, bad)
+		}
+	}
+	got, _ := json.Marshal(ep.RequestedSchema)
+	want, _ := json.Marshal(unsubSchema)
+	if string(got) != string(want) {
+		t.Errorf("schema = %s, want %s", got, want)
+	}
+	if props, _ := unsubSchema["properties"].(map[string]any); props[bulkRemember] != nil || props[bulkField] == nil {
+		t.Errorf("unsubSchema properties = %v, want apply and no remember", props)
+	}
+}
+
+// checkDeclinedRows fails unless the two one-click rows of out are
+// declined with the fenced link in the nonce of out, and the mailto
+// row saved its draft.
+func checkDeclinedRows(t *testing.T, out UnsubscribeOut, prov *unsubProvider) {
+	t.Helper()
+	if len(out.Rows) != 3 {
+		t.Fatalf("rows = %+v, want three", out.Rows)
+	}
+	f := fencerOfNonce(t, out.Fence)
+	for i, path := range []string{"/unsub/s3cret", "/u?t=tok3n"} {
+		r := out.Rows[i]
+		if r.Method != "one_click" || r.Status != "declined" || r.Note != unsubNoteDeclined || !f.Holds(r.Untrusted.URL) || !strings.Contains(r.Untrusted.URL, path) {
+			t.Errorf("row %d = %+v, want one_click declined with the link %s in a fence of %s", i, r, path, out.Fence)
+		}
+	}
+	if r := out.Rows[2]; r.Status != "draft_saved" || len(prov.drafts) != 1 {
+		t.Errorf("mailto row = %+v, drafts = %d, want one draft saved", r, len(prov.drafts))
+	}
+}
+
+// TestUnsubscribe_OneClickAsksFirst holds DU8.1 on the old protocol: a
+// one-click POST goes out only after the human accepts one question
+// for the whole call. The question shows the count and the host of
+// each POST, and no path, query, marker or nonce (INV-7). An accept
+// sends each POST and saves the mailto draft. A decline or a cancel
+// sends no POST; each one-click row is declined with its fenced link,
+// and the mailto draft is still saved, because a draft does not
+// leave. A question that does not complete fails the call, and nothing
+// is sent or saved. A call with no one-click POST asks nobody.
+//
+// arch: DU8.1
+func TestUnsubscribe_OneClickAsksFirst(t *testing.T) {
+	dial := func(t *testing.T, h *unsubscribeTool, elicit bool) *bulkWire {
+		t.Helper()
+		return dialBulk(t, func(srv *mcp.Server) { addUnsubscribe(srv, nil, h) }, elicit)
+	}
+
+	t.Run("accept posts", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		var prompts []*mcp.ElicitParams
+		res, asked := dial(t, h, true).run("unsubscribe", unsubArgs(), func(ep *mcp.ElicitParams) (*mcp.ElicitResult, error) {
+			prompts = append(prompts, ep)
+			return bulkAccept(ep)
+		})
+		out := unsubOutOf(t, res)
+		if asked != 1 || len(prompts) != 1 {
+			t.Fatalf("asked %d times, want one question for the call", asked)
+		}
+		checkUnsubQuestion(t, prompts[0])
+		if len(log.urls) != 2 || out.Rows[0].Status != "done" || out.Rows[1].Status != "done" {
+			t.Fatalf("posts = %v, rows = %+v, want two POSTs and two done rows", log.urls, out.Rows)
+		}
+		if out.Rows[2].Status != "draft_saved" || len(prov.drafts) != 1 {
+			t.Fatalf("mailto row = %+v, drafts = %d, want one draft", out.Rows[2], len(prov.drafts))
+		}
+	})
+
+	for _, action := range []string{"decline", "cancel", "accept with apply false"} {
+		t.Run(action, func(t *testing.T) {
+			h, prov, log := unsubAsking(t)
+			res, asked := dial(t, h, true).run("unsubscribe", unsubArgs(), func(*mcp.ElicitParams) (*mcp.ElicitResult, error) {
+				switch action {
+				case "decline", "cancel":
+					return &mcp.ElicitResult{Action: action}, nil
+				default:
+					return &mcp.ElicitResult{Action: "accept", Content: map[string]any{bulkField: false}}, nil
+				}
+			})
+			if asked != 1 {
+				t.Fatalf("asked %d times, want one", asked)
+			}
+			if len(log.urls) != 0 {
+				t.Fatalf("posts = %v, want none", log.urls)
+			}
+			checkDeclinedRows(t, unsubOutOf(t, res), prov)
+		})
+	}
+
+	t.Run("question fails", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		res, _ := dial(t, h, true).run("unsubscribe", unsubArgs(), func(*mcp.ElicitParams) (*mcp.ElicitResult, error) {
+			return nil, errors.New("client failed")
+		})
+		if !res.IsError || !strings.Contains(bulkText(res), notConfirmedText) {
+			t.Fatalf("result = %s, want the error %q", bulkText(res), notConfirmedText)
+		}
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+	})
+
+	t.Run("no one-click asks nobody", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		res, _ := dial(t, h, true).run("unsubscribe", map[string]any{"account": "work", "ids": []string{unsubIDMailto}}, nil)
+		out := unsubOutOf(t, res)
+		if len(out.Rows) != 1 || out.Rows[0].Status != "draft_saved" || len(prov.drafts) != 1 || len(log.urls) != 0 {
+			t.Fatalf("rows = %+v, drafts = %d, posts = %v, want one draft and no POST", out.Rows, len(prov.drafts), log.urls)
+		}
+	})
+
+	t.Run("request state on the old protocol is stale", func(t *testing.T) {
+		h, _, log := unsubAsking(t)
+		_, err := h.handleReq(withFencer(context.Background(), testFencer(t)), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{RequestState: "forged"}}, UnsubscribeIn{Account: "work", IDs: []string{unsubIDA}})
+		if !errors.Is(err, errConfirmStale) || len(log.urls) != 0 {
+			t.Fatalf("err = %v, posts = %v, want errConfirmStale and no POST", err, log.urls)
+		}
+	})
+}
+
+// TestUnsubscribe_NoElicitationRefused holds the refusal rule of DU8.1,
+// the rule of bulk: a client that cannot ask gets a fixed refusal when
+// the plan has a one-click POST, and nothing is sent or saved, not
+// even the mailto draft. The refusal names no config key. With
+// [unsubscribe] allow_without_elicitation = true, the POST goes out
+// with no question. The [bulk] key does not cover unsubscribe.
+//
+// arch: DU8.1
+func TestUnsubscribe_NoElicitationRefused(t *testing.T) {
+	t.Run("direct call refused", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		h.mail.(*unsubMail).acct.BulkAllowWithoutElicitation = true
+		h.mail.(*unsubMail).acct.AllowWithoutElicitation = true
+		_, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA, unsubIDB, unsubIDMailto}})
+		if !errors.Is(err, errUnsubNoElicitation) {
+			t.Fatalf("err = %v, want errUnsubNoElicitation", err)
+		}
+		if strings.Contains(err.Error(), "allow_without_elicitation") || strings.Contains(err.Error(), "[unsubscribe]") {
+			t.Errorf("refusal %q names the config key", err)
+		}
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+	})
+
+	t.Run("wire client with no elicitation refused", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		res, _ := dialBulk(t, func(srv *mcp.Server) { addUnsubscribe(srv, nil, h) }, false).run("unsubscribe", unsubArgs(), nil)
+		if !res.IsError || !strings.Contains(bulkText(res), "cannot ask the human to confirm a one-click unsubscribe") {
+			t.Fatalf("result = %s, want the refusal", bulkText(res))
+		}
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+	})
+
+	t.Run("config key lets the POST out", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		h.mail.(*unsubMail).acct.UnsubscribeAllowWithoutElicitation = true
+		res, _ := dialBulk(t, func(srv *mcp.Server) { addUnsubscribe(srv, nil, h) }, false).run("unsubscribe", unsubArgs(), nil)
+		out := unsubOutOf(t, res)
+		if len(log.urls) != 2 || out.Rows[0].Status != "done" || out.Rows[1].Status != "done" || len(prov.drafts) != 1 {
+			t.Fatalf("rows = %+v, posts = %v, drafts = %d, want two POSTs and one draft", out.Rows, log.urls, len(prov.drafts))
+		}
+	})
+}
+
+// unsubMRTR adds the unsubscribe tool h to a new server and gives a
+// function that connects one more go-sdk client session to it. The
+// go-sdk client speaks protocol 2026-07-28, so each session uses the
+// MRTR path. The client sends no retry itself; the test builds each
+// retry. A nil elicit gives a client with no elicitation capability.
+func unsubMRTR(t *testing.T, h *unsubscribeTool) func(elicit func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) *mcp.ClientSession {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "mailbag-test", Version: "test"}, nil)
+	addUnsubscribe(srv, nil, h)
+	return func(elicit func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error)) *mcp.ClientSession {
+		t.Helper()
+		ctx := context.Background()
+		client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "test"}, &mcp.ClientOptions{
+			ElicitationHandler: elicit,
+			MultiRoundTrip:     &mcp.MultiRoundTripOptions{Disabled: true},
+		})
+		t1, t2 := mcp.NewInMemoryTransports()
+		ss, err := srv.Connect(ctx, t1, nil)
+		if err != nil {
+			t.Fatalf("server connect: %v", err)
+		}
+		t.Cleanup(func() { _ = ss.Close() })
+		cs, err := client.Connect(ctx, t2, nil)
+		if err != nil {
+			t.Fatalf("client connect: %v", err)
+		}
+		t.Cleanup(func() { _ = cs.Close() })
+		return cs
+	}
+}
+
+// unsubCall makes one call of unsubscribe on cs with args, and with
+// state and the answer under [confirmInputID] when they are set.
+func unsubCall(t *testing.T, cs *mcp.ClientSession, args map[string]any, state string, answer *mcp.ElicitResult) *mcp.CallToolResult {
+	t.Helper()
+	params := &mcp.CallToolParams{Name: "unsubscribe", Arguments: args, RequestState: state}
+	if answer != nil {
+		params.InputResponses = mcp.InputResponseMap{confirmInputID: answer}
+	}
+	res, err := cs.CallTool(context.Background(), params)
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	return res
+}
+
+// unsubFirst makes the first call on cs and gives the request state and
+// the one form question of the input-required result.
+func unsubFirst(t *testing.T, cs *mcp.ClientSession, args map[string]any) (string, *mcp.ElicitParams) {
+	t.Helper()
+	res := unsubCall(t, cs, args, "", nil)
+	if res.IsError {
+		t.Fatalf("first call failed: %s", bulkText(res))
+	}
+	if !res.NeedsInput() || res.RequestState == "" {
+		t.Fatalf("first call = %+v, want an input-required result with a request state", res)
+	}
+	if len(res.Content) != 0 || res.StructuredContent != nil {
+		t.Errorf("input-required result has content %+v, want none", res.Content)
+	}
+	ep, ok := res.InputRequests[confirmInputID].(*mcp.ElicitParams)
+	if !ok || len(res.InputRequests) != 1 {
+		t.Fatalf("input requests = %+v, want one form question under %q", res.InputRequests, confirmInputID)
+	}
+	return res.RequestState, ep
+}
+
+// TestUnsubscribe_MRTRRetry holds DU8.1 on protocol 2026-07-28. The
+// first call reads each message and gives the question as an
+// input-required result; it sends no POST and saves no draft. An
+// accept runs the stored plan: it sends the POSTs to the URLs that the
+// human saw and reads no message again. A decline sends no POST. A
+// reused state, a forged state, changed ids and another session are
+// stale and change nothing. A client with no elicitation gets the
+// refusal, unless the config key is set.
+//
+// arch: DU8.1
+func TestUnsubscribe_MRTRRetry(t *testing.T) {
+	elicit := func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		return nil, errors.New("the MRTR path must not elicit")
+	}
+	accept := &mcp.ElicitResult{Action: "accept", Content: map[string]any{bulkField: true}}
+
+	t.Run("accept runs the stored plan", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		cs := unsubMRTR(t, h)(elicit)
+		state, ep := unsubFirst(t, cs, unsubArgs())
+		checkUnsubQuestion(t, ep)
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("first call: posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+		reads := len(prov.opts)
+		// The messages change after the question. The retry still
+		// posts to the URLs that the human saw.
+		for _, id := range []string{unsubIDA, unsubIDB} {
+			prov.msgs[id].Headers[hdrListUnsubscribe] = []string{"<https://evil.example.test/u>"}
+		}
+		out := unsubOutOf(t, unsubCall(t, cs, unsubArgs(), state, accept))
+		if len(prov.opts) != reads {
+			t.Errorf("the retry read %d messages, want none", len(prov.opts)-reads)
+		}
+		if len(log.urls) != 2 || !strings.Contains(log.urls[0], "news.example.test") || !strings.Contains(log.urls[1], "lists.shop.example.test") {
+			t.Fatalf("posts = %v, want the two URLs of the question", log.urls)
+		}
+		if out.Rows[0].Status != "done" || out.Rows[1].Status != "done" || out.Rows[2].Status != "draft_saved" || len(prov.drafts) != 1 {
+			t.Fatalf("rows = %+v, drafts = %d, want two done and one draft", out.Rows, len(prov.drafts))
+		}
+
+		res := unsubCall(t, cs, unsubArgs(), state, accept)
+		if !res.IsError || !strings.Contains(bulkText(res), "not open any more") {
+			t.Fatalf("reused state = %s, want the stale refusal", bulkText(res))
+		}
+		if len(log.urls) != 2 {
+			t.Fatalf("posts = %v after a reused state, want no new POST", log.urls)
+		}
+	})
+
+	t.Run("decline sends no POST", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		cs := unsubMRTR(t, h)(elicit)
+		state, _ := unsubFirst(t, cs, unsubArgs())
+		out := unsubOutOf(t, unsubCall(t, cs, unsubArgs(), state, &mcp.ElicitResult{Action: "decline"}))
+		if len(log.urls) != 0 {
+			t.Fatalf("posts = %v, want none", log.urls)
+		}
+		checkDeclinedRows(t, out, prov)
+	})
+
+	t.Run("stale retries change nothing", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		dial := unsubMRTR(t, h)
+		cs := dial(elicit)
+		other := dial(elicit)
+		state, _ := unsubFirst(t, cs, unsubArgs())
+		cases := []struct {
+			name  string
+			cs    *mcp.ClientSession
+			args  map[string]any
+			state string
+		}{
+			{"forged state", cs, unsubArgs(), "forged"},
+			{"changed ids", cs, map[string]any{"account": "work", "ids": []string{unsubIDA}}, state},
+		}
+		for _, c := range cases {
+			res := unsubCall(t, c.cs, c.args, c.state, accept)
+			if !res.IsError || !strings.Contains(bulkText(res), "not open any more") {
+				t.Errorf("%s = %s, want the stale refusal", c.name, bulkText(res))
+			}
+		}
+		// The changed ids took the record, so a new first call gives
+		// a state that another session then tries.
+		state, _ = unsubFirst(t, cs, unsubArgs())
+		if res := unsubCall(t, other, unsubArgs(), state, accept); !res.IsError || !strings.Contains(bulkText(res), "not open any more") {
+			t.Errorf("another session = %s, want the stale refusal", bulkText(res))
+		}
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+	})
+
+	t.Run("no elicitation", func(t *testing.T) {
+		h, prov, log := unsubAsking(t)
+		dial := unsubMRTR(t, h)
+		res := unsubCall(t, dial(nil), unsubArgs(), "", nil)
+		if !res.IsError || !strings.Contains(bulkText(res), "cannot ask the human to confirm a one-click unsubscribe") {
+			t.Fatalf("result = %s, want the refusal", bulkText(res))
+		}
+		if len(log.urls) != 0 || len(prov.drafts) != 0 {
+			t.Fatalf("posts = %v, drafts = %d, want none", log.urls, len(prov.drafts))
+		}
+		h.mail.(*unsubMail).acct.UnsubscribeAllowWithoutElicitation = true
+		out := unsubOutOf(t, unsubCall(t, dial(nil), unsubArgs(), "", nil))
+		if len(log.urls) != 2 || out.Rows[0].Status != "done" {
+			t.Fatalf("rows = %+v, posts = %v, want two POSTs with the config key", out.Rows, log.urls)
+		}
+	})
 }

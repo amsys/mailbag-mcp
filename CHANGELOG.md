@@ -18,8 +18,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused with the error class `output_refused`.
 - Error results start with the line `_fence: <nonce>`. Folder names no
   longer appear in ids or in plain fields.
-- The one-click `unsubscribe` and the Gmail `delete_filter` ask the
-  human first.
+- `unsubscribe` asks the human one question before it sends a
+  one-click POST. The question shows the number of POSTs and the host
+  of each. A decline sends no POST and gives each one-click row the
+  status `declined` and its link. A client that cannot ask gets a
+  refusal, unless the new key `[unsubscribe] allow_without_elicitation`
+  is true. The `[bulk]` key does not cover this question.
+- The Gmail `delete_filter` asks the human first.
 
 ### Changed
 

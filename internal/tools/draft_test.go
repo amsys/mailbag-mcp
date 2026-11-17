@@ -115,8 +115,9 @@ func TestDraft_HTMLCutToAllowlist(t *testing.T) {
 		if len(prov.drafts) != 1 {
 			t.Fatalf("SaveDraft ran %d times, want 1", len(prov.drafts))
 		}
-		// guard.StripFenceMarkers removes the marker head only (M14).
-		want := `<p>See you at lunch.</p><a href="https://ok.example/">menu</a> BODY]`
+		// guard.StripFenceMarkers removes the whole marker (M14).
+		// arch: DU1.2
+		want := `<p>See you at lunch.</p><a href="https://ok.example/">menu</a> `
 		got := prov.drafts[0].HTML
 		if got != want {
 			t.Errorf("saved html = %q, want %q", got, want)

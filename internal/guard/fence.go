@@ -17,6 +17,13 @@ import (
 // arch: DH2.2, DH2.3
 var markerFoldRe = regexp.MustCompile(`(?i)[\[\x{FF3B}]/?UNTRUSTED[_ \-]?`)
 
+// markerTailRe matches the tail of a marker after markerFoldRe: an
+// optional KIND word, an optional space, an optional 16-hex nonce and
+// one `]`. The tail holds no `[`, so it cannot reach the next marker.
+//
+// arch: DU1.2
+var markerTailRe = regexp.MustCompile(`^[A-Za-z_]{0,24} ?(?:[0-9a-fA-F]{16})?\]`)
+
 // escapeMarkers replaces the bracket of each fence marker in s with
 // U+27E6, so content cannot forge a marker (§3.15, G2). A marker can
 // use confusable letters or a confusable slash, a separator that is
@@ -53,7 +60,11 @@ func escapeMarkers(s string) string {
 // and ends at the end of the original rune that produced the last
 // matched byte, so an NFKC expansion is never cut in half.
 //
-// arch: DH2.3
+// After the prefix, it also deletes the tail of the marker when the
+// whole tail is present: a KIND word, a space, a nonce and the closing
+// `]` (markerTailRe). Without the `]` it deletes the prefix only.
+//
+// arch: DH2.3, DU1.2
 func removeMarkers(s string) string {
 	folded, off := foldCopy(s, true)
 	locs := markerFoldRe.FindAllStringIndex(folded, -1)
@@ -68,7 +79,11 @@ func removeMarkers(s string) string {
 		// spans do not overlap. A later Unicode table can change
 		// this, and a bad slice would panic on mail text.
 		b.WriteString(s[last:max(off[loc[0]], last)])
-		last = runeEnd(s, off, loc[1]-1)
+		end := loc[1]
+		if t := markerTailRe.FindStringIndex(folded[end:]); t != nil {
+			end += t[1]
+		}
+		last = runeEnd(s, off, end-1)
 	}
 	b.WriteString(s[last:])
 	return b.String()

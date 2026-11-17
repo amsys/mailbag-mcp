@@ -380,7 +380,7 @@ func outZoneProblems(tp reflect.Type) []string {
 		return []string{name + ": Head is not the first, embedded field (DU2.1)"}
 	}
 	if _, tagged := tp.Field(0).Tag.Lookup("json"); tagged {
-		return []string{name + ": Head has a json tag, so fence is not the first key (INV-4)"}
+		return []string{name + ": Head has a json tag, so _fence is not the first key (INV-4)"}
 	}
 	return typeZoneProblems(tp, name, false, "", map[zoneType]bool{})
 }
@@ -525,7 +525,7 @@ func hostileUnsubscribe(ctx context.Context, t *testing.T) UnsubscribeOut {
 	if err != nil {
 		t.Fatalf("unsubscribe: %v", err)
 	}
-	if len(out.Rows) != 1 || out.Rows[0].URL == "" || out.Rows[0].Note == "" {
+	if len(out.Rows) != 1 || out.Rows[0].Untrusted.URL == "" || out.Rows[0].Note == "" {
 		t.Fatalf("the unsubscribe fixture left a field empty: %+v", out.Rows)
 	}
 	if len(posts.urls) != 0 {
@@ -659,8 +659,8 @@ func hostileGmailSettings(ctx context.Context, t *testing.T) GmailSettingsOut {
 	if err != nil {
 		t.Fatalf("gmail_settings create_filter: %v", err)
 	}
-	out.Vacation, out.Signature, out.Note = vac.Vacation, sig.Signature, created.Note
-	if len(out.Filters) == 0 || out.Vacation == nil || out.Signature == "" || out.Note == "" {
+	out.Vacation, out.Untrusted, out.Note = vac.Vacation, sig.Untrusted, created.Note
+	if len(out.Filters) == 0 || out.Vacation == nil || out.Untrusted.Signature == "" || out.Note == "" {
 		t.Fatalf("the gmail_settings fixture left a field empty: %+v", out)
 	}
 	return out

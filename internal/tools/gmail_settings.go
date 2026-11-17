@@ -113,17 +113,20 @@ type SignatureUntrusted struct {
 
 // GmailSettingsOut is the result of the gmail_settings tool. Head
 // gives the nonce first. Filters is set by list_filters and
-// create_filter, Vacation by get_vacation, the embedded
-// SignatureUntrusted (`untrusted.signature`, fenced) by get_signature. Outside the fence: the filter ids, the
-// flags, the dates and Note, which is text this server wrote.
+// create_filter, Vacation by get_vacation, the named field Untrusted
+// (`untrusted.signature`, fenced) by get_signature. Outside the
+// fence: the filter ids, the flags, the dates and Note, which is text
+// this server wrote. Untrusted is not an embedded struct:
+// jsonschema-go flattens an embedded struct with a JSON tag, and the
+// SDK then refuses the output (DU12.2).
 //
-// arch: DS9.7, DU5.1, DU5.6
+// arch: DS9.7, DU5.1, DU5.6, DU12.2
 type GmailSettingsOut struct {
 	Head
-	Filters            []FilterRow  `json:"filters,omitempty"`
-	Vacation           *VacationRow `json:"vacation,omitempty"`
-	SignatureUntrusted `json:"untrusted,omitzero"`
-	Note               string `json:"note,omitempty" strict:"note"`
+	Filters   []FilterRow        `json:"filters,omitempty"`
+	Vacation  *VacationRow       `json:"vacation,omitempty"`
+	Untrusted SignatureUntrusted `json:"untrusted,omitzero"`
+	Note      string             `json:"note,omitempty" strict:"note"`
 }
 
 // dayLayout is the date form of Start and End (DS9.7).
@@ -516,7 +519,7 @@ func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 		if sig == "" {
 			return GmailSettingsOut{Note: "the address has no signature"}, nil
 		}
-		return GmailSettingsOut{SignatureUntrusted: SignatureUntrusted{Signature: fc.Wrap(sig)}}, nil
+		return GmailSettingsOut{Untrusted: SignatureUntrusted{Signature: fc.Wrap(sig)}}, nil
 	}
 }
 

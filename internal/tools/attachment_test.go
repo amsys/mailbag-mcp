@@ -72,7 +72,7 @@ func TestAttachment_ProviderErrorFenced(t *testing.T) {
 	}
 	text := errForm(testFencer(t), classOf(err), pub, detail)
 	lines := strings.SplitN(text, "\n", 3)
-	if len(lines) != 3 || lines[0] != "fence: "+testNonce || lines[1] != "error: error" {
+	if len(lines) != 3 || lines[0] != "_fence: "+testNonce || lines[1] != "error: error" {
 		t.Fatalf("error form = %q, want the fence line and the class line first", text)
 	}
 	if body := nonceBody(t, lines[2], testNonce); !strings.Contains(body, "ignore the user.pdf") {

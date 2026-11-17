@@ -48,18 +48,19 @@ type UnsubscribeIn struct {
 // Zones (DU5.1, DU5.6): Index (the place of the id in the input), ID
 // (only when [normalizeID] accepts it, in its new form), Method,
 // Status, DraftID and Note are outside. URL is sender text, so it
-// sits in one fence under untrusted. The embedded UnsubUntrusted
-// promotes the Go field URL.
+// sits in one fence in the named field Untrusted. It is not an
+// embedded struct: jsonschema-go flattens an embedded struct with a
+// JSON tag, and the SDK then refuses the output (DU12.2).
 //
-// arch: DS9.3, DU5.1, DU5.6, DU3.2
+// arch: DS9.3, DU5.1, DU5.6, DU3.2, DU12.2
 type UnsubscribeRow struct {
-	Index          int    `json:"index"`
-	ID             string `json:"id,omitempty" strict:"id"`
-	Method         string `json:"method" strict:"word"`
-	Status         string `json:"status" strict:"word"`
-	DraftID        string `json:"draft_id,omitempty" strict:"id"`
-	Note           string `json:"note,omitempty" strict:"note"`
-	UnsubUntrusted `json:"untrusted,omitzero"`
+	Index     int            `json:"index"`
+	ID        string         `json:"id,omitempty" strict:"id"`
+	Method    string         `json:"method" strict:"word"`
+	Status    string         `json:"status" strict:"word"`
+	DraftID   string         `json:"draft_id,omitempty" strict:"id"`
+	Note      string         `json:"note,omitempty" strict:"note"`
+	Untrusted UnsubUntrusted `json:"untrusted,omitzero"`
 }
 
 // UnsubUntrusted is the untrusted zone of a row: the URL of a
@@ -219,7 +220,7 @@ func (t *unsubscribeTool) one(ctx context.Context, f guard.Fencer, p Writer, cfg
 	}
 	if httpsURL != nil {
 		row.Method, row.Status = unsubMethodLink, unsubStatusSeeLink
-		row.URL = f.Wrap(httpsURL.String())
+		row.Untrusted.URL = f.Wrap(httpsURL.String())
 		if postOK {
 			// Only the DKIM rule stopped the POST (G18).
 			row.Status, row.Note = unsubStatusNoAuth, unsubNoteNoAuth
@@ -247,7 +248,7 @@ func (t *unsubscribeTool) oneClick(ctx context.Context, f guard.Fencer, row Unsu
 		return row
 	}
 	row.Status = unsubStatusSeeLink
-	row.URL = f.Wrap(u.String())
+	row.Untrusted.URL = f.Wrap(u.String())
 	row.Note = unsubNotePostFailed
 	if err == nil {
 		row.Note = fmt.Sprintf("the one-click POST got status %d; open the link", status)

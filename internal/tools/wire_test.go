@@ -52,7 +52,7 @@ func wireClient(t *testing.T, err error) (*mcp.ClientSession, *int) {
 }
 
 // errHead matches the nonce line and the class line of DU6.1.
-var errHead = regexp.MustCompile(`\Afence: ([0-9a-f]{16})\nerror: ([a-z_]+)\n`)
+var errHead = regexp.MustCompile(`\A_fence: ([0-9a-f]{16})\nerror: ([a-z_]+)\n`)
 
 // TestMarkCalls_SDKErrorGetsForm holds DU6.3: an argument that the SDK
 // refuses before the handler runs gives an error result with a new
@@ -104,7 +104,7 @@ func TestMarkCalls_WrapReqResultKept(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 	text := res.Content[0].(*mcp.TextContent).Text
-	m := regexp.MustCompile(`\Afence: [0-9a-f]{16}\nerror: refused\nthe server refused the change\z`).FindString(text)
+	m := regexp.MustCompile(`\A_fence: [0-9a-f]{16}\nerror: refused\nthe server refused the change\z`).FindString(text)
 	if !res.IsError || m == "" {
 		t.Errorf("result = %v %q, want the error form of WrapReq with the class refused", res.IsError, text)
 	}

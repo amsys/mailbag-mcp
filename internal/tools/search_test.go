@@ -509,7 +509,7 @@ func rowText(r SearchRow) string {
 
 // TestSearch_TwoZoneResultPassesGate runs the output gate over a search
 // result whose every sender field is hostile, and checks the wire
-// form: "fence" is the first key, there is no "email" key, the flags
+// form: "_fence" is the first key, there is no "email" key, the flags
 // hold closed words only, each label is its own fence, and the folder
 // ref gives the raw name back through folderArg.
 //
@@ -537,7 +537,7 @@ func TestSearch_TwoZoneResultPassesGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"fence":"` + testNonce + `",`; !strings.HasPrefix(string(b), want) {
+	if want := `{"_fence":"` + testNonce + `",`; !strings.HasPrefix(string(b), want) {
 		t.Errorf("the result does not start with %s: %s", want, b)
 	}
 	if strings.Contains(string(b), `"email"`) {

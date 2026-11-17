@@ -39,7 +39,7 @@ func textOf(t *testing.T, res *mcp.CallToolResult) string {
 
 // errFormHead matches the nonce line and the class line of an error
 // result (DU6.1).
-var errFormHead = regexp.MustCompile(`\Afence: ([0-9a-f]{16})\nerror: ([a-z0-9_]{1,32})(?:\n|\z)`)
+var errFormHead = regexp.MustCompile(`\A_fence: ([0-9a-f]{16})\nerror: ([a-z0-9_]{1,32})(?:\n|\z)`)
 
 // errFormParts is the text of an error result of DU6.1, split into
 // its parts: the nonce of the fence line, the class word, the public
@@ -51,7 +51,7 @@ type errFormParts struct {
 // text gives the error form of p, made in the test and not by
 // errForm, so a parse can be checked against it.
 func (p errFormParts) text() string {
-	s := "fence: " + p.nonce + "\nerror: " + p.class
+	s := "_fence: " + p.nonce + "\nerror: " + p.class
 	if p.public != "" {
 		s += "\n" + p.public
 	}
@@ -464,7 +464,7 @@ type headOut struct {
 // TestWrapReq_SetsFenceAfterHandler holds DU2.1 and DU2.2: WrapReq
 // gives the handler one Fencer in the context and, after the handler,
 // writes the nonce of that Fencer into Head. A value that the handler
-// writes into Head does not reach the result. "fence" is the first key
+// writes into Head does not reach the result. "_fence" is the first key
 // of the JSON of the result (INV-4).
 //
 // arch: DU2.1, DU2.2
@@ -490,7 +490,7 @@ func TestWrapReq_SetsFenceAfterHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"fence":"` + seen + `",`; !strings.HasPrefix(string(b), want) {
+	if want := `{"_fence":"` + seen + `",`; !strings.HasPrefix(string(b), want) {
 		t.Errorf("result JSON = %s, want it to start with %s", b, want)
 	}
 }
@@ -630,7 +630,7 @@ func TestWrapReq_ErrorForm(t *testing.T) {
 		if err != nil || res == nil || !res.IsError {
 			t.Fatalf("%s: res %+v, err %v; want an isError result", c.name, res, err)
 		}
-		want := "fence: " + f.Nonce() + "\nerror: " + c.class
+		want := "_fence: " + f.Nonce() + "\nerror: " + c.class
 		if c.public != "" {
 			want += "\n" + c.public
 		}
@@ -668,7 +668,7 @@ func TestWrapReq_PanicIsInternal(t *testing.T) {
 	if err != nil || res == nil || !res.IsError {
 		t.Fatalf("res %+v, err %v; want an isError result", res, err)
 	}
-	if got, want := textOf(t, res), "fence: "+f.Nonce()+"\nerror: internal\n"+f.Wrap("panic: kaboom"); got != want {
+	if got, want := textOf(t, res), "_fence: "+f.Nonce()+"\nerror: internal\n"+f.Wrap("panic: kaboom"); got != want {
 		t.Errorf("error text = %q, want %q", got, want)
 	}
 	if out.Fence != f.Nonce() || out.Data != "" {
@@ -788,7 +788,7 @@ func TestWrapReq_GateRefusesOutWithNoHead(t *testing.T) {
 		t.Fatalf("res %+v, err %v; want an isError result", res, err)
 	}
 	text := textOf(t, res)
-	if !isErrForm(text, "output_refused", "wrapOut: Head is not the first, embedded field", "") || !strings.HasPrefix(text, "fence: "+f.Nonce()+"\n") {
+	if !isErrForm(text, "output_refused", "wrapOut: Head is not the first, embedded field", "") || !strings.HasPrefix(text, "_fence: "+f.Nonce()+"\n") {
 		t.Errorf("error text = %q, want the class output_refused, the missing Head and the nonce %s", text, f.Nonce())
 	}
 	if out != (wrapOut{}) {

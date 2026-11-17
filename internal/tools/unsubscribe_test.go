@@ -220,7 +220,7 @@ func TestUnsubscribe_OneClickPostsWhenDKIMPass(t *testing.T) {
 		t.Fatalf("rows = %+v, want one", out.Rows)
 	}
 	r := out.Rows[0]
-	if r.ID != unsubIDA || r.Method != "one_click" || r.Status != "done" || r.URL != "" || r.DraftID != "" {
+	if r.ID != unsubIDA || r.Method != "one_click" || r.Status != "done" || r.Untrusted.URL != "" || r.DraftID != "" {
 		t.Fatalf("row = %+v, want a one-click done row with no URL and no draft", r)
 	}
 	reqs := srv.requests()
@@ -290,7 +290,7 @@ func TestUnsubscribe_NoDKIMGivesLink(t *testing.T) {
 			if r.Method != "link" || r.Status != "not_authenticated" || r.Note == "" {
 				t.Fatalf("row = %+v, want a not authenticated link", r)
 			}
-			wantFenced(t, r.URL, u)
+			wantFenced(t, r.Untrusted.URL, u)
 			if len(log.urls) != 0 {
 				t.Fatalf("posts = %v, want none", log.urls)
 			}
@@ -339,7 +339,7 @@ func TestUnsubscribe_NoPostHeaderGivesLink(t *testing.T) {
 			if r.Method != "link" || r.Status != "see_link" {
 				t.Fatalf("row = %+v, want a see link row", r)
 			}
-			wantFenced(t, r.URL, u)
+			wantFenced(t, r.Untrusted.URL, u)
 			if len(log.urls) != 0 {
 				t.Fatalf("posts = %v, want none", log.urls)
 			}
@@ -366,7 +366,7 @@ func TestUnsubscribe_HTTPURLRefused(t *testing.T) {
 	}
 	for _, i := range []int{0, 2} {
 		r := out.Rows[i]
-		if r.Method != "none" || r.Status != "no_header" || r.URL != "" || r.Note == "" {
+		if r.Method != "none" || r.Status != "no_header" || r.Untrusted.URL != "" || r.Note == "" {
 			t.Errorf("row %s = %+v, want none with a note and no URL", r.ID, r)
 		}
 	}
@@ -403,7 +403,7 @@ func TestUnsubscribe_MailtoMakesDraft(t *testing.T) {
 		t.Fatalf("handle: %v", err)
 	}
 	for _, r := range out.Rows {
-		if r.Method != "draft" || r.Status != "draft_saved" || r.DraftID != prov.draftID || r.URL != "" {
+		if r.Method != "draft" || r.Status != "draft_saved" || r.DraftID != prov.draftID || r.Untrusted.URL != "" {
 			t.Errorf("row = %+v, want draft saved with id %s", r, prov.draftID)
 		}
 	}
@@ -441,7 +441,7 @@ func TestUnsubscribe_NoHeader(t *testing.T) {
 	}
 	want := []struct{ method, status string }{{"none", "no_header"}, {"none", "no_header"}, {"none", "failed"}}
 	for i, r := range out.Rows {
-		if r.Method != want[i].method || r.Status != want[i].status || r.URL != "" || r.DraftID != "" {
+		if r.Method != want[i].method || r.Status != want[i].status || r.Untrusted.URL != "" || r.DraftID != "" {
 			t.Errorf("row %d = %+v, want %v", i, r, want[i])
 		}
 	}
@@ -533,12 +533,12 @@ func TestUnsubscribe_RedirectIsSeeLink(t *testing.T) {
 	if r.Method != "one_click" || r.Status != "see_link" || r.Note == "" {
 		t.Fatalf("redirect row = %+v, want see link with a note", r)
 	}
-	wantFenced(t, r.URL, "/redirect")
+	wantFenced(t, r.Untrusted.URL, "/redirect")
 	g := out.Rows[1]
 	if g.Status != "see_link" || !strings.Contains(g.Note, "410") {
 		t.Fatalf("gone row = %+v, want see link with status 410 in the note", g)
 	}
-	wantFenced(t, g.URL, "/gone")
+	wantFenced(t, g.Untrusted.URL, "/gone")
 	for _, q := range srv.requests() {
 		if q.path == "/landing" {
 			t.Fatalf("the redirect target got %s, want no request", q.method)
@@ -587,9 +587,9 @@ func TestUnsubscribe_URLFenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	wantFenced(t, out.Rows[0].URL, "/link")
-	wantFenced(t, out.Rows[1].URL, "/noauth")
-	wantFenced(t, out.Rows[2].URL, "")
+	wantFenced(t, out.Rows[0].Untrusted.URL, "/link")
+	wantFenced(t, out.Rows[1].Untrusted.URL, "/noauth")
+	wantFenced(t, out.Rows[2].Untrusted.URL, "")
 	if u, _ := url.Parse(forged); u == nil {
 		t.Fatal("the forged URL does not parse; the case tests nothing")
 	}

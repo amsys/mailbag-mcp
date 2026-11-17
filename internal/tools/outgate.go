@@ -81,7 +81,7 @@ func checkOut(f guard.Fencer, out any) error {
 	if tp.NumField() == 0 || !tp.Field(0).Anonymous || tp.Field(0).Type != headType {
 		return fmt.Errorf("%s: Head is not the first, embedded field", root)
 	}
-	// A JSON tag on Head would hide "fence" or move it under another
+	// A JSON tag on Head would hide "_fence" or move it under another
 	// key, so it would not be the first key of the result (INV-4).
 	if _, tagged := tp.Field(0).Tag.Lookup("json"); tagged {
 		return fmt.Errorf("%s: Head has a json tag; encoding/json must promote its fields", root)

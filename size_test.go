@@ -35,8 +35,16 @@ import (
 // input in the OpenPGP verifier, and go-sdk v1.8.0 has session end
 // fixes. Together they add about 450 KB.
 //
+// Raised from 15,600,000 to 16,000,000 (owner decision 2026-11-17 in
+// the header of the untrusted-output design: "byte budgets can go up",
+// "Cost is not a problem"; bump the budget, do not cut code). The
+// two-zone output (Fencer, the output gate in WrapReq, the strict
+// grammar) brings linux/amd64 to 15,659,168 bytes and windows/amd64 to
+// 15,697,920 bytes at T25. The new budget holds for the rest of that
+// run.
+//
 // arch: DH1.1
-const sizeBudgetBytes = 15_600_000
+const sizeBudgetBytes = 16_000_000
 
 // TestBinarySize_Budget builds the release binary the same way a
 // release build does, and checks it stays under the size budget. The

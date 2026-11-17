@@ -133,7 +133,7 @@ func errParts(err error) (public, detail string) {
 
 // errForm gives the text of an error result (DU6.1):
 //
-//	fence: <nonce>
+//	_fence: <nonce>
 //	error: <class>
 //	<public>          (only when not empty)
 //	<fence of detail> (only when detail is not empty)
@@ -144,13 +144,13 @@ func errParts(err error) (public, detail string) {
 // as "error". The design calls this function errText; that name is
 // taken by a test helper in this package.
 //
-// arch: DU6.1, DU6.2, DU9.1
+// arch: DU6.1, DU6.2, DU9.1, DU12.2
 func errForm(f guard.Fencer, class, public, detail string) string {
 	if !errClasses[class] {
 		class = "error"
 	}
 	var b strings.Builder
-	b.WriteString("fence: ")
+	b.WriteString("_fence: ")
 	b.WriteString(f.Nonce())
 	b.WriteString("\nerror: ")
 	b.WriteString(class)

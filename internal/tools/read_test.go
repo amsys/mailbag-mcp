@@ -2067,8 +2067,8 @@ func TestRead_TwoZoneResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(b), `{"fence":"`+testNonce+`"`) {
-		t.Errorf("the result does not start with the fence key (INV-4): %.60s", b)
+	if !strings.HasPrefix(string(b), `{"_fence":"`+testNonce+`"`) {
+		t.Errorf("the result does not start with the _fence key (INV-4): %.60s", b)
 	}
 	if len(out.Messages) != 2 {
 		t.Fatalf("Messages = %d, want 2", len(out.Messages))

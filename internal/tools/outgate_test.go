@@ -296,7 +296,7 @@ func TestCheckOut_FenceIsTheNonce(t *testing.T) {
 		H Head `json:"h"`
 	}
 	wantRefused(t, checkOut(f, namedHead{H: Head{Fence: f.Nonce()}}), "namedHead", "")
-	// A json tag on the embedded Head hides "fence" ("-") or moves it
+	// A json tag on the embedded Head hides "_fence" ("-") or moves it
 	// under another key: it is then not the first key (INV-4).
 	type hiddenHead struct {
 		Head `json:"-"`

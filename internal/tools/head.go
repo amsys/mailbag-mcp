@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 // Head is the first field of every tool result: the nonce of the
-// response, under the key "fence". This file also carries the
+// response, under the key "_fence". This file also carries the
 // Fencer of the call from WrapReq to the handler in the context.
 //
-// arch: DU2.1, DU2.2
+// arch: DU2.1, DU2.2, DU12.2
 package tools
 
 import (
@@ -15,15 +15,17 @@ import (
 )
 
 // Head holds the nonce of one response. Each Out struct embeds it as
-// its first field, so encoding/json writes "fence" as the first key
-// of the result. A handler never writes it: [WrapReq] sets it after
-// the handler returns.
+// its first field, so encoding/json writes "_fence" as the first key
+// of the result. go-sdk writes the keys in byte order, and "_" sorts
+// before each lowercase letter, so "_fence" is also first there. A
+// handler never writes it: [WrapReq] sets it after the handler
+// returns.
 //
-// arch: DU2.1
+// arch: DU2.1, DU12.2
 type Head struct {
 	// Fence is the nonce of this response: 16 lowercase hex
 	// characters. Every marker in the result carries it.
-	Fence string `json:"fence" strict:"nonce"`
+	Fence string `json:"_fence" strict:"nonce"`
 }
 
 // setFence writes the nonce n into the head. Only [WrapReq] calls it.

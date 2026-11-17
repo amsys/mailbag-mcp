@@ -322,7 +322,7 @@ func TestGmailSettings_NotGmailGivesNote(t *testing.T) {
 		t.Fatalf("list_filters on imap: %v", err)
 	}
 	want := "gmail_settings works for Gmail accounts only; home uses imap"
-	if out.Note != want || out.Filters != nil || out.Vacation != nil || out.Signature != "" {
+	if out.Note != want || out.Filters != nil || out.Vacation != nil || out.Untrusted.Signature != "" {
 		t.Errorf("out = %+v, want only the note %q", out, want)
 	}
 
@@ -416,7 +416,7 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkFenced(t, "GmailSettingsOut.Signature", testNonce, sig.Signature)
+	checkFenced(t, "GmailSettingsOut.Untrusted.Signature", testNonce, sig.Untrusted.Signature)
 }
 
 // TestGmailSettings_TwoZones holds the two-zone form: the result starts
@@ -455,8 +455,8 @@ func TestGmailSettings_TwoZones(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(string(b), `{"fence":"`+testNonce+`"`) {
-			t.Errorf("%s = %s, want fence first", name, b)
+		if !strings.HasPrefix(string(b), `{"_fence":"`+testNonce+`"`) {
+			t.Errorf("%s = %s, want _fence first", name, b)
 		}
 	}
 	u := list.Filters[0].Untrusted

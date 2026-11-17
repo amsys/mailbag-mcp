@@ -139,14 +139,14 @@ func TestGmailSettings_FiltersMissingParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != `{"id":"f1"}` {
-		t.Errorf("empty filter = %s, want {\"id\":\"f1\"}", b)
+	if string(b) != `{"id":"f1","untrusted":{}}` {
+		t.Errorf("empty filter = %s, want {\"id\":\"f1\",\"untrusted\":{}}", b)
 	}
 	r := out.Filters[1]
-	if r.ID != "f2" || !strings.Contains(r.From, "news@example.test") || !r.MarkRead {
+	if r.ID != "f2" || !strings.Contains(r.Untrusted.From, "news@example.test") || !r.MarkRead {
 		t.Errorf("row 2 = %+v, want id f2, the from text and mark_read", r)
 	}
-	if r.To != "" || r.Subject != "" || r.Query != "" || r.HasAttachment != nil || r.AddLabels != nil || r.Star {
+	if r.Untrusted.To != "" || r.Untrusted.Subject != "" || r.Untrusted.Query != "" || r.HasAttachment != nil || r.Untrusted.AddLabels != nil || r.Star {
 		t.Errorf("row 2 = %+v, want no parts beyond from and mark_read", r)
 	}
 }
@@ -388,12 +388,12 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 			t.Fatalf("filters = %+v, want one row", out.Filters)
 		}
 		r := out.Filters[0]
-		checkFenced(t, "FilterRow.From", r.From)
-		checkFenced(t, "FilterRow.To", r.To)
-		checkFenced(t, "FilterRow.Subject", r.Subject)
-		checkFenced(t, "FilterRow.Query", r.Query)
-		checkFenced(t, "FilterRow.AddLabels", r.AddLabels[0])
-		checkFenced(t, "FilterRow.RemoveLabels", r.RemoveLabels[0])
+		checkFenced(t, "FilterRow.From", r.Untrusted.From)
+		checkFenced(t, "FilterRow.To", r.Untrusted.To)
+		checkFenced(t, "FilterRow.Subject", r.Untrusted.Subject)
+		checkFenced(t, "FilterRow.Query", r.Untrusted.Query)
+		checkFenced(t, "FilterRow.AddLabels", r.Untrusted.AddLabels[0])
+		checkFenced(t, "FilterRow.RemoveLabels", r.Untrusted.RemoveLabels[0])
 		if r.ID != "f1" {
 			t.Errorf("FilterRow.ID = %q, want f1 outside a fence", r.ID)
 		}
@@ -403,8 +403,8 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkFenced(t, "VacationRow.Subject", vac.Vacation.Subject)
-	checkFenced(t, "VacationRow.Body", vac.Vacation.Body)
+	checkFenced(t, "VacationRow.Subject", vac.Vacation.Untrusted.Subject)
+	checkFenced(t, "VacationRow.Body", vac.Vacation.Untrusted.Body)
 	if vac.Vacation.Start != "2026-10-14" {
 		t.Errorf("VacationRow.Start = %q, want 2026-10-14 outside a fence", vac.Vacation.Start)
 	}
@@ -414,4 +414,60 @@ func TestGmailSettings_TextFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkFenced(t, "GmailSettingsOut.Signature", sig.Signature)
+}
+
+// TestGmailSettings_TwoZones holds the two-zone form: the result starts
+// with the nonce, every sender text sits under `untrusted` as a fence
+// with that nonce, the rest passes the output gate, and the signature
+// is one fence under untrusted.signature.
+//
+// arch: DU5.1, DU5.6, DU9.1, DU6.2
+func TestGmailSettings_TwoZones(t *testing.T) {
+	ctx := context.Background()
+	f := testFencer(t)
+	h, w := settingsFixture("send")
+	w.filters = []gmail.Filter{{ID: "f1", From: "a@example.test", AddLabels: []string{"Later"}, MarkRead: true}}
+	w.vac = gmail.Vacation{Enabled: true, Subject: "Away", Body: "Back soon", Start: time.Date(2026, 10, 14, 0, 0, 0, 0, time.Local)}
+	w.sig = "Ann"
+	mark := "[UNTRUSTED_" + testNonce + "]"
+
+	list, err := h.handle(withFencer(ctx, f), GmailSettingsIn{Account: "work", Action: "list_filters"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vac, err := h.handle(withFencer(ctx, f), GmailSettingsIn{Account: "work", Action: "get_vacation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := h.handle(withFencer(ctx, f), GmailSettingsIn{Account: "work", Action: "get_signature"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]GmailSettingsOut{"list": list, "vacation": vac, "signature": sig} {
+		out.setFence(testNonce)
+		if err := checkOut(f, out); err != nil {
+			t.Errorf("%s: output gate refused: %v", name, err)
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(b), `{"fence":"`+testNonce+`"`) {
+			t.Errorf("%s = %s, want fence first", name, b)
+		}
+	}
+	u := list.Filters[0].Untrusted
+	if !strings.HasPrefix(u.From, mark) || !strings.HasPrefix(u.AddLabels[0], mark) {
+		t.Errorf("filter untrusted = %+v, want nonce fences", u)
+	}
+	if !strings.HasPrefix(vac.Vacation.Untrusted.Subject, mark) || !strings.HasPrefix(vac.Vacation.Untrusted.Body, mark) {
+		t.Errorf("vacation untrusted = %+v, want nonce fences", vac.Vacation.Untrusted)
+	}
+	b, _ := json.Marshal(sig)
+	if !strings.Contains(string(b), `"untrusted":{"signature":"`+mark) {
+		t.Errorf("signature = %s, want untrusted.signature as a nonce fence", b)
+	}
+	if strings.Contains(string(b), `"signature":"Ann"`) {
+		t.Errorf("signature = %s, leaks the bare text", b)
+	}
 }

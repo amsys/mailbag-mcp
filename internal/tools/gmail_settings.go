@@ -58,46 +58,72 @@ type GmailSettingsIn struct {
 }
 
 // FilterRow is one Gmail filter of a result (S9-GAP8). The ID is the
-// id Gmail gave. The criteria and the label names are fenced. A
-// filter with no criteria or no action has empty fields (E13).
+// id Gmail gave. The criteria and the label names are sender text and
+// sit in Untrusted, one fence each. A filter with no criteria or no
+// action has empty fields (E13).
 //
-// arch: DS9.7
+// arch: DS9.7, DU5.1, DU5.6
 type FilterRow struct {
-	ID            string   `json:"id"`
-	From          string   `json:"from,omitempty"`    // fenced
-	To            string   `json:"to,omitempty"`      // fenced
-	Subject       string   `json:"subject,omitempty"` // fenced
-	Query         string   `json:"query,omitempty"`   // fenced
-	HasAttachment *bool    `json:"has_attachment,omitempty"`
-	AddLabels     []string `json:"add_labels,omitempty"`    // names, fenced
-	RemoveLabels  []string `json:"remove_labels,omitempty"` // names, fenced
-	MarkRead      bool     `json:"mark_read,omitempty"`
-	Star          bool     `json:"star,omitempty"`
+	ID            string          `json:"id" strict:"id"`
+	HasAttachment *bool           `json:"has_attachment,omitempty"`
+	MarkRead      bool            `json:"mark_read,omitempty"`
+	Star          bool            `json:"star,omitempty"`
+	Untrusted     FilterUntrusted `json:"untrusted"`
+}
+
+// FilterUntrusted holds the fenced text of one filter. A list is an
+// array of fences.
+//
+// arch: DU5.1, DU5.6
+type FilterUntrusted struct {
+	From         string   `json:"from,omitempty"`
+	To           string   `json:"to,omitempty"`
+	Subject      string   `json:"subject,omitempty"`
+	Query        string   `json:"query,omitempty"`
+	AddLabels    []string `json:"add_labels,omitempty"`
+	RemoveLabels []string `json:"remove_labels,omitempty"`
 }
 
 // VacationRow is the vacation auto-reply of a result (S9-GAP8). The
-// subject and the body are fenced. Start and End are YYYY-MM-DD in
-// the local zone of the host (S9-GAP7); End is the last day.
+// subject and the body sit in Untrusted. Start and End are YYYY-MM-DD
+// in the local zone of the host (S9-GAP7); End is the last day.
 //
-// arch: DS9.7
+// arch: DS9.7, DU5.6
 type VacationRow struct {
-	Enabled bool   `json:"enabled"`
-	Subject string `json:"subject,omitempty"` // fenced
-	Body    string `json:"body,omitempty"`    // fenced
-	Start   string `json:"start,omitempty"`   // YYYY-MM-DD
-	End     string `json:"end,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	Start     string            `json:"start,omitempty" strict:"day"`
+	End       string            `json:"end,omitempty" strict:"day"`
+	Untrusted VacationUntrusted `json:"untrusted"`
 }
 
-// GmailSettingsOut is the result of the gmail_settings tool. Filters
-// is set by list_filters and create_filter, Vacation by get_vacation,
-// Signature (fenced) by get_signature. Note is text this server wrote.
+// VacationUntrusted holds the fenced text of the vacation reply.
 //
-// arch: DS9.7
+// arch: DU5.1, DU5.6
+type VacationUntrusted struct {
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body,omitempty"`
+}
+
+// SignatureUntrusted holds the fenced signature text.
+//
+// arch: DU5.1, DU5.6
+type SignatureUntrusted struct {
+	Signature string `json:"signature,omitempty"`
+}
+
+// GmailSettingsOut is the result of the gmail_settings tool. Head
+// gives the nonce first. Filters is set by list_filters and
+// create_filter, Vacation by get_vacation, the embedded
+// SignatureUntrusted (`untrusted.signature`, fenced) by get_signature. Outside the fence: the filter ids, the
+// flags, the dates and Note, which is text this server wrote.
+//
+// arch: DS9.7, DU5.1, DU5.6
 type GmailSettingsOut struct {
-	Filters   []FilterRow  `json:"filters,omitempty"`
-	Vacation  *VacationRow `json:"vacation,omitempty"`
-	Signature string       `json:"signature,omitempty"` // fenced
-	Note      string       `json:"note,omitempty"`
+	Head
+	Filters            []FilterRow  `json:"filters,omitempty"`
+	Vacation           *VacationRow `json:"vacation,omitempty"`
+	SignatureUntrusted `json:"untrusted,omitzero"`
+	Note               string `json:"note,omitempty" strict:"note"`
 }
 
 // dayLayout is the date form of Start and End (DS9.7).
@@ -461,6 +487,7 @@ func applyAfter(ctx context.Context, s gmail.Settings, c settingChange, outcome 
 
 // readSetting does one of the three reads.
 func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (GmailSettingsOut, error) {
+	fc := fencer(ctx)
 	switch in.Action {
 	case "list_filters":
 		fs, err := s.ListFilters(ctx)
@@ -469,7 +496,7 @@ func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 		}
 		out := GmailSettingsOut{Filters: make([]FilterRow, 0, len(fs))}
 		for _, f := range fs {
-			out.Filters = append(out.Filters, filterRow(f))
+			out.Filters = append(out.Filters, filterRow(fc, f))
 		}
 		if len(fs) == 0 {
 			out.Note = "the account has no filters"
@@ -480,7 +507,7 @@ func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 		if err != nil {
 			return GmailSettingsOut{}, err
 		}
-		return GmailSettingsOut{Vacation: vacationRow(v)}, nil
+		return GmailSettingsOut{Vacation: vacationRow(fc, v)}, nil
 	default: // get_signature; runSetting sends only the three reads here
 		sig, err := s.Signature(ctx, in.SendAs)
 		if err != nil {
@@ -489,7 +516,7 @@ func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 		if sig == "" {
 			return GmailSettingsOut{Note: "the address has no signature"}, nil
 		}
-		return GmailSettingsOut{Signature: guard.Fence("SIGNATURE", sig)}, nil
+		return GmailSettingsOut{SignatureUntrusted: SignatureUntrusted{Signature: fc.Wrap(sig)}}, nil
 	}
 }
 
@@ -704,13 +731,14 @@ func (c settingChange) question() string {
 //
 // arch: DH3.2
 func (c settingChange) apply(ctx context.Context, s gmail.Settings) (GmailSettingsOut, error) {
+	fc := fencer(ctx)
 	switch c.action {
 	case "create_filter":
 		f, err := s.CreateFilter(ctx, c.filter)
 		if err != nil {
 			return GmailSettingsOut{}, err
 		}
-		return GmailSettingsOut{Filters: []FilterRow{filterRow(f)}, Note: "filter created"}, nil
+		return GmailSettingsOut{Filters: []FilterRow{filterRow(fc, f)}, Note: "filter created"}, nil
 	case "delete_filter":
 		if err := s.DeleteFilter(ctx, c.filter.ID); err != nil {
 			return GmailSettingsOut{}, err
@@ -732,21 +760,21 @@ func (c settingChange) apply(ctx context.Context, s gmail.Settings) (GmailSettin
 // fenceIf fences a non-empty value. An empty value stays empty, so
 // omitempty drops it and a filter with missing parts shows only the
 // parts it has (E13).
-func fenceIf(kind, s string) string {
+func fenceIf(f guard.Fencer, s string) string {
 	if s == "" {
 		return ""
 	}
-	return guard.Fence(kind, s)
+	return f.Wrap(s)
 }
 
 // fenceAll fences each name of a label list.
-func fenceAll(kind string, names []string) []string {
+func fenceAll(f guard.Fencer, names []string) []string {
 	if len(names) == 0 {
 		return nil
 	}
 	out := make([]string, len(names))
 	for i, n := range names {
-		out[i] = guard.Fence(kind, n)
+		out[i] = f.Wrap(n)
 	}
 	return out
 }
@@ -755,18 +783,20 @@ func fenceAll(kind string, names []string) []string {
 // A user can name a label, so the label names are fenced too.
 //
 // arch: DS9.7
-func filterRow(f gmail.Filter) FilterRow {
+func filterRow(fc guard.Fencer, f gmail.Filter) FilterRow {
 	return FilterRow{
 		ID:            f.ID,
-		From:          fenceIf("FILTER", f.From),
-		To:            fenceIf("FILTER", f.To),
-		Subject:       fenceIf("FILTER", f.Subject),
-		Query:         fenceIf("FILTER", f.Query),
 		HasAttachment: f.HasAttachment,
-		AddLabels:     fenceAll("LABEL", f.AddLabels),
-		RemoveLabels:  fenceAll("LABEL", f.RemoveLabels),
 		MarkRead:      f.MarkRead,
 		Star:          f.Star,
+		Untrusted: FilterUntrusted{
+			From:         fenceIf(fc, f.From),
+			To:           fenceIf(fc, f.To),
+			Subject:      fenceIf(fc, f.Subject),
+			Query:        fenceIf(fc, f.Query),
+			AddLabels:    fenceAll(fc, f.AddLabels),
+			RemoveLabels: fenceAll(fc, f.RemoveLabels),
+		},
 	}
 }
 
@@ -775,11 +805,13 @@ func filterRow(f gmail.Filter) FilterRow {
 // row shows the day before it as the last day (see vacationOf).
 //
 // arch: DS9.7, S9-GAP7
-func vacationRow(v gmail.Vacation) *VacationRow {
+func vacationRow(fc guard.Fencer, v gmail.Vacation) *VacationRow {
 	row := &VacationRow{
 		Enabled: v.Enabled,
-		Subject: fenceIf("VACATION", v.Subject),
-		Body:    fenceIf("VACATION", v.Body),
+		Untrusted: VacationUntrusted{
+			Subject: fenceIf(fc, v.Subject),
+			Body:    fenceIf(fc, v.Body),
+		},
 	}
 	if !v.Start.IsZero() {
 		row.Start = v.Start.In(time.Local).Format(dayLayout)

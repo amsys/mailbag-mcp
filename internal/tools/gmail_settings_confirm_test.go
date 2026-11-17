@@ -568,9 +568,14 @@ func TestGmailSettings_QuestionShowsAll(t *testing.T) {
 }
 
 // markedText gives word between one ASCII fence marker and one marker
-// written in look-alike letters (Greek Nu, Cyrillic Te and Ie).
+// written in look-alike letters (Greek Nu, Cyrillic Te and Ie). It
+// also carries an open and a close marker in the nonce form of a
+// Fencer (INV-7), so outgoing text loses both forms.
+//
+// arch: DU1.2, DU9.1
 func markedText(word string) string {
-	return "[UNTRUSTED_EMAIL]" + word + "[/U\u039D\u0422RUST\u0415D_EMAIL]"
+	return "[UNTRUSTED_EMAIL][UNTRUSTED_" + testNonce + "]" + word +
+		"[/U\u039D\u0422RUST\u0415D_EMAIL][/UNTRUSTED_" + testNonce + "]"
 }
 
 // checkNoMarker fails when got still holds a fence marker of either
@@ -590,7 +595,7 @@ func checkNoMarker(t *testing.T, field, got, word string) {
 // and in look-alike letters, before it reaches the provider fake. It
 // builds each one through the tool layer.
 //
-// arch: DH2.6, DH3.1, DH3.2, DH3.3, DH3.4, DH3.6, DH3.7
+// arch: DH2.6, DH3.1, DH3.2, DH3.3, DH3.4, DH3.6, DH3.7, DU5.1, DU5.6, DU9.1, DU6.2
 func TestOutgoing_NoFenceMarkerAnywhere(t *testing.T) {
 	ctx := context.Background()
 

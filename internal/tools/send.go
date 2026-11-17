@@ -115,23 +115,42 @@ type SendIn struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
-// SendOut is the send tool result (§3.16): the id, whether the mail
-// left, and whether a copy went to Sent.
+// SendOut is the send tool result (§3.16, DU5.5): the id, whether the
+// mail left, and whether a copy went to Sent.
 //
-// Every field of this struct is text this server wrote or an id a
-// server gave, so none of it is fenced (§3.15). No sender-controlled
+// Zones (DU5.1). Outside: fence (Head), account, id, sent,
+// saved_to_sent and note. Each outside string is server text or an id
+// that matches its strict grammar. Under untrusted: detail, the
+// provider text of a send warning, in one fence. No sender-controlled
 // value reaches a send result. TestSend_ResultCarriesNoSenderText
 // holds that rule the way the fence walk holds it for the read
 // results (G3).
+//
+// The key store of D5.3 keeps a SendOut with the warning text in
+// detail, as plain text, and with no Untrusted (INV-6).
+// [fenceSend] makes the fence on each response.
+//
+// arch: DU5.5, DU5.1, DU2.1, DU9.1
 type SendOut struct {
-	Account string `json:"account"`
-	// ID is the Message-ID of the sent mail.
-	ID          string `json:"id,omitempty"`
+	Head
+	Account string `json:"account" strict:"alias"`
+	// ID is the Message-ID of the sent mail. It is omitted when the
+	// value is not a Message-ID (DU5.5).
+	ID          string `json:"id,omitempty" strict:"msgid"`
 	Sent        bool   `json:"sent"`
 	SavedToSent bool   `json:"saved_to_sent,omitempty"`
 	// Note is text this server wrote: a secondary step that failed
-	// after the mail left (C14).
-	Note string `json:"note,omitempty"`
+	// after the mail left (C14). It is a text of the note registry
+	// (DU3.5).
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the provider text of the note in a fence of the
+	// nonce of the response.
+	Untrusted *Detail `json:"untrusted,omitempty"`
+
+	// detail is the provider text of the note, redacted and not
+	// fenced. Only the key store and [fenceSend] read it. encoding/json
+	// does not write it.
+	detail string
 }
 
 // addSend adds the send tool h to srv. The tool sends one draft that
@@ -547,8 +566,25 @@ func (t *sendTool) run(ctx context.Context, in SendIn, check checkFunc, confirm 
 // record of the same send, the limit does not run: the first call of
 // that record spent it (DS14.4, IS14.3).
 //
-// arch: DS14.3, DS14.4, DS14.5, DS14.12, IS14.3, D8.3
-func (t *sendTool) runClaim(ctx context.Context, in SendIn, claim func(account string) error, hold func(account string) (reuse bool, err error), check checkFunc, confirm confirmFunc) (out SendOut, err error) {
+// The key store keeps the result of [sendTool.runKeyed], which holds
+// no fence. runClaim puts the detail of that result in a fence of the
+// Fencer of ctx, on a first send and on a repeat alike (INV-6).
+//
+// arch: DS14.3, DS14.4, DS14.5, DS14.12, IS14.3, D8.3, DU5.5, DU9.1
+func (t *sendTool) runClaim(ctx context.Context, in SendIn, claim func(account string) error, hold func(account string) (reuse bool, err error), check checkFunc, confirm confirmFunc) (SendOut, error) {
+	f := fencer(ctx)
+	out, err := t.runKeyed(ctx, in, claim, hold, check, confirm)
+	if err != nil {
+		return out, err
+	}
+	return fenceSend(f, out), nil
+}
+
+// runKeyed holds the steps of [sendTool.runClaim] up to the result
+// that the key store keeps. Its result holds no fence.
+//
+// arch: D8.3, D5.3, DU5.5, DU9.1
+func (t *sendTool) runKeyed(ctx context.Context, in SendIn, claim func(account string) error, hold func(account string) (reuse bool, err error), check checkFunc, confirm confirmFunc) (out SendOut, err error) {
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return SendOut{}, err
@@ -646,14 +682,16 @@ func (t *sendTool) runClaim(ctx context.Context, in SendIn, claim func(account s
 			defer cancel()
 		}
 	default:
-		return SendOut{Account: in.Account, Sent: false, Note: notSentNote}, nil
+		return SendOut{Account: account, Sent: false, Note: notSentNote}, nil
 	}
 	sending = true
 	res, err := p.SendDraft(ctx, in.DraftID)
 	if err != nil {
 		return SendOut{}, err
 	}
-	return sendResult(in.Account, res), nil
+	// INV-10: the account name comes from the provider, not from
+	// the model input.
+	return sendResult(account, res), nil
 }
 
 // errSendUnknown is the stored result of a send that stopped in a
@@ -1229,16 +1267,54 @@ func draftInsteadNote(alias string, acct config.Account, id string) string {
 }
 
 // sendResult turns a provider result into a tool result. A warning
-// from the provider is server text and never turns sent into false:
-// the mail already left (C14).
+// from the provider never turns sent into false: the mail already left
+// (C14).
+//
+// The result holds no fence, so the key store can keep it (INV-6):
+//   - The id is kept only when it is a Message-ID (DU5.5).
+//   - The note is res.Warning when it is a text of the note registry.
+//     Any other warning gives the fixed note "note withheld", and its
+//     text goes to the detail. So a provider text never reaches the
+//     outside zone, and the output gate never refuses a send that
+//     already left.
+//   - The detail is res.WarningDetail after [guard.Redact]. [fenceSend]
+//     puts it in a fence on each response.
+//
+// arch: DU5.5, DU3.5, DU12.1, DU9.1, C14
 func sendResult(alias string, res mail.SendResult) SendOut {
-	return SendOut{
+	out := SendOut{
 		Account:     alias,
-		ID:          res.ID,
 		Sent:        res.Sent,
 		SavedToSent: res.SavedToSent,
-		Note:        res.Warning,
 	}
+	if guard.Strict("msgid", res.ID) {
+		out.ID = res.ID
+	}
+	detail := res.WarningDetail
+	note, ok := strictNote(res.Warning)
+	if !ok {
+		detail = strings.TrimSpace(res.Warning + "\n" + detail)
+	}
+	out.Note = note
+	if detail != "" {
+		out.detail = guard.Redact(detail)
+	}
+	return out
+}
+
+// fenceSend gives the response form of out, a result of the key store
+// or of [sendResult]: a copy whose Untrusted holds the detail in one
+// fence of f, and whose plain detail is empty. A result with no detail
+// comes back with no Untrusted. The key store keeps out as it is, so
+// no stored value holds a fence (INV-6).
+//
+// arch: DU5.5, DU5.1, DU12.1, DU9.1
+func fenceSend(f guard.Fencer, out SendOut) SendOut {
+	if out.detail != "" {
+		out.Untrusted = &Detail{Detail: f.Wrap(out.detail)}
+		out.detail = ""
+	}
+	return out
 }
 
 // compose builds the outgoing message of one draft call: the caller's

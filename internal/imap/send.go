@@ -168,7 +168,8 @@ func (w *WriteProvider) SendDraft(ctx context.Context, id string) (mail.SendResu
 	// may send again, so the removal runs after the send and never
 	// changes sent: true (M3).
 	if err := w.dropDraft(ctx, id); err != nil && res.Warning == "" {
-		res.Warning = "the message was sent, but the draft could not be removed: " + err.Error()
+		res.Warning = "the message was sent, but the draft could not be removed: " + warnClass(err)
+		res.WarningDetail = err.Error()
 	}
 	return res, nil
 }
@@ -258,7 +259,8 @@ func (w *WriteProvider) afterSend(ctx context.Context, res *mail.SendResult, raw
 				// is not a reason to fail the two best-effort steps
 				// that follow, so the loop carries on (DRV.19.2).
 				res.SavedToSent = true
-				res.Warning = "the message was sent, but the Sent copy was stored but not found again: " + err.Error()
+				res.Warning = "the message was sent, but the Sent copy was stored but not found again: not_found"
+				res.WarningDetail = err.Error()
 			default:
 				return err
 			}
@@ -281,7 +283,29 @@ func (w *WriteProvider) afterSend(ctx context.Context, res *mail.SendResult, raw
 		return nil
 	})
 	if err != nil && copyToSent {
-		res.Warning = "the message was sent, but the copy in the Sent folder failed: " + err.Error()
+		res.Warning = "the message was sent, but the copy in the Sent folder failed: " + warnClass(err)
+		res.WarningDetail = err.Error()
+	}
+}
+
+// warnClass gives the class word of DU6.2 for an error of a step after
+// the send. The word ends the fixed sentence of a send warning; the
+// error text goes to mail.SendResult.WarningDetail. The words follow
+// the classOf rules of the tool layer for the errors this package
+// gives: a context error, a sign-in refusal, and "error" for the rest.
+//
+// arch: DU3.5, DU6.2, DU12.1
+func warnClass(err error) string {
+	var auth *AuthError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.As(err, &auth):
+		return "refused"
+	default:
+		return "error"
 	}
 }
 

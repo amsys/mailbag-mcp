@@ -76,7 +76,11 @@ type keyEntry struct {
 	// finish on, the time the send ended.
 	at time.Time
 	// done is true when the send started; out and err are then its
-	// result.
+	// result. out holds no fence and no nonce: its warning text is in
+	// the plain detail, and each response makes a new fence of it
+	// (INV-6).
+	//
+	// arch: DU5.5, DU2.1
 	done bool
 	out  SendOut
 	err  error

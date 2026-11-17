@@ -1572,7 +1572,11 @@ func (p *Provider) SendDraft(ctx context.Context, id string) (mail.SendResult, e
 	case err != nil:
 		res.Warning = "the message was sent, but the server did not report the move to Sent"
 	case ea.NotUpdated[id].Type != "":
-		res.Warning = "the message was sent, but the server did not move it to Sent (" + ea.NotUpdated[id].reason() + ")"
+		// DU12.1 item 2: the note is a fixed sentence and a class
+		// word; the reason of the server goes to WarningDetail. A set
+		// error is a refusal of the change by the server.
+		res.Warning = "the message was sent, but the server did not move it to Sent: refused"
+		res.WarningDetail = ea.NotUpdated[id].reason()
 	default:
 		if _, ok := ea.Updated[id]; ok {
 			res.SavedToSent = true

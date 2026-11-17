@@ -310,7 +310,16 @@ type SendResult struct {
 	// Warning is set when the send worked but a secondary step (the
 	// Sent copy, C14) failed. A non-empty Warning never means Sent is
 	// false: the mail already left.
+	//
+	// Warning is a fixed sentence of the note registry, and a class
+	// word when the step failed with an error (DU3.5, DU6.2). It never
+	// holds provider text.
 	Warning string
+
+	// WarningDetail is the provider text of the warning, for example
+	// the error text of the server. It is text of unknown origin: the
+	// tool layer redacts it and puts it in a fence (DU12.1 item 2).
+	WarningDetail string
 }
 
 // Change is what Provider.Modify applies. A nil *bool means "leave

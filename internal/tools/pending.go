@@ -9,7 +9,6 @@ package tools
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"sync"
 	"time"
 
@@ -28,16 +27,25 @@ const pendingPerSession = 16
 // errPendingSessionFull is the fixed refusal of a call whose session
 // has [pendingPerSession] places in the store. The call asks nobody,
 // nothing leaves or changes, and the call spends no send (DS14.12).
-var errPendingSessionFull = errors.New("this session has 16 open confirmations, so nothing was sent or changed; answer an open confirmation of this session, or wait 10 minutes, then call again")
+// The model can try again later, so the class is limit.
+//
+// arch: DU6.2
+var errPendingSessionFull = public("limit", "this session has 16 open confirmations, so nothing was sent or changed; answer an open confirmation of this session, or wait 10 minutes, then call again")
 
 // errPendingFull is the fixed refusal of a full [pendingStore]. The
-// call asks nobody and nothing leaves or changes (DS14.3).
-var errPendingFull = errors.New("too many confirmations are open, so nothing was sent or changed; answer an open confirmation, or wait some minutes, then call again")
+// call asks nobody and nothing leaves or changes (DS14.3). The class
+// is limit.
+//
+// arch: DU6.2
+var errPendingFull = public("limit", "too many confirmations are open, so nothing was sent or changed; answer an open confirmation, or wait some minutes, then call again")
 
 // errConfirmStale is the fixed refusal of a retry whose request state
 // names no open confirmation of this call: the state is unknown, used,
 // expired, or from another session or another call (DS14.5, IS14.2).
-var errConfirmStale = errors.New("the confirmation is not open any more (it was used, it expired, or it belongs to another call), so nothing was sent or changed; call the tool again to get a new confirmation")
+// The server refuses the retry, so the class is refused.
+//
+// arch: DU6.2
+var errConfirmStale = public("refused", "the confirmation is not open any more (it was used, it expired, or it belongs to another call), so nothing was sent or changed; call the tool again to get a new confirmation")
 
 // pendingStore keeps each open confirmation of the MRTR path (DS14.3)
 // in memory, per process. The key of a record is the request state

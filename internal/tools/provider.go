@@ -445,7 +445,7 @@ func (f *Factory) Aliases() ([]string, error) {
 // provider for jmap (DS78.3). An account with an other provider gets
 // an error.
 //
-// arch: T4.5, §3.7, §3.16, G10, DS78.3
+// arch: T4.5, §3.7, §3.16, G10, DS78.3, DU6.2
 func (f *Factory) Open(ctx context.Context, alias string) (Reader, config.Account, error) {
 	acct, err := f.account(alias)
 	if err != nil {
@@ -467,7 +467,7 @@ func (f *Factory) Open(ctx context.Context, alias string) (Reader, config.Accoun
 		}
 		return p, acct, nil
 	default:
-		return nil, config.Account{}, fmt.Errorf("account %q uses provider %q, which this build cannot open yet", alias, acct.Provider)
+		return nil, config.Account{}, publicDetail("unavailable", "the account uses a provider that this build cannot open yet", fmt.Sprintf("account %q, provider %q", alias, acct.Provider))
 	}
 }
 
@@ -484,7 +484,7 @@ func (f *Factory) Open(ctx context.Context, alias string) (Reader, config.Accoun
 // so a token that the SMTP server refuses is dropped and read fresh
 // one time (DS11.14, G6).
 //
-// arch: T5.2, §3.7, §3.16, §3.4, §3.3, B14, G10, DS11.14, DS78.3
+// arch: T5.2, §3.7, §3.16, §3.4, §3.3, B14, G10, DS11.14, DS78.3, DU6.2
 func (f *Factory) OpenWriter(ctx context.Context, alias string) (Writer, config.Account, error) {
 	acct, err := f.account(alias)
 	if err != nil {
@@ -506,7 +506,7 @@ func (f *Factory) OpenWriter(ctx context.Context, alias string) (Writer, config.
 		}
 		return p, acct, nil
 	default:
-		return nil, config.Account{}, fmt.Errorf("account %q uses provider %q, which this build cannot open yet", alias, acct.Provider)
+		return nil, config.Account{}, publicDetail("unavailable", "the account uses a provider that this build cannot open yet", fmt.Sprintf("account %q, provider %q", alias, acct.Provider))
 	}
 }
 
@@ -545,7 +545,7 @@ func (f *Factory) openGmail(ctx context.Context, alias string, acct config.Accou
 // set AuthAPIOff or AuthNeedsSignIn. A needs-auth error starts the
 // refusal window of the alias (DRV.10, IS78.4).
 //
-// arch: DS78.3, DS7.2, IS7.2, IS78.4, B14, DRV.10
+// arch: DS78.3, DS7.2, IS7.2, IS78.4, B14, DRV.10, DU6.2
 func (f *Factory) accessToken(alias string) gmail.TokenFunc {
 	return func(ctx context.Context) (string, error) {
 		acct, err := f.account(alias)
@@ -566,7 +566,7 @@ func (f *Factory) accessToken(alias string) gmail.TokenFunc {
 			return "", err
 		}
 		if cred.Token == "" {
-			return "", fmt.Errorf(`account %q signs in to Gmail with OAuth only; run "mailbag-mcp account add %s --reauth"`, alias, alias)
+			return "", publicDetail("needs_auth", `the account signs in to Gmail with OAuth only; run "mailbag-mcp account add <alias> --reauth"`, alias)
 		}
 		f.noteLogin(alias, nil)
 		return cred.Token, nil
@@ -734,7 +734,7 @@ func jmapRoots(alias, path string) (*x509.CertPool, error) {
 		roots = x509.NewCertPool()
 	}
 	if !roots.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("account %q: tls_ca %s holds no certificate", alias, path)
+		return nil, publicDetail("unavailable", "the tls_ca file of the account holds no certificate", fmt.Sprintf("account %q, tls_ca %s", alias, path))
 	}
 	return roots, nil
 }
@@ -1112,15 +1112,19 @@ func (f *Factory) forget(alias string) {
 //
 // A store error that is not [secrets.ErrNotFound] comes back as it
 // is. A locked keyring, or a cancelled unlock dialog, must never read
-// as "this account has no secret" (trap B3).
+// as "this account has no secret" (trap B3). The two own texts are
+// public errors; the alias is their detail, which the error result
+// puts in a fence.
+//
+// arch: DU6.2, B3
 func readSecret(ctx context.Context, store secrets.Store, key string) (string, error) {
 	v, err := boundedGet(ctx, store, key)
 	if err != nil {
 		if errors.Is(err, secrets.ErrNotFound) {
-			return "", fmt.Errorf("account %q has no stored secret; add it again with `mailbag-mcp account add`", key)
+			return "", publicDetail("needs_auth", "the account has no stored secret; add it again with `mailbag-mcp account add`", key)
 		}
 		if errors.Is(err, errBoundedGetTimeout) {
-			return "", fmt.Errorf("reading the secret of account %q took longer than %s; open the keyring and try again", key, secretTimeout)
+			return "", publicDetail("timeout", "reading the secret of the account timed out; open the keyring and try again", key)
 		}
 		return "", err
 	}
@@ -1131,7 +1135,10 @@ func readSecret(ctx context.Context, store secrets.Store, key string) (string, e
 // 30 s limit (or a shorter caller deadline) elapses first, so a
 // caller can give that case its own wording while everything else —
 // including a genuine [secrets.ErrNotFound] — passes through as is.
-var errBoundedGetTimeout = errors.New("bounded secret read: timed out")
+// It is a public error of the class timeout.
+//
+// arch: DU6.2
+var errBoundedGetTimeout = public("timeout", "bounded secret read: timed out")
 
 // boundedGet reads one raw secret-store value under the §3.4 30 s
 // limit (secretTimeout: it also honours a shorter deadline already on
@@ -1198,11 +1205,11 @@ type credentialResult struct {
 //
 // No error text holds the stored value.
 //
-// arch: T6.2, DS6.1, DS6.2, DS6.3, DS6.4, DS6.5, DS7.2, §3.4, §3.6, B7, B8, B14, IS7.5
+// arch: T6.2, DS6.1, DS6.2, DS6.3, DS6.4, DS6.5, DS7.2, §3.4, §3.6, B7, B8, B14, IS7.5, DU6.2
 func parseCredential(ctx context.Context, acct config.Account, raw string, store secrets.Store, warn func(error)) (credentialResult, error) {
 	var v secretValue
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return credentialResult{}, fmt.Errorf("the stored secret of account %q is not readable; add the account again", acct.Alias)
+		return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account is not readable; add the account again", acct.Alias)
 	}
 	// accounts.toml wins (DRV.14b): the secret's own username field is
 	// read only for an old account that has no username recorded in
@@ -1214,13 +1221,13 @@ func parseCredential(ctx context.Context, acct config.Account, raw string, store
 	switch v.Kind {
 	case "password":
 		if v.Password == "" {
-			return credentialResult{}, fmt.Errorf("the stored secret of account %q holds no password", acct.Alias)
+			return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account holds no password", acct.Alias)
 		}
 		guard.RegisterSecret(v.Password)
 		return credentialResult{cred: imap.Credential{Username: user, Password: v.Password}}, nil
 	case "token":
 		if v.Token == "" {
-			return credentialResult{}, fmt.Errorf("the stored secret of account %q holds no token", acct.Alias)
+			return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account holds no token", acct.Alias)
 		}
 		guard.RegisterSecret(v.Token)
 		return credentialResult{cred: imap.Credential{Username: user, Token: v.Token}}, nil
@@ -1232,10 +1239,10 @@ func parseCredential(ctx context.Context, acct config.Account, raw string, store
 			return googleCredential(ctx, acct, v, store, warn)
 		default:
 			// Only outlook and gmail sign in with OAuth (§3.4).
-			return credentialResult{}, fmt.Errorf("account %q has an OAuth secret, but provider %q does not sign in with OAuth; add the account again", acct.Alias, acct.Provider)
+			return credentialResult{}, publicDetail("needs_auth", "the account has an OAuth secret, but its provider does not sign in with OAuth; add the account again", fmt.Sprintf("account %q, provider %q", acct.Alias, acct.Provider))
 		}
 	default:
-		return credentialResult{}, fmt.Errorf("the stored secret of account %q has kind %q, which this server does not know", acct.Alias, v.Kind)
+		return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account has a kind that this server does not know", fmt.Sprintf("account %q, kind %q", acct.Alias, v.Kind))
 	}
 }
 
@@ -1258,7 +1265,7 @@ func parseCredential(ctx context.Context, acct config.Account, raw string, store
 // one dial's lifetime.
 func microsoftCredential(ctx context.Context, acct config.Account, v secretValue, store secrets.Store, warn func(error)) (credentialResult, error) {
 	if v.RefreshToken == "" {
-		return credentialResult{}, fmt.Errorf("the stored secret of account %q holds no refresh token", acct.Alias)
+		return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account holds no refresh token", acct.Alias)
 	}
 	guard.RegisterSecret(v.RefreshToken)
 
@@ -1290,7 +1297,7 @@ func microsoftCredential(ctx context.Context, acct config.Account, v secretValue
 // arch: DS7.2, DS78.3, IS7.5, B14
 func googleCredential(ctx context.Context, acct config.Account, v secretValue, store secrets.Store, warn func(error)) (credentialResult, error) {
 	if v.RefreshToken == "" {
-		return credentialResult{}, fmt.Errorf("the stored secret of account %q holds no refresh token", acct.Alias)
+		return credentialResult{}, publicDetail("needs_auth", "the stored secret of the account holds no refresh token", acct.Alias)
 	}
 	guard.RegisterSecret(v.RefreshToken)
 
@@ -1312,21 +1319,21 @@ func googleCredential(ctx context.Context, acct config.Account, v secretValue, s
 // same registration in registerGoogleClient, because internal/cli does
 // not import this package. No error text holds the stored value.
 //
-// arch: DS7.2, IS7.5, L2
+// arch: DS7.2, IS7.5, L2, DU6.2
 func googleClient(ctx context.Context, store secrets.Store) (oauthpkg.GoogleClient, error) {
 	raw, err := boundedGet(ctx, store, googleClientKey)
 	if err != nil {
 		if errors.Is(err, secrets.ErrNotFound) {
-			return oauthpkg.GoogleClient{}, errors.New(`no Google OAuth client is configured; run "mailbag-mcp oauth set google --file client_secret.json"`)
+			return oauthpkg.GoogleClient{}, public("needs_auth", `no Google OAuth client is configured; run "mailbag-mcp oauth set google --file client_secret.json"`)
 		}
 		if errors.Is(err, errBoundedGetTimeout) {
-			return oauthpkg.GoogleClient{}, fmt.Errorf("reading the Google OAuth client took longer than %s; open the keyring and try again", secretTimeout)
+			return oauthpkg.GoogleClient{}, public("timeout", "reading the Google OAuth client timed out; open the keyring and try again")
 		}
 		return oauthpkg.GoogleClient{}, err
 	}
 	var c oauthpkg.GoogleClient
 	if err := json.Unmarshal([]byte(raw), &c); err != nil || c.ClientID == "" || c.ClientSecret == "" {
-		return oauthpkg.GoogleClient{}, errors.New(`the stored Google OAuth client is not readable; run "mailbag-mcp oauth set google --file client_secret.json" again`)
+		return oauthpkg.GoogleClient{}, public("needs_auth", `the stored Google OAuth client is not readable; run "mailbag-mcp oauth set google --file client_secret.json" again`)
 	}
 	guard.RegisterSecret(c.ClientID)
 	guard.RegisterSecret(c.ClientSecret)
@@ -1341,21 +1348,21 @@ func googleClient(ctx context.Context, store secrets.Store) (oauthpkg.GoogleClie
 // before this fix the call went straight to store.Get and could hold
 // a dial past its deadline behind a locked keyring.
 //
-// arch: S6-close-judge L2, §3.4
+// arch: S6-close-judge L2, §3.4, DU6.2
 func microsoftClientID(ctx context.Context, store secrets.Store) (string, error) {
 	raw, err := boundedGet(ctx, store, microsoftClientKey)
 	if err != nil {
 		if errors.Is(err, secrets.ErrNotFound) {
-			return "", errors.New(`no Microsoft OAuth client is configured; run "mailbag-mcp oauth set microsoft --client-id ID"`)
+			return "", public("needs_auth", `no Microsoft OAuth client is configured; run "mailbag-mcp oauth set microsoft --client-id ID"`)
 		}
 		if errors.Is(err, errBoundedGetTimeout) {
-			return "", fmt.Errorf("reading the Microsoft OAuth client id took longer than %s; open the keyring and try again", secretTimeout)
+			return "", public("timeout", "reading the Microsoft OAuth client id timed out; open the keyring and try again")
 		}
 		return "", err
 	}
 	var v microsoftClientSecret
 	if err := json.Unmarshal([]byte(raw), &v); err != nil || v.ClientID == "" {
-		return "", errors.New(`the stored Microsoft OAuth client id is not readable; run "mailbag-mcp oauth set microsoft --client-id ID" again`)
+		return "", public("needs_auth", `the stored Microsoft OAuth client id is not readable; run "mailbag-mcp oauth set microsoft --client-id ID" again`)
 	}
 	return v.ClientID, nil
 }
@@ -1376,7 +1383,7 @@ func (s *aliasRefreshTokenStore) LoadRefreshToken() (string, error) {
 	}
 	var v secretValue
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return "", fmt.Errorf("the stored secret of account %q is not readable", s.alias)
+		return "", publicDetail("needs_auth", "the stored secret of the account is not readable", s.alias)
 	}
 	return v.RefreshToken, nil
 }

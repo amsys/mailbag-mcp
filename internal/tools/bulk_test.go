@@ -1152,13 +1152,14 @@ func bulkRetry(t *testing.T, cs *mcp.ClientSession, args map[string]any, state s
 var bulkApply = &mcp.ElicitResult{Action: "accept", Content: map[string]any{bulkField: true}}
 
 // bulkWantStale checks that res is the fixed [errConfirmStale] refusal
-// in the error form of DU6.1.
+// in the error form of DU6.1: the class refused and the fixed text as
+// public text, with no fence (DU6.2).
 func bulkWantStale(t *testing.T, res *mcp.CallToolResult) {
 	t.Helper()
 	if !res.IsError {
 		t.Fatalf("result = %+v, want the stale-state error", res)
 	}
-	if text := bulkText(res); !isErrForm(text, "error", "", errConfirmStale.Error()) {
+	if text := bulkText(res); !isErrForm(text, "refused", errConfirmStale.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errConfirmStale.Error())
 	}
 }
@@ -1420,7 +1421,7 @@ func TestBulk_MRTRNoElicitation(t *testing.T) {
 // sessions fill the store with their shares of 16, the first call
 // gives [errPendingFull], asks nobody and changes nothing.
 //
-// arch: DS14.3, DS14.12
+// arch: DS14.3, DS14.12, DU6.2
 func TestBulk_MRTRStoreFull(t *testing.T) {
 	h, prov, _ := bulkFixture(t, 3)
 	sess := shareSessions(pendingLimit / pendingPerSession)
@@ -1437,7 +1438,7 @@ func TestBulk_MRTRStoreFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
-	if !res.IsError || !isErrForm(bulkText(res), "error", "", errPendingFull.Error()) {
+	if !res.IsError || !isErrForm(bulkText(res), "limit", errPendingFull.Error(), "") {
 		t.Errorf("result = %+v %q, want the error form of the fixed error %q", res, bulkText(res), errPendingFull.Error())
 	}
 	if n := prov.callCount(); n != 0 {

@@ -3036,13 +3036,14 @@ func mrtrRetry(t *testing.T, cs *mcp.ClientSession, args map[string]any, state s
 var acceptSend = &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}
 
 // wantStale checks that res is the fixed [errConfirmStale] refusal in
-// the error form of DU6.1.
+// the error form of DU6.1: the class refused and the fixed text as
+// public text, with no fence (DU6.2).
 func wantStale(t *testing.T, res *mcp.CallToolResult) {
 	t.Helper()
 	if !res.IsError {
 		t.Fatalf("result = %+v, want the stale-state error", res)
 	}
-	if text := textOf(t, res); !isErrForm(text, "error", "", errConfirmStale.Error()) {
+	if text := textOf(t, res); !isErrForm(text, "refused", errConfirmStale.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errConfirmStale.Error())
 	}
 }
@@ -3319,7 +3320,7 @@ func TestSend_MRTRDoneKey(t *testing.T) {
 // call gives [errPendingFull], asks nobody and sends nothing. The key
 // is free after the refusal.
 //
-// arch: DS14.3, DS14.12
+// arch: DS14.3, DS14.12, DU6.2
 func TestSend_MRTRStoreFull(t *testing.T) {
 	fm, prov := confirmFixture(t)
 	h := &sendTool{mail: fm}
@@ -3337,7 +3338,7 @@ func TestSend_MRTRStoreFull(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); !isErrForm(text, "error", "", errPendingFull.Error()) {
+	if text := textOf(t, res); !isErrForm(text, "limit", errPendingFull.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errPendingFull.Error())
 	}
 	if asked != 0 {
@@ -3405,7 +3406,7 @@ func TestSend_MRTRSameKeyReuses(t *testing.T) {
 // fifth session gets [errPendingFull] and spends no send. This is the
 // new specified behaviour of DS14.12, not a weaker test.
 //
-// arch: DS14.3, DS14.4, DS14.12, IS14.3, IS14.7
+// arch: DS14.3, DS14.4, DS14.12, IS14.3, IS14.7, DU6.2
 func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 	fm, prov := confirmFixture(t)
 	now := time.Unix(1700000000, 0)
@@ -3428,7 +3429,7 @@ func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 		if !res.IsError {
 			t.Fatalf("result = %+v, want an error", res)
 		}
-		if text := textOf(t, res); !isErrForm(text, "error", "", want.Error()) {
+		if text := textOf(t, res); !isErrForm(text, "limit", want.Error(), "") {
 			t.Errorf("error = %q, want the error form of the fixed text %q", text, want.Error())
 		}
 		if n := len(h.limit.at["work"]); n != spent {
@@ -3483,7 +3484,7 @@ func TestSend_MRTROneSessionFillsStore(t *testing.T) {
 // of the limit and leaves the key free. Another session with a free
 // share is not refused.
 //
-// arch: DS14.12, IS14.7, IS14.8
+// arch: DS14.12, IS14.7, IS14.8, DU6.2
 func TestSend_MRTRSessionShareSpendsNoSend(t *testing.T) {
 	fm, prov := confirmFixture(t)
 	now := time.Unix(1700000000, 0)
@@ -3510,7 +3511,7 @@ func TestSend_MRTRSessionShareSpendsNoSend(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); !isErrForm(text, "error", "", errPendingSessionFull.Error()) {
+	if text := textOf(t, res); !isErrForm(text, "limit", errPendingSessionFull.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errPendingSessionFull.Error())
 	}
 	if n := len(h.limit.at["work"]); n != spent {

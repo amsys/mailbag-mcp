@@ -8,7 +8,6 @@
 package tools
 
 import (
-	"errors"
 	"strings"
 	"unicode"
 
@@ -18,14 +17,20 @@ import (
 )
 
 // errSignatureInBody is the refusal of an own text that holds a near
-// copy of the identity signature or a "-- " line (DI0 R7, DI3.2).
-var errSignatureInBody = errors.New("the body holds a signature or a \"-- \" line; leave it out, the draft tool adds the signature of the identity")
+// copy of the identity signature or a "-- " line (DI0 R7, DI3.2). The
+// model can fix its call, so the class is invalid_input.
+//
+// arch: DU6.2
+var errSignatureInBody = public("invalid_input", "the body holds a signature or a \"-- \" line; leave it out, the draft tool adds the signature of the identity")
 
 // errComposedHTML is the refusal of an HTML part that the signature
 // step built and that does not pass the HTML check of the send
 // confirmation (DI3.5). The load check of signature_html makes this
-// rare; the draft tool fails closed when it occurs.
-var errComposedHTML = errors.New("the html part with the signature does not pass the html check of the send confirmation; nothing was saved")
+// rare; the draft tool fails closed when it occurs. The class is
+// refused.
+//
+// arch: DU6.2
+var errComposedHTML = public("refused", "the html part with the signature does not pass the html check of the send confirmation; nothing was saved")
 
 // sigDelimiter is the line that starts a signature block (DI3.3).
 const sigDelimiter = "-- \n"

@@ -334,6 +334,16 @@ type Change struct {
 	// change the junk keywords, because the labels of the change
 	// already give the keywords back exactly (DS8.2d).
 	KeepJunkKeywords bool
+
+	// NoNewLabels is set by the modify tool when the account is below
+	// the draft level (classify). A label name of AddLabels or MoveTo
+	// that the account does not have is then an error that lists the
+	// labels, never a new label. Only Gmail acts on it: on IMAP and
+	// JMAP a label is a keyword, not a folder, and a move to a missing
+	// folder already fails there.
+	//
+	// arch: D5.1, D12.1, E4
+	NoNewLabels bool
 }
 
 // Applied is one entry of what Provider.Modify actually did, fed to

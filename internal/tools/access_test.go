@@ -45,6 +45,8 @@ type accessProv struct {
 	settings int
 	// creates counts the CreateFolder calls of the folders tool.
 	creates int
+	// change is the last Change that Modify received.
+	change mail.Change
 }
 
 func (p *accessProv) CreateFolder(context.Context, string) error {
@@ -99,8 +101,9 @@ func (p *accessProv) SaveDraft(context.Context, *mail.Outgoing, string) (string,
 	return "1700000000.9.Drafts", nil
 }
 
-func (p *accessProv) Modify(_ context.Context, ids []string, _ mail.Change) ([]mail.Applied, error) {
+func (p *accessProv) Modify(_ context.Context, ids []string, ch mail.Change) ([]mail.Applied, error) {
 	p.mods++
+	p.change = ch
 	out := make([]mail.Applied, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, mail.Applied{ID: id})
@@ -456,7 +459,7 @@ func TestAccess_Matrix(t *testing.T) {
 		run: func(ctx context.Context, fx *accessFixture) (string, error) {
 			h := &gmailSettingsTool{mail: fx.mail}
 			on := true
-			out, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: &on, Subject: "away", Body: "back soon"})
+			out, err := h.run(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: &on, Subject: "away", Body: "back soon"}, settingsAcceptAll)
 			return out.Note, err
 		},
 		// Two calls: set_vacation reads the current setting, then
@@ -686,6 +689,41 @@ func TestModify_ClassifyLevel(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestModify_ClassifySetsNoNewLabels holds D5.1 for a Gmail label: a
+// change of a classify account reaches the provider with NoNewLabels,
+// so a label name that the account does not have is an error and never
+// a new label (a Gmail label is a folder, E4). The same call at draft
+// or send keeps the zero value, so label creation there is unchanged.
+//
+// arch: D5.1, D12.1, E4
+func TestModify_ClassifySetsNoNewLabels(t *testing.T) {
+	cases := []struct {
+		level guard.Level
+		want  bool
+	}{
+		{guard.LevelClassify, true},
+		{guard.LevelDraft, false},
+		{guard.LevelSend, false},
+	}
+	for _, c := range cases {
+		t.Run(string(c.level), func(t *testing.T) {
+			fx := newAccessFixture(t, c.level)
+			fx.mail.acct.Provider = "gmail"
+			h := &modifyTool{mail: fx.mail, journal: accessJournal(fx)}
+			in := ModifyIn{Account: "work", IDs: []string{"1.10.INBOX"}, AddLabels: []string{"AnyNewName"}}
+			if _, err := h.handle(context.Background(), in); err != nil {
+				t.Fatalf("access=%s: %v", c.level, err)
+			}
+			if fx.prov.mods != 1 {
+				t.Fatalf("access=%s: %d provider changes, want 1", c.level, fx.prov.mods)
+			}
+			if got := fx.prov.change.NoNewLabels; got != c.want {
+				t.Errorf("access=%s: NoNewLabels = %v, want %v", c.level, got, c.want)
+			}
+		})
 	}
 }
 

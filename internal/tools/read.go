@@ -210,7 +210,7 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		ch := mail.Change{Read: &seen}
 		applied, merr := writer.Modify(ctx, []string{in.ID}, ch)
 		if merr != nil {
-			note = addNote(note, "mark_read could not be applied: "+guard.Redact(merr.Error()))
+			note = addNote(note, "mark_read could not be applied: "+errNote(merr))
 		} else {
 			m.Flags.Seen = true
 		}
@@ -282,7 +282,7 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		if terr != nil {
 			// The message itself was read. A conversation that
 			// failed is a note, not a failed call (§3.10).
-			out.Note = addNote(out.Note, "the conversation could not be read: "+guard.Redact(terr.Error()))
+			out.Note = addNote(out.Note, "the conversation could not be read: "+errNote(terr))
 			return out, nil
 		}
 		list := tr.Messages
@@ -379,7 +379,7 @@ func readRow(m mail.Message, head string, limit, offset int) ReadMessage {
 	fencedBody, bodyHidden := fencedCount("BODY", body)
 	row := ReadMessage{
 		ID:          m.ID,
-		Folder:      m.Folder,
+		Folder:      guard.CleanServerName(m.Folder),
 		Date:        m.Date.UTC().Format(time.RFC3339),
 		Flags:       flagText(m.Flags),
 		Size:        m.Size,

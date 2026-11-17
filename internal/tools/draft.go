@@ -50,7 +50,9 @@ type DraftOut struct {
 	DraftID string `json:"draft_id"`
 	// Note is text this server wrote. It tells how many items the
 	// HTML allowlist removed (D5.5), and it tells an account below the
-	// send level how to permit sending.
+	// send level how to permit sending. It can also hold the identity
+	// sentence (DI2.3) and the fixed Reply-To sentence (DH5.1). No part
+	// of it is sender text.
 	Note string `json:"note,omitempty"`
 }
 
@@ -88,7 +90,7 @@ type draftTool struct {
 // not clean for any other reason, so a draft of this tool can always
 // go to the confirmation.
 //
-// arch: D5.1, D5.5, D5.2, D10.3, §3.14, §3.17, DI2.3
+// arch: D5.1, D5.5, D5.2, D10.3, §3.14, §3.17, DI2.3, DH5.1
 func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
@@ -117,7 +119,7 @@ func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 		return DraftOut{}, errHTMLNested
 	}
 
-	m, pickSentence, cleanup, err := t.compose(ctx, p, acct, in)
+	m, composeNote, cleanup, err := t.compose(ctx, p, acct, in)
 	defer cleanup()
 	if err != nil {
 		return DraftOut{}, err
@@ -136,13 +138,15 @@ func (t *draftTool) handle(ctx context.Context, in DraftIn) (DraftOut, error) {
 		}
 		out.Note += draftInsteadNote(in.Account, acct, id)
 	}
-	if pickSentence != "" {
-		// Identity mode only (DI2.0, DI2.3): the sentence names the
-		// From address, the identity and the pick rule.
+	if composeNote != "" {
+		// compose gives the identity sentence in identity mode only
+		// (DI2.0, DI2.3): it names the From address, the identity and
+		// the pick rule. In either mode, compose can also give the
+		// fixed Reply-To sentence of a reply (DH5.1).
 		if out.Note != "" {
 			out.Note += " "
 		}
-		out.Note += pickSentence
+		out.Note += composeNote
 	}
 	return out, nil
 }

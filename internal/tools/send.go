@@ -1252,7 +1252,14 @@ func sendResult(alias string, res mail.SendResult) SendOut {
 // In identity mode (DI2.0), the From value comes from [pickIdentity]
 // and compose gives the identity sentence of the draft Note (DI2.3).
 // Outside identity mode, [identityFrom] checks the from value as it
-// did before DI2, and the note is empty (I2).
+// did before DI2, and the identity sentence is absent (I2).
+//
+// A reply with no to list of the caller goes to the Reply-To address
+// of the original. When that address differs from the From address,
+// compose adds [replyToNote] to the note, in either mode (DH5.1). The
+// sentence names no address, because the result is outside every
+// fence. The human sees both addresses in the draft and in the send
+// confirmation.
 //
 // The original of a reply or a forward is read once, through
 // [readOriginal], before the body is built. The pick, addReply and
@@ -1265,7 +1272,7 @@ func sendResult(alias string, res mail.SendResult) SendOut {
 // lays out the parts. Outside identity mode the body is built as
 // before DI3 (I2).
 //
-// arch: T5.2, §3.14, §3.15, M7, M13, M14, M10, M11, DI2.0, DI2.1, DI2.3, DI6.1, DI3.1, DI3.2, DI3.3, DI3.4, DI3.5
+// arch: T5.2, §3.14, §3.15, M7, M13, M14, M10, M11, DI2.0, DI2.1, DI2.3, DI6.1, DI3.1, DI3.2, DI3.3, DI3.4, DI3.5, DH5.1
 func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, in DraftIn) (*mail.Outgoing, string, func(), error) {
 	nothing := func() {}
 	mode := acct.IdentityMode()
@@ -1346,6 +1353,12 @@ func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, 
 		if err := t.addReply(m, in, orig, drop); err != nil {
 			return nil, "", nothing, err
 		}
+		if len(in.To) == 0 && replyToDiffers(orig) {
+			if note != "" {
+				note += " "
+			}
+			note += replyToNote
+		}
 	case in.ForwardID != "":
 		cleanup, err = t.addForward(ctx, p, m, used, orig)
 		if err != nil {
@@ -1358,6 +1371,24 @@ func (t *draftTool) compose(ctx context.Context, p Writer, acct config.Account, 
 		}
 	}
 	return m, note, cleanup, nil
+}
+
+// replyToNote is the fixed note of a reply that goes to a Reply-To
+// address that differs from the From address of the original. It
+// names no address: both addresses come from the sender, and the
+// draft result is outside every fence (§3.15).
+//
+// arch: DH5.1
+const replyToNote = "the reply goes to the Reply-To address of the message, which differs from its From address; check the To line before you send"
+
+// replyToDiffers tells if the first Reply-To address of orig is
+// present and differs from its From address. Case alone is no
+// difference.
+//
+// arch: DH5.1
+func replyToDiffers(orig *mail.Message) bool {
+	rt := firstBare(orig.ReplyTo)
+	return rt != "" && !strings.EqualFold(rt, orig.From.Address)
 }
 
 // identityFrom checks the from address of a call (M13). An empty

@@ -171,7 +171,7 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 
 	token := strings.TrimSpace(in.Undo)
 	if token == "" {
-		return t.applyChange(ctx, p, in)
+		return t.applyChange(ctx, p, acct, in)
 	}
 	if in.hasChange() {
 		return ModifyOut{}, errors.New("undo takes the call on its own; send the change in a second call")
@@ -285,12 +285,15 @@ func (in ModifyIn) hasChange() bool {
 // journals them, returns the undo token, and puts the error in the
 // note (IRV.9). An error with no row fails the call as before.
 //
+// An account below draft (classify) gets a change with NoNewLabels, so
+// the change never creates a label (D5.1, E4).
+//
 // The provider call runs on a detached context (DS11.9): a client
 // that goes away during the change does not stop it, and the journal
 // row is written, so undo can find the change from a new session.
 //
-// arch: T5.3, §3.16, §3.18, App B, C18, DRV.11, DS11.9
-func (t *modifyTool) applyChange(ctx context.Context, p Writer, in ModifyIn) (ModifyOut, error) {
+// arch: T5.3, §3.16, §3.18, App B, C18, DRV.11, DS11.9, D5.1, E4
+func (t *modifyTool) applyChange(ctx context.Context, p Writer, acct config.Account, in ModifyIn) (ModifyOut, error) {
 	if len(in.IDs) == 0 {
 		return ModifyOut{}, errors.New("ids: name at least one message; the search tool gives the ids")
 	}
@@ -301,6 +304,9 @@ func (t *modifyTool) applyChange(ctx context.Context, p Writer, in ModifyIn) (Mo
 	if err != nil {
 		return ModifyOut{}, err
 	}
+	// D5.1, E4: below draft a label name that the account does not
+	// have is an error, not a new label (a Gmail label is a folder).
+	ch.NoNewLabels = !guard.Permits(guard.LevelOf(acct), guard.LevelDraft)
 
 	// DS11.9: the provider call is the point of no return. The change
 	// and its journal row complete on a context that the end of the
@@ -323,7 +329,7 @@ func (t *modifyTool) applyChange(ctx context.Context, p Writer, in ModifyIn) (Mo
 		// The call stopped part of the way. The note names the error,
 		// and the steps below journal the messages that changed.
 		out.Note = fmt.Sprintf("the change stopped part of the way: %s; only the messages in applied changed",
-			guard.Redact(err.Error()))
+			errNote(err))
 	}
 	if len(applied) == 0 {
 		out.Note = "no message changed; every id is gone, because another client expunged or moved the message"

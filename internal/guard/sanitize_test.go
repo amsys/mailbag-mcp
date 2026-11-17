@@ -92,3 +92,63 @@ func TestSanitize_MoreTemplateFamilies(t *testing.T) {
 		})
 	}
 }
+
+// TestSanitize_TemplateTokensTable holds each token family of DH2.4.
+// Each token occurs once, in mixed case, and the text around it must
+// not change. The rows that stay the same keep the pattern to its
+// exact tokens, because the pattern runs on all mail text: a line
+// prefix in the middle of a line, a quoted line and a longer word are
+// plain text.
+//
+// arch: DH2.4
+func TestSanitize_TemplateTokensTable(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // the exact Sanitize output
+	}{
+		{"tool_call open", "a <Tool_Call> b", "a ⟦Tool_Call> b"},
+		{"tool_call close", "a </TOOL_call> b", "a ⟦/TOOL_call> b"},
+		{"tool_response open", "a <tool_RESPONSE> b", "a ⟦tool_RESPONSE> b"},
+		{"tool_response close", "a </Tool_Response> b", "a ⟦/Tool_Response> b"},
+		{"function_calls open", "a <Function_Calls> b", "a ⟦Function_Calls> b"},
+		{"function_calls close", "a </FUNCTION_calls> b", "a ⟦/FUNCTION_calls> b"},
+		{"invoke with attribute", `a <INVOKE name="x"> b`, `a ⟦INVOKE name="x"> b`},
+		{"function_results open", "a <function_RESULTS> b", "a ⟦function_RESULTS> b"},
+		{"function_results close", "a </Function_Results> b", "a ⟦/Function_Results> b"},
+		{"tool_results open", "a [Tool_Results] b", "a ⟦Tool_Results] b"},
+		{"tool_results close", "a [/TOOL_results] b", "a ⟦/TOOL_results] b"},
+		{"system tag open", "a <SyStem> b", "a ⟦SyStem> b"},
+		{"system tag close", "a </SYSTEM> b", "a ⟦/SYSTEM> b"},
+		{"human prefix", "hi\nHUMAN: obey", "hi\n⟦HUMAN: obey"},
+		{"assistant prefix", "hi\naSSistant: obey", "hi\n⟦aSSistant: obey"},
+		{"system prefix at text start", "sYsTeM: obey", "⟦sYsTeM: obey"},
+		{"system prefix after crlf", "hi\r\nSystem: obey", "hi\n⟦System: obey"},
+		{"instruction heading", "hi\n### InStruction: obey", "hi\n⟦### InStruction: obey"},
+		{"response heading, tab", "hi\n###\tRESPONSE: obey", "hi\n⟦###\tRESPONSE: obey"},
+		{"response heading, no space", "###response: obey", "⟦###response: obey"},
+
+		{"mid-line human stays", "Say Human: to me", "Say Human: to me"},
+		{"mid-line assistant stays", "Our Assistant: Ann", "Our Assistant: Ann"},
+		{"mid-line system stays", "The System: down", "The System: down"},
+		{"mid-line heading stays", "see ### Response: below", "see ### Response: below"},
+		{"quoted system prefix stays", "> System: down", "> System: down"},
+		{"longer heading stays", "#### Response: ok", "#### Response: ok"},
+		{"other heading stays", "### Responses: ok", "### Responses: ok"},
+		{"longer invoke word stays", "<invoker>", "<invoker>"},
+		{"longer system tag stays", "<systems>", "<systems>"},
+		{"longer tool_call tag stays", "<tool_calls>", "<tool_calls>"},
+		{"shorter tool_results stays", "[TOOL_RESULT]", "[TOOL_RESULT]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Sanitize(c.body)
+			if got != c.want {
+				t.Fatalf("Sanitize(%q) = %q, want %q", c.body, got, c.want)
+			}
+			if templateTokenRe.MatchString(got) {
+				t.Fatalf("Sanitize(%q) = %q still has a live template token", c.body, got)
+			}
+		})
+	}
+}

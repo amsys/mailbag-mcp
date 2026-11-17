@@ -645,7 +645,7 @@ func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []st
 	var notes []string
 	if stopErr != nil {
 		notes = append(notes, fmt.Sprintf("the change stopped part of the way: %s; %d of the %d messages changed",
-			guard.Redact(stopErr.Error()), out.Applied, len(ids)))
+			errNote(stopErr), out.Applied, len(ids)))
 	}
 	if stopErr == nil && out.Applied == 0 {
 		notes = append(notes, "no message changed; every id is gone, because another client expunged or moved the message")
@@ -865,11 +865,29 @@ func bulkActionText(ch mail.Change) string {
 //
 // arch: DS9.4, D5.1, D5.2, H1, H4
 func askBulk(ctx context.Context, ss *mcp.ServerSession, acct config.Account, message string) (string, error) {
+	outcome, err := askConfirm(ctx, ss, acct, message, bulkSchema, bulkNotConfirmedText)
+	if outcome == confirmNoElicitRefused {
+		return outcome, errBulkNoElicitation
+	}
+	return outcome, err
+}
+
+// askConfirm asks the human one question with the form schema and
+// reads the answer with [bulkOutcome]. A client with no elicitation
+// gives [confirmNoElicitAllowed] when acct has [bulk]
+// allow_without_elicitation = true, and else
+// [confirmNoElicitRefused] with a nil error, so that each caller
+// gives its own fixed refusal. The wait uses the call context without
+// the tool deadline, bounded by [confirmWaitLimit]. A question that
+// does not complete gives an error with the text notConfirmedText.
+//
+// arch: DH3.4, DS9.4, D5.2, H4
+func askConfirm(ctx context.Context, ss *mcp.ServerSession, acct config.Account, message string, schema map[string]any, notConfirmedText string) (string, error) {
 	if !canElicit(ss) {
 		if acct.BulkAllowWithoutElicitation {
 			return confirmNoElicitAllowed, nil
 		}
-		return confirmNoElicitRefused, errBulkNoElicitation
+		return confirmNoElicitRefused, nil
 	}
 	wait, _, _ := untimed(ctx)
 	wait, cancel := context.WithTimeout(wait, confirmWaitLimit)
@@ -877,13 +895,13 @@ func askBulk(ctx context.Context, ss *mcp.ServerSession, acct config.Account, me
 	res, err := ss.Elicit(wait, &mcp.ElicitParams{
 		Mode:            "form",
 		Message:         message,
-		RequestedSchema: bulkSchema,
+		RequestedSchema: schema,
 	})
 	if err != nil {
 		if ctxErr := wait.Err(); ctxErr != nil {
-			return "", fmt.Errorf("%s: %w", bulkNotConfirmedText, ctxErr)
+			return "", fmt.Errorf("%s: %w", notConfirmedText, ctxErr)
 		}
-		return "", errors.New(bulkNotConfirmedText)
+		return "", errors.New(notConfirmedText)
 	}
 	return bulkOutcome(res), nil
 }

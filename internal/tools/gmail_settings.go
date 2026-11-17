@@ -6,12 +6,18 @@
 // account through the gmail.Settings interface. An account of another
 // provider gets a note and no error. The access level depends on the
 // action (G21). Filter criteria, label names, vacation text and the
-// signature are fenced (§3.15).
+// signature are fenced (§3.15). Three writes ask the human first: a
+// vacation that goes on, a signature, and a filter that hides mail
+// (DH3.2). On protocol 2026-07-28 and later the question goes back as
+// an input-required result, and the retry applies the stored change
+// (DH3.5).
 
 package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +26,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amsys/mailbag-mcp/internal/config"
 	"github.com/amsys/mailbag-mcp/internal/gmail"
 	"github.com/amsys/mailbag-mcp/internal/guard"
 )
@@ -105,21 +112,239 @@ func AddGmailSettings(srv *mcp.Server, logger *slog.Logger, m Mail) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "gmail_settings",
 		Description: "Read or change Gmail filters, vacation reply and signature.",
-	}, Wrap(logger, "gmail_settings", DefaultTimeout, h.handle))
+	}, WrapReq(logger, "gmail_settings", DefaultTimeout, h.handleReq))
 }
 
+// gmailSettingsTool is the gmail_settings handler. pending keeps each
+// open settings question of the MRTR path (DH3.5). Its zero value
+// works, so a tool that a test builds with no store also works.
+//
+// arch: DH3.1, DH3.5
 type gmailSettingsTool struct {
-	mail Mail
+	mail    Mail
+	pending pendingStore[pendingSetting]
 }
 
-// handle runs one action. The order is fixed (S9-GAP6): OpenWriter,
+// pendingSetting is the record of one open settings question on the
+// MRTR path. The retry must give the same session, account, action and
+// input; digest is the SHA-256 of the JSON form of the first input.
+// change holds the prepared change, so the retry writes the value that
+// the human saw and reads Gmail no more (I7).
+//
+// arch: DH3.5, DH8.2
+type pendingSetting struct {
+	session *mcp.ServerSession
+	account string
+	action  string
+	digest  [sha256.Size]byte // of json.Marshal(in)
+	change  settingChange
+}
+
+// settingAsk asks the human about one settings change and gives a
+// confirm outcome. It gets the account and the text of the question.
+//
+// arch: DH3.1
+type settingAsk func(ctx context.Context, acct config.Account, message string) (string, error)
+
+// errSettingNoElicitation is the fixed refusal for a client that
+// cannot ask the human about a settings change. Like
+// [errBulkNoElicitation], it does not name the config key, because the
+// model reads this text and only the human may turn the question off.
+//
+// arch: DH3.4, DH3.6
+var errSettingNoElicitation = errors.New("this client cannot ask the human to confirm this Gmail settings change, so nothing changed; the human can make the change in Gmail")
+
+// settingSchema is the requested schema of a settings question. It has
+// no remember field: a session grant never covers these questions.
+//
+// arch: DH3.4
+var settingSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		bulkField: map[string]any{
+			"type":        "boolean",
+			"title":       "Apply this change",
+			"description": "Set to true to change the setting above.",
+		},
+	},
+	"required": []string{bulkField},
+}
+
+// handleReq is the handler that [AddGmailSettings] registers.
+//
+// A session on a protocol before [elicitCutoffProtocol] asks the human
+// through the session of req (DH3.4). Such a session that gives a
+// request state gets [errConfirmStale], because no first call of that
+// session made a record.
+//
+// A session on [elicitCutoffProtocol] or later uses the MRTR path
+// (DH3.5). A call with no request state is the first call: a change
+// that asks gives its question as an [inputRequired] value. A call
+// with a request state is the retry: it takes the record of that state
+// and applies the stored change after an accept.
+//
+// arch: DH3.1, DH3.4, DH3.5
+func (t *gmailSettingsTool) handleReq(ctx context.Context, req *mcp.CallToolRequest, in GmailSettingsIn) (GmailSettingsOut, error) {
+	ss := sessionOf(req)
+	state, answers := retryOf(req)
+	if !newProtocol(ss) {
+		if state != "" {
+			return GmailSettingsOut{}, errConfirmStale
+		}
+		return t.run(ctx, in, settingsAsk(ss))
+	}
+	if state == "" {
+		return t.open(ctx, in, func(ctx context.Context, s gmail.Settings, acct config.Account) (GmailSettingsOut, error) {
+			return runSetting(ctx, s, in, func(_ context.Context, c settingChange) (string, error) {
+				return t.askFirst(ss, acct, in, c)
+			})
+		})
+	}
+	// The retry: the level check and the type assertion of open come
+	// before take, so a refusal there keeps the record open (I9).
+	return t.open(ctx, in, func(ctx context.Context, s gmail.Settings, acct config.Account) (GmailSettingsOut, error) {
+		c, err := t.claim(ss, state, acct, in)
+		if err != nil {
+			return GmailSettingsOut{}, err
+		}
+		return applyAfter(ctx, s, c, bulkAnswer(answers))
+	})
+}
+
+// askFirst is the question of the first call on the MRTR path
+// (DH3.5). It keeps a record of c and gives the question of c as an
+// [inputRequired] value with the outcome [confirmPending].
+//
+// A client with no form elicitation gets [errSettingNoElicitation],
+// unless the account has [bulk] allow_without_elicitation = true; then
+// the change runs with no question (DH3.6). A full store or a full
+// session share gives its fixed refusal, and nobody is asked.
+//
+// A repeat first call with the same session, account, action and
+// input takes the place of the open record and gets a new state, so
+// the old state is then stale (H12).
+//
+// arch: DH3.5, DH3.6
+func (t *gmailSettingsTool) askFirst(ss *mcp.ServerSession, acct config.Account, in GmailSettingsIn, c settingChange) (string, error) {
+	if !canElicit(ss) {
+		if acct.BulkAllowWithoutElicitation {
+			return confirmNoElicitAllowed, nil
+		}
+		return confirmNoElicitRefused, errSettingNoElicitation
+	}
+	digest, err := settingDigest(in)
+	if err != nil {
+		return "", err
+	}
+	place, _, err := t.pending.hold(ss, func(r pendingSetting) bool {
+		return r.session == ss && r.account == acct.Alias && r.action == in.Action && r.digest == digest
+	})
+	if err != nil {
+		return "", err
+	}
+	state, err := place.fill(pendingSetting{
+		session: ss,
+		account: acct.Alias,
+		action:  in.Action,
+		digest:  digest,
+		change:  c,
+	})
+	if err != nil {
+		return "", err
+	}
+	return confirmPending, &inputRequired{
+		requests: mcp.InputRequestMap{confirmInputID: &mcp.ElicitParams{
+			Mode:            "form",
+			Message:         c.question(),
+			RequestedSchema: settingSchema,
+		}},
+		state: state,
+	}
+}
+
+// claim is the claim step of the retry (DH3.5). It takes the record
+// of state, so the state works one time only. It gives
+// [errConfirmStale] when the store has no open record of state, or
+// when the session, the account, the action or the digest of the input
+// differ from the retry (I10).
+//
+// arch: DH3.5, DH8.2
+func (t *gmailSettingsTool) claim(ss *mcp.ServerSession, state string, acct config.Account, in GmailSettingsIn) (settingChange, error) {
+	rec, ok := t.pending.take(state)
+	if !ok {
+		return settingChange{}, errConfirmStale
+	}
+	digest, err := settingDigest(in)
+	if err != nil || rec.session != ss || rec.account != acct.Alias || rec.action != in.Action || rec.digest != digest {
+		return settingChange{}, errConfirmStale
+	}
+	return rec.change, nil
+}
+
+// settingDigest gives the SHA-256 of the JSON form of in (DH3.5).
+func settingDigest(in GmailSettingsIn) ([sha256.Size]byte, error) {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return sha256.Sum256(b), nil
+}
+
+// handle runs one action with no session. A change that needs a
+// question is refused unless the account has [bulk]
+// allow_without_elicitation = true (DH3.6).
+//
+// arch: DH3.1, DH3.6
+func (t *gmailSettingsTool) handle(ctx context.Context, in GmailSettingsIn) (GmailSettingsOut, error) {
+	return t.run(ctx, in, settingsAsk(nil))
+}
+
+// settingsAsk gives the question of one change on the session ss. A
+// nil ss has no way to ask, and [askConfirm] treats it as a client
+// with no elicitation. [bulkOutcome] reads the answer, so an accept
+// with remember true is only an accept here (DH3.4, I8).
+//
+// arch: DH3.4, DH3.6
+func settingsAsk(ss *mcp.ServerSession) settingAsk {
+	return func(ctx context.Context, acct config.Account, message string) (string, error) {
+		outcome, err := askConfirm(ctx, ss, acct, message, settingSchema, bulkNotConfirmedText)
+		if outcome == confirmNoElicitRefused {
+			return outcome, errSettingNoElicitation
+		}
+		return outcome, err
+	}
+}
+
+// run runs one action. The order is fixed (S9-GAP6): OpenWriter,
 // so an unknown alias fails as in every other tool (G10); then the
 // level check of the action (G21); then the gmail.Settings type
-// assertion. So an account of another provider at a level too low
-// gets the denial, and at a level high enough it gets the note.
+// assertion; then the question, then the change (DH3.1). So an account
+// of another provider at a level too low gets the denial, at a level
+// high enough it gets the note, and neither gets a question.
 //
-// arch: DS9.7, DS9.11, G10, G21
-func (t *gmailSettingsTool) handle(ctx context.Context, in GmailSettingsIn) (GmailSettingsOut, error) {
+// arch: DS9.7, DS9.11, G10, G21, DH3.1
+func (t *gmailSettingsTool) run(ctx context.Context, in GmailSettingsIn, ask settingAsk) (GmailSettingsOut, error) {
+	return t.open(ctx, in, func(ctx context.Context, s gmail.Settings, acct config.Account) (GmailSettingsOut, error) {
+		return runSetting(ctx, s, in, func(ctx context.Context, c settingChange) (string, error) {
+			return ask(ctx, acct, c.question())
+		})
+	})
+}
+
+// settingStep is the part of one call that comes after the level
+// check and the type assertion of [gmailSettingsTool.open].
+//
+// arch: DH3.1, DH3.5
+type settingStep func(ctx context.Context, s gmail.Settings, acct config.Account) (GmailSettingsOut, error)
+
+// open does the steps of [gmailSettingsTool.run] before the question
+// in their fixed order, then runs step. Every path uses it: the old
+// protocol, and the first call and the retry of the MRTR path, so a
+// level refusal and the note for another provider always come before
+// any question and any record (DH3.1, I9).
+//
+// arch: DS9.7, DS9.11, G10, G21, DH3.1, DH3.5
+func (t *gmailSettingsTool) open(ctx context.Context, in GmailSettingsIn, step settingStep) (GmailSettingsOut, error) {
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
 		return GmailSettingsOut{}, err
@@ -139,7 +364,7 @@ func (t *gmailSettingsTool) handle(ctx context.Context, in GmailSettingsIn) (Gma
 		}
 		return GmailSettingsOut{Note: fmt.Sprintf("gmail_settings works for Gmail accounts only; %s uses %s", alias, acct.Provider)}, nil
 	}
-	out, err := runSettings(ctx, s, in)
+	out, err := step(ctx, s, acct)
 	if errors.Is(err, gmail.ErrScope) {
 		// The fixed text of DS7.3: it tells the person how to get the
 		// missing scope, and nothing else.
@@ -174,8 +399,68 @@ func settingsLevel(in GmailSettingsIn) (guard.Level, error) {
 	}
 }
 
-// runSettings does one action on s. The level check is done.
-func runSettings(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (GmailSettingsOut, error) {
+// changeAsk asks about the prepared change c and gives a confirm
+// outcome.
+//
+// arch: DH3.1, DH3.5
+type changeAsk func(ctx context.Context, c settingChange) (string, error)
+
+// runSetting does one action on s. The level check is done. A read
+// goes straight to [readSetting]. A write is prepared, asked about when
+// [settingChange.asks] says so, and then applied by [applyAfter].
+//
+// arch: DH3.1, DH3.2, DH3.4, DH3.5
+func runSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn, ask changeAsk) (GmailSettingsOut, error) {
+	switch in.Action {
+	case "list_filters", "get_vacation", "get_signature":
+		return readSetting(ctx, s, in)
+	}
+	c, err := prepareSetting(ctx, s, in)
+	if err != nil {
+		return GmailSettingsOut{}, err
+	}
+	if !c.asks() {
+		return c.apply(ctx, s)
+	}
+	outcome, err := ask(ctx, c)
+	if err != nil {
+		return GmailSettingsOut{}, err
+	}
+	return applyAfter(ctx, s, c, outcome)
+}
+
+// applyAfter applies c on s when outcome is an accept, or when the
+// config key lets a client that cannot ask make the change. Any other
+// outcome changes nothing and gives the declined note (I10).
+//
+// arch: DH3.4, DH3.5, DH3.6, DS11.9
+func applyAfter(ctx context.Context, s gmail.Settings, c settingChange, outcome string) (GmailSettingsOut, error) {
+	// DS11.9: an accept is the point of no return of the change. The
+	// wait for the human does not count against the tool deadline, so
+	// an accept gets a new full deadline, as a send does.
+	switch outcome {
+	case confirmAccept, confirmAcceptSession:
+		if wait, timeout, ok := untimed(ctx); ok {
+			var cancel context.CancelFunc
+			ctx, cancel = detach(wait, timeout)
+			defer cancel()
+		}
+	case confirmNoElicitAllowed:
+		// No wait for the human came first, so the change keeps the
+		// tool deadline that ctx has.
+		if _, timeout, ok := untimed(ctx); ok {
+			var cancel context.CancelFunc
+			ctx, cancel = detach(ctx, timeout)
+			defer cancel()
+		}
+	default:
+		return GmailSettingsOut{Note: bulkDeclinedNote}, nil
+	}
+	return c.apply(ctx, s)
+}
+
+// readSetting does one of the three reads.
+func readSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (GmailSettingsOut, error) {
 	switch in.Action {
 	case "list_filters":
 		fs, err := s.ListFilters(ctx)
@@ -190,50 +475,13 @@ func runSettings(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 			out.Note = "the account has no filters"
 		}
 		return out, nil
-	case "create_filter":
-		f, err := s.CreateFilter(ctx, gmail.Filter{
-			From: in.From, To: in.To, Subject: in.Subject, Query: in.Query,
-			HasAttachment: in.HasAttachment,
-			AddLabels:     in.AddLabels, RemoveLabels: in.RemoveLabels,
-			MarkRead: in.MarkRead, Star: in.Star,
-		})
-		if err != nil {
-			return GmailSettingsOut{}, err
-		}
-		return GmailSettingsOut{Filters: []FilterRow{filterRow(f)}, Note: "filter created"}, nil
-	case "delete_filter":
-		if strings.TrimSpace(in.FilterID) == "" {
-			return GmailSettingsOut{}, errors.New("gmail_settings: delete_filter needs filter_id")
-		}
-		if err := s.DeleteFilter(ctx, in.FilterID); err != nil {
-			return GmailSettingsOut{}, err
-		}
-		return GmailSettingsOut{Note: "filter deleted"}, nil
 	case "get_vacation":
 		v, err := s.Vacation(ctx)
 		if err != nil {
 			return GmailSettingsOut{}, err
 		}
 		return GmailSettingsOut{Vacation: vacationRow(v)}, nil
-	case "set_vacation":
-		// Gmail replaces the whole setting, so read it first: a field
-		// the call does not give keeps its value (R16-L7).
-		cur, err := s.Vacation(ctx)
-		if err != nil {
-			return GmailSettingsOut{}, err
-		}
-		v, err := vacationOf(in, cur)
-		if err != nil {
-			return GmailSettingsOut{}, err
-		}
-		if err := s.SetVacation(ctx, v); err != nil {
-			return GmailSettingsOut{}, err
-		}
-		if v.Enabled {
-			return GmailSettingsOut{Note: "vacation reply on"}, nil
-		}
-		return GmailSettingsOut{Note: "vacation reply off"}, nil
-	case "get_signature":
+	default: // get_signature; runSetting sends only the three reads here
 		sig, err := s.Signature(ctx, in.SendAs)
 		if err != nil {
 			return GmailSettingsOut{}, err
@@ -242,8 +490,239 @@ func runSettings(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (Gma
 			return GmailSettingsOut{Note: "the address has no signature"}, nil
 		}
 		return GmailSettingsOut{Signature: guard.Fence("SIGNATURE", sig)}, nil
+	}
+}
+
+// settingChange is one settings write, ready to apply. It holds the
+// bytes that leave, so the question shows what the change writes
+// (DH3.3, I7). account is the alias that the question names.
+//
+// arch: DH3.2
+type settingChange struct {
+	action    string
+	account   string
+	vacation  gmail.Vacation
+	filter    gmail.Filter
+	sendAs    string
+	signature string
+}
+
+// prepareSetting builds the change of one write action. For
+// set_vacation it makes the one read of the current setting and merges
+// the call into it (R16-L7). It removes the fence markers from each
+// text that the call gives (DH2.6), so the question shows the stripped
+// value. The stored vacation subject and body stay as Gmail holds them.
+//
+// arch: DH2.6, DH3.2, DS9.7, R16-L7
+func prepareSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (settingChange, error) {
+	c := settingChange{action: in.Action, account: in.Account}
+	switch in.Action {
+	case "set_vacation":
+		// Gmail replaces the whole setting, so read it first: a field
+		// the call does not give keeps its value (R16-L7).
+		cur, err := s.Vacation(ctx)
+		if err != nil {
+			return settingChange{}, err
+		}
+		// Strip only the text of the call. A strip of the merged value
+		// also changes the stored text, because StripInvisible removes
+		// ZWJ, ZWNJ and bidi marks (DH2.6, review M1).
+		in.Subject = guard.StripFenceMarkers(in.Subject)
+		in.Body = guard.StripFenceMarkers(in.Body)
+		v, err := vacationOf(in, cur)
+		if err != nil {
+			return settingChange{}, err
+		}
+		c.vacation = v
+	case "create_filter":
+		c.filter = gmail.Filter{
+			From:          guard.StripFenceMarkers(in.From),
+			To:            guard.StripFenceMarkers(in.To),
+			Subject:       guard.StripFenceMarkers(in.Subject),
+			Query:         guard.StripFenceMarkers(in.Query),
+			HasAttachment: in.HasAttachment,
+			AddLabels:     stripAll(in.AddLabels),
+			RemoveLabels:  stripAll(in.RemoveLabels),
+			MarkRead:      in.MarkRead,
+			Star:          in.Star,
+		}
+	case "delete_filter":
+		if strings.TrimSpace(in.FilterID) == "" {
+			return settingChange{}, errors.New("gmail_settings: delete_filter needs filter_id")
+		}
+		c.filter = gmail.Filter{ID: in.FilterID}
 	default: // set_signature; settingsLevel refused every other action
-		if err := s.SetSignature(ctx, in.SendAs, in.Body); err != nil {
+		c.sendAs = in.SendAs
+		c.signature = guard.StripFenceMarkers(in.Body)
+	}
+	return c, nil
+}
+
+// stripAll removes the fence markers from each name of a label list.
+func stripAll(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = guard.StripFenceMarkers(n)
+	}
+	return out
+}
+
+// removesLabel reports whether names holds the system label word, in
+// any case and with outer spaces. It reads the stripped names, so a
+// marker or a hidden character inside the word cannot avoid the
+// question (DH3.2). It also compares the lower-case forms, because the
+// provider finds a label by its lower-case name (DH7.1, I6). The lower
+// case of U+0130 is "i", but U+0130 does not fold to "i", so
+// [strings.EqualFold] alone misses a name that the provider resolves.
+func removesLabel(names []string, word string) bool {
+	lower := strings.ToLower(word)
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if strings.EqualFold(n, word) || strings.ToLower(n) == lower {
+			return true
+		}
+	}
+	return false
+}
+
+// asks reports whether the human must confirm c: a vacation that goes
+// on (Gmail then sends mail), every signature, and a filter that hides
+// mail from the owner (it marks mail read or takes it out of the
+// inbox).
+//
+// arch: DH3.2
+func (c settingChange) asks() bool {
+	switch c.action {
+	case "set_vacation":
+		return c.vacation.Enabled
+	case "set_signature":
+		return true
+	case "create_filter":
+		return c.filter.MarkRead || c.hidesInbox() || removesLabel(c.filter.RemoveLabels, "UNREAD")
+	default:
+		return false
+	}
+}
+
+// hidesInbox reports whether the filter takes mail out of the inbox.
+func (c settingChange) hidesInbox() bool {
+	return removesLabel(c.filter.RemoveLabels, "INBOX")
+}
+
+// question gives the text that the human accepts. It comes only from
+// c, which holds the bytes that leave. Each value folds onto one line,
+// and each body line has the "> " prefix of the send summary, so a
+// value cannot look like another field. No line and no field is cut,
+// because a text that the human does not see must not go out (DH3.3).
+//
+// arch: DH3.3
+func (c settingChange) question() string {
+	var b strings.Builder
+	field := func(label, value string) {
+		fmt.Fprintf(&b, "%s: %s\n", label, lineBreakFolder.Replace(value))
+	}
+	body := func(label, text string) {
+		if text == "" {
+			fmt.Fprintf(&b, "%s: (empty)\n", label)
+			return
+		}
+		fmt.Fprintf(&b, "%s:\n", label)
+		for _, l := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+			b.WriteString("> " + lineBreakFolder.Replace(l) + "\n")
+		}
+	}
+	day := func(t time.Time) string {
+		if t.IsZero() {
+			return "not set"
+		}
+		return t.In(time.Local).Format(dayLayout)
+	}
+	switch c.action {
+	case "set_vacation":
+		b.WriteString("Turn on this Gmail vacation reply? Gmail then sends it to each person who writes to the account.\n")
+		field("Account", c.account)
+		field("Enabled", pick(c.vacation.Enabled, "yes", "no"))
+		field("Subject", c.vacation.Subject)
+		field("Start", day(c.vacation.Start))
+		end := "not set"
+		if !c.vacation.End.IsZero() {
+			end = day(c.vacation.End.Add(-time.Millisecond))
+		}
+		field("Last day", end)
+		body("Body", c.vacation.Body)
+	case "set_signature":
+		b.WriteString("Replace this Gmail signature?\n")
+		field("Account", c.account)
+		sendAs := c.sendAs
+		if sendAs == "" {
+			sendAs = "the primary address"
+		}
+		field("Send-as address", sendAs)
+		body("Signature", c.signature)
+	default: // create_filter; asks is true for no other action
+		f := c.filter
+		b.WriteString("Create this Gmail filter? It changes each message that matches, with no later question.\n")
+		field("Account", c.account)
+		if f.From != "" {
+			field("From", f.From)
+		}
+		if f.To != "" {
+			field("To", f.To)
+		}
+		if f.Subject != "" {
+			field("Subject", f.Subject)
+		}
+		if f.Query != "" {
+			field("Query", f.Query)
+		}
+		if f.HasAttachment != nil {
+			field("Has attachment", pick(*f.HasAttachment, "yes", "no"))
+		}
+		if c.hidesInbox() {
+			b.WriteString("A matching message skips the inbox.\n")
+		}
+		if f.MarkRead || removesLabel(f.RemoveLabels, "UNREAD") {
+			b.WriteString("A matching message is marked read.\n")
+		}
+		if f.Star {
+			b.WriteString("A matching message gets a star.\n")
+		}
+		for _, n := range f.AddLabels {
+			field("Add label", n)
+		}
+		for _, n := range f.RemoveLabels {
+			field("Remove label", n)
+		}
+	}
+	return b.String()
+}
+
+// apply does the write of c on s and gives the result of the call.
+//
+// arch: DH3.2
+func (c settingChange) apply(ctx context.Context, s gmail.Settings) (GmailSettingsOut, error) {
+	switch c.action {
+	case "create_filter":
+		f, err := s.CreateFilter(ctx, c.filter)
+		if err != nil {
+			return GmailSettingsOut{}, err
+		}
+		return GmailSettingsOut{Filters: []FilterRow{filterRow(f)}, Note: "filter created"}, nil
+	case "delete_filter":
+		if err := s.DeleteFilter(ctx, c.filter.ID); err != nil {
+			return GmailSettingsOut{}, err
+		}
+		return GmailSettingsOut{Note: "filter deleted"}, nil
+	case "set_vacation":
+		if err := s.SetVacation(ctx, c.vacation); err != nil {
+			return GmailSettingsOut{}, err
+		}
+		return GmailSettingsOut{Note: "vacation reply " + pick(c.vacation.Enabled, "on", "off")}, nil
+	default: // set_signature
+		if err := s.SetSignature(ctx, c.sendAs, c.signature); err != nil {
 			return GmailSettingsOut{}, err
 		}
 		return GmailSettingsOut{Note: "signature saved"}, nil

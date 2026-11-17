@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/amsys/mailbag-mcp/internal/guard"
+	"github.com/amsys/mailbag-mcp/internal/mail"
 )
 
 // TestDraft_SavesAndNeedsDraftAccess holds the access mapping of the
@@ -236,5 +237,84 @@ func TestDraft_HTMLCutToNothingHasNoContent(t *testing.T) {
 	}
 	if len(prov.drafts) != 0 {
 		t.Errorf("SaveDraft ran %d times (replace %v), want 0", len(prov.drafts), prov.replaced)
+	}
+}
+
+// TestDraft_ReplyToDiffersNote holds the Reply-To note of a reply. A
+// reply with no to list of the caller goes to the Reply-To address of
+// the original. When that address differs from the From address, the
+// draft note gets the fixed sentence [replyToNote]. The note names
+// neither address, because the result is outside every fence.
+//
+// A Reply-To that differs only in case, an absent Reply-To and a to
+// list of the caller give no note. On an account below the send
+// level, the sentence joins the note that names the fix, and does
+// not replace it.
+//
+// arch: DH5.1
+func TestDraft_ReplyToDiffersNote(t *testing.T) {
+	const from = "ann@example.test"
+	const other = "billing@elsewhere.example"
+	cases := []struct {
+		name    string
+		replyTo []mail.Address
+		to      []string
+		access  guard.Level
+		want    bool
+	}{
+		{name: "differs", replyTo: []mail.Address{{Name: "Ann", Address: other}}, access: guard.LevelSend, want: true},
+		{name: "case only", replyTo: []mail.Address{{Address: "ANN@Example.TEST"}}, access: guard.LevelSend},
+		{name: "absent", access: guard.LevelSend},
+		{name: "caller to", replyTo: []mail.Address{{Address: other}}, to: []string{"carol@example.test"}, access: guard.LevelSend},
+		{name: "joins draft note", replyTo: []mail.Address{{Address: other}}, access: guard.LevelDraft, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := &mail.Message{
+				ID:        "1700000000.4211.INBOX",
+				Folder:    "INBOX",
+				From:      mail.Address{Name: "Ann", Address: from},
+				ReplyTo:   tc.replyTo,
+				Date:      internalDate,
+				Subject:   "invoice",
+				Body:      "please pay",
+				MessageID: "<a@example.test>",
+			}
+			h, prov := draftFixture(t, &writeProvider{msg: orig})
+			h.mail.(*writeMail).acct.Access = string(tc.access)
+
+			out, err := h.handle(context.Background(), DraftIn{
+				Account: "work", ReplyToID: orig.ID, To: tc.to, Body: "paid",
+			})
+			if err != nil {
+				t.Fatalf("reply: %v", err)
+			}
+			if len(prov.drafts) != 1 {
+				t.Fatalf("SaveDraft ran %d times, want 1", len(prov.drafts))
+			}
+
+			has := strings.Contains(out.Note, replyToNote)
+			if has != tc.want {
+				t.Errorf("note = %q, want the Reply-To sentence: %v", out.Note, tc.want)
+			}
+			for _, addr := range []string{from, other} {
+				if strings.Contains(strings.ToLower(out.Note), strings.ToLower(addr)) {
+					t.Errorf("note = %q names the sender address %q", out.Note, addr)
+				}
+			}
+			switch tc.access {
+			case guard.LevelSend:
+				if tc.want && out.Note != replyToNote {
+					t.Errorf("note = %q, want only %q", out.Note, replyToNote)
+				}
+				if !tc.want && out.Note != "" {
+					t.Errorf("note = %q, want no note", out.Note)
+				}
+			case guard.LevelDraft:
+				if !strings.Contains(out.Note, out.DraftID) {
+					t.Errorf("note = %q lost the send-level note that names the draft id", out.Note)
+				}
+			}
+		})
 	}
 }

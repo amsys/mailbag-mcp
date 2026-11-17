@@ -141,8 +141,8 @@ func (t *searchTool) handle(ctx context.Context, in SearchIn) (SearchOut, error)
 			if err != nil {
 				// The structured result does not pass through the
 				// redactor of Wrap, which only sees the error text of
-				// a failed call. Redact here (§3.15, B4).
-				out.Errors = append(out.Errors, AccountError{Account: alias, Error: guard.Redact(err.Error())})
+				// a failed call. Clean it here (§3.15, B4, DH2.5).
+				out.Errors = append(out.Errors, AccountError{Account: alias, Error: errNote(err)})
 				return nil
 			}
 			out.Rows = append(out.Rows, rows...)
@@ -231,6 +231,15 @@ func buildQuery(in SearchIn) (mail.Query, error) {
 	return q, nil
 }
 
+// errNote gives the text of a provider error for a result field. A
+// provider error can quote a stranger, so the text goes through
+// Sanitize. Redact runs first, so NFKC cannot hide a token from it.
+//
+// arch: DH2.5
+func errNote(err error) string {
+	return guard.Sanitize(guard.Redact(err.Error()))
+}
+
 // toRow builds one result line. Everything the sender controls goes
 // inside one fence; the id, account, folder, date, flags and size
 // stay outside it (§3.15).
@@ -255,7 +264,7 @@ func toRow(alias string, m mail.Message) SearchRow {
 	return SearchRow{
 		ID:      m.ID,
 		Account: alias,
-		Folder:  m.Folder,
+		Folder:  guard.CleanServerName(m.Folder),
 		Date:    m.Date.UTC().Format(time.RFC3339),
 		Flags:   flagText(m.Flags),
 		Size:    m.Size,
@@ -274,7 +283,11 @@ func addressText(a mail.Address) string {
 }
 
 // flagText writes the flags a model acts on. An empty string means a
-// read message with no other flag.
+// read message with no other flag. Each label word comes from the
+// server and is cleaned alone, so a turn prefix at the start of a word
+// is found.
+//
+// arch: DH2.5
 func flagText(f mail.Flags) string {
 	var parts []string
 	if !f.Seen {
@@ -289,7 +302,9 @@ func flagText(f mail.Flags) string {
 	if f.Draft {
 		parts = append(parts, "draft")
 	}
-	parts = append(parts, f.Labels...)
+	for _, l := range f.Labels {
+		parts = append(parts, guard.CleanServerName(l))
+	}
 	return strings.Join(parts, " ")
 }
 

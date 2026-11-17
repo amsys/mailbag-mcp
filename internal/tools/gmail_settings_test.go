@@ -174,7 +174,7 @@ func TestGmailSettings_VacationOnNeedsSend(t *testing.T) {
 	}
 
 	h, w = settingsFixture("send")
-	out, err := h.handle(ctx, in)
+	out, err := h.run(ctx, in, settingsAcceptAll)
 	if err != nil {
 		t.Fatalf("vacation on at send: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 			}
 		}
 		h, w := settingsFixture(c.level)
-		if _, err := h.handle(ctx, c.in); err != nil {
+		if _, err := h.run(ctx, c.in, settingsAcceptAll); err != nil {
 			t.Errorf("%s at %s: %v", c.in.Action, c.level, err)
 			continue
 		}
@@ -287,7 +287,7 @@ func TestGmailSettings_VacationKeepsFieldsNotGiven(t *testing.T) {
 
 	h, w = settingsFixture("send")
 	w.vac = stored
-	if _, err := h.handle(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(true), Subject: "Out"}); err != nil {
+	if _, err := h.run(ctx, GmailSettingsIn{Account: "work", Action: "set_vacation", Enabled: boolPtr(true), Subject: "Out"}, settingsAcceptAll); err != nil {
 		t.Fatalf("new subject: %v", err)
 	}
 	if got := w.gotVac; !got.Enabled || got.Subject != "Out" || got.Body != stored.Body || !got.Start.Equal(start) || !got.End.Equal(end) {
@@ -345,7 +345,7 @@ func TestGmailSettings_ScopeText(t *testing.T) {
 		{Account: "work", Action: "list_filters"},
 		{Account: "work", Action: "set_signature", Body: "Ann"},
 	} {
-		_, err := h.handle(context.Background(), in)
+		_, err := h.run(context.Background(), in, settingsAcceptAll)
 		if err == nil || err.Error() != gmail.ErrScope.Error() {
 			t.Errorf("%s: err = %v, want %q", in.Action, err, gmail.ErrScope)
 		}

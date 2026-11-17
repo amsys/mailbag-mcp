@@ -100,7 +100,7 @@ func (t *exportTool) handle(ctx context.Context, in ExportIn) (ExportOut, error)
 	if in.Thread {
 		tr, terr := p.Thread(ctx, in.ID)
 		if terr != nil {
-			out.Note = addNote(out.Note, "the conversation could not be read; only the message itself is exported: "+guard.Redact(terr.Error()))
+			out.Note = addNote(out.Note, "the conversation could not be read; only the message itself is exported: "+errNote(terr))
 		} else {
 			ids = threadIDs(tr.Messages, in.ID)
 			if len(tr.Messages) >= threadCutAt {

@@ -530,7 +530,9 @@ func (d labelDelta) apply(before []string) []string {
 // web client does, so a move takes a message out of Trash and Spam;
 // add_labels and remove_labels are label names or ids (DS7.4a).
 // add_labels and move_to name a user label that the account does not
-// have in d.create; ModifyDetail creates it just before batchModify. A
+// have in d.create; ModifyDetail creates it just before batchModify.
+// With c.NoNewLabels such a name is the error of unknownLabel instead,
+// and d.create stays empty (D5.1, E4). A
 // label that the change both adds and removes is refused: the caller
 // asked for two opposite things. RestoreFolders is for a provider with
 // mailbox lists; a Gmail move is undone through the labels (DS78.5).
@@ -593,7 +595,7 @@ func (p *Provider) deltaOf(ctx context.Context, c mail.Change) (labelDelta, erro
 	}
 	if c.MoveTo != "" {
 		var id string
-		if id, tab, err = p.resolveLabel(ctx, tab, c.MoveTo, true); err != nil {
+		if id, tab, err = p.resolveLabel(ctx, tab, c.MoveTo, !c.NoNewLabels); err != nil {
 			return labelDelta{}, err
 		}
 		addNamed(id, c.MoveTo)
@@ -605,7 +607,7 @@ func (p *Provider) deltaOf(ctx context.Context, c mail.Change) (labelDelta, erro
 	}
 	for _, n := range c.AddLabels {
 		var id string
-		if id, tab, err = p.resolveLabel(ctx, tab, n, true); err != nil {
+		if id, tab, err = p.resolveLabel(ctx, tab, n, !c.NoNewLabels); err != nil {
 			return labelDelta{}, err
 		}
 		addNamed(id, n)
@@ -643,6 +645,7 @@ func (p *Provider) Modify(ctx context.Context, ids []string, c mail.Change) ([]m
 // format=minimal reads the labelIds of each id, modifyFanout calls at
 // a time; an id that gives 404 is in Gone and has no row (D5.4). When
 // at least one id is there, the new labels of the change are created.
+// A change with NoNewLabels has no new label: deltaOf refuses it first.
 // Then messages.batchModify changes the other ids, batchModifyMax ids for
 // each call (E3). The state after is the state before with the change
 // applied; Before and After are flagsOf those label ids (DS7.4b), so a

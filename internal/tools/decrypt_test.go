@@ -414,6 +414,70 @@ func TestDecrypt_ExactArguments(t *testing.T) {
 	}
 }
 
+// TestChildProcess_ArgsAreFixed holds I11 for gpg: mail data goes to
+// gpg on stdin only. Every header and every part name of the message
+// holds shell metacharacters, a "--" option and a path. The recorded
+// argv must equal the fixed list, element by element, and no argument
+// may hold a byte sequence of the message. Each shell form in the
+// message touches a marker file. The marker must not exist after the
+// call, so no shell read the message.
+//
+// arch: DH4.1, DH7.1
+func TestChildProcess_ArgsAreFixed(t *testing.T) {
+	path, argsFile := fakeProgram(t, goodFake("Content-Type: text/plain\r\n\r\nfake plain"))
+	marker := filepath.Join(t.TempDir(), "ran")
+	const canary = "Xq7T8"
+	bad := canary + " $(touch " + marker + ") `touch " + marker + "` ; | & > " + marker + " --output=" + marker
+	raw := []byte("From: \"" + bad + "\" <ann@example.org>\r\n" +
+		"To: \"" + bad + "\" <me@example.org>\r\n" +
+		"Subject: --exec=" + bad + "\r\n" +
+		"Message-ID: <" + canary + "@example.org>\r\n" +
+		"X-Option: --output=" + marker + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"b1\"; name=\"" + bad + "\"\r\n\r\n" +
+		"--b1\r\nContent-Type: application/pgp-encrypted; name=\"--" + bad + "\"\r\n" +
+		"Content-Disposition: attachment; filename=\"--" + bad + "\"\r\n" +
+		"Content-Description: " + bad + "\r\n\r\nVersion: 1\r\n\r\n" +
+		"--b1\r\nContent-Type: application/octet-stream; name=\"--" + bad + ".asc\"\r\n" +
+		"Content-Disposition: inline; filename=\"--" + bad + ".asc\"\r\n" +
+		"Content-Description: " + bad + "\r\n\r\n" +
+		"-----BEGIN PGP MESSAGE-----\n\n" + canary + "AA==\n-----END PGP MESSAGE-----\r\n--b1--\r\n")
+
+	h := decryptFor(raw)
+	h.gpg = path
+	res, _ := callDecrypt(t, h)
+	if res.IsError {
+		t.Fatalf("decrypt failed: %s", resultText(t, res))
+	}
+	if !strings.Contains(resultText(t, res), "fake plain") {
+		t.Fatalf("result has no plain text, so the stand-in did not run: %s", resultText(t, res))
+	}
+	b, err := os.ReadFile(argsFile) //nolint:gosec // G304: test code; the path is built by the test
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	want := []string{"--batch", "--no-tty", "--status-fd", "3", "--decrypt", "--no-auto-key-retrieve", "--no-auto-key-locate", "--disable-dirmngr"}
+	if len(got) != len(want) {
+		t.Fatalf("argv has %d entries %q, want the %d fixed entries %q", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("argv[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	for _, a := range got {
+		for _, s := range []string{canary, "$(", "`", ";", "|", "&", ">", "--output", "--exec", marker, "example.org"} {
+			if strings.Contains(a, s) {
+				t.Errorf("argument %q holds message text %q", a, s)
+			}
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the marker file exists: a shell read the message")
+	}
+}
+
 // TestDecrypt_OkayWithoutMDCGivesNoText uses a stand-in that writes
 // plain text and DECRYPTION_OKAY with no GOODMDC, and exits 0. The
 // tool gives the fixed error and no text (EFAIL).

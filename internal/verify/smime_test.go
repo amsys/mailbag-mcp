@@ -23,6 +23,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1327,4 +1329,119 @@ func TestSMIME_DigestAliasIsWeak(t *testing.T) {
 			t.Fatalf("got %+v, want verdict invalid", s)
 		}
 	})
+}
+
+// TestChildProcess_ArgsAreFixed holds I11 for openssl: mail data goes
+// to openssl on stdin only. Every header and every part name of a
+// multipart/signed message holds shell metacharacters, a "--" option
+// and a path. A cmsScript records the argv and the stdin of each call
+// through fakeOpenssl, and gives a signer certificate to pass A, so
+// that the check runs each fixed list: pass A, the store probe, pass
+// B, pass B with -crl_check and the digest probe. Each recorded argv
+// must equal its fixed list, element by element, and no argument may
+// hold a byte sequence of the message. Each shell form in the message
+// touches a marker file. The marker must not exist after the check, so
+// no shell read the message.
+//
+// arch: DH4.1, DH7.1
+func TestChildProcess_ArgsAreFixed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("reason: POSIX-only rule: the stand-in openssl is a shell script")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	const canary = "Xq7T8"
+	bad := canary + " $(touch " + marker + ") `touch " + marker + "` ; | & > " + marker + " --output=" + marker
+
+	k := newKey(t)
+	tmpl := &x509.Certificate{
+		SerialNumber:   big.NewInt(8),
+		Subject:        pkix.Name{CommonName: "T8 signer"},
+		NotBefore:      time.Now().Add(-time.Hour),
+		NotAfter:       time.Now().Add(24 * time.Hour),
+		KeyUsage:       x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageEmailProtection},
+		EmailAddresses: []string{"eve@example.org"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certFile := filepath.Join(dir, "signer.pem")
+	caFile := filepath.Join(dir, "ca.pem")
+	for f, data := range map[string][]byte{certFile: pemOf("CERTIFICATE", der), caFile: pemOf("CERTIFICATE", der)} {
+		if err := os.WriteFile(f, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The script numbers each call, keeps its argv (one argument on
+	// each line) and its stdin, and exits 0. Pass A gets the signer
+	// certificate on stdout.
+	cmsScript := "n=$(cat '" + dir + "/count' 2>/dev/null || echo 0)\nn=$((n+1))\necho \"$n\" > '" + dir + "/count'\n" +
+		"printf '%s\\n' \"$@\" > '" + dir + "/args.'\"$n\"\ncat > '" + dir + "/stdin.'\"$n\"\n" +
+		"case \" $* \" in *' -signer '*) cat '" + certFile + "' ;; esac\nexit 0"
+	bin := fakeOpenssl(t, "OpenSSL 3.6.4  9 Sep 2025", cmsScript)
+
+	raw := []byte("From: \"" + bad + "\" <eve@example.org>\r\n" +
+		"To: \"" + bad + "\" <me@example.org>\r\n" +
+		"Subject: --exec=" + bad + "\r\n" +
+		"Message-ID: <" + canary + "@example.org>\r\n" +
+		"X-Option: --output=" + marker + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; micalg=sha-256; boundary=\"b1\"; name=\"" + bad + "\"\r\n\r\n" +
+		"--b1\r\nContent-Type: text/plain; name=\"--" + bad + ".txt\"\r\n" +
+		"Content-Disposition: inline; filename=\"--" + bad + ".txt\"\r\n" +
+		"Content-Description: " + bad + "\r\n\r\n" + bad + "\r\n" +
+		"--b1\r\nContent-Type: application/pkcs7-signature; name=\"--" + bad + ".p7s\"\r\n" +
+		"Content-Disposition: attachment; filename=\"--" + bad + ".p7s\"\r\n" +
+		"Content-Description: " + bad + "\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\nAA==\r\n--b1--\r\n")
+
+	s := Check(context.Background(), raw, "eve@example.org", Config{SMIMECAFile: caFile, SMIMECRLCheck: true, OpensslPath: bin})
+	if s == nil || s.Type != TypeSMIME || s.Trust != TrustChainValid {
+		t.Fatalf("got %+v, want an S/MIME result with trust %s, so that every pass ran", s, TrustChainValid)
+	}
+
+	want := [][]string{
+		{"cms", "-verify", "-in", "/dev/stdin", "-noverify", "-signer", "/dev/stdout", "-out", "/dev/null"},
+		{"cms", "-verify", "-in", "/dev/stdin", "-no-CApath", "-no-CAstore", "-out", "/dev/null"},
+		{"cms", "-verify", "-in", "/dev/stdin", "-CAfile", caFile, "-no-CApath", "-no-CAstore", "-purpose", "smimesign", "-out", "/dev/null"},
+		{"cms", "-verify", "-in", "/dev/stdin", "-CAfile", caFile, "-no-CApath", "-no-CAstore", "-purpose", "smimesign", "-out", "/dev/null", "-crl_check"},
+		{"cms", "-cmsout", "-in", "/dev/stdin", "-noout", "-print"},
+	}
+	n, err := os.ReadFile(filepath.Join(dir, "count")) //nolint:gosec // G304: test code; the path is built by the test
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(n)); got != strconv.Itoa(len(want)) {
+		t.Fatalf("recorded %s openssl calls, want %d", got, len(want))
+	}
+	for i, w := range want {
+		b, err := os.ReadFile(filepath.Join(dir, "args."+strconv.Itoa(i+1))) //nolint:gosec // G304: test code; the path is built by the test
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+		if strings.Join(got, "\x00") != strings.Join(w, "\x00") {
+			t.Errorf("call %d argv = %q, want %q", i+1, got, w)
+		}
+		for _, a := range got {
+			for _, m := range []string{canary, "$(", "`", ";", "|", "&", ">", "--output", "--exec", marker, "example.org"} {
+				if strings.Contains(a, m) {
+					t.Errorf("call %d argument %q holds message text %q", i+1, a, m)
+				}
+			}
+		}
+	}
+	in, err := os.ReadFile(filepath.Join(dir, "stdin.1")) //nolint:gosec // G304: test code; the path is built by the test
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(in, []byte(canary)) {
+		t.Errorf("pass A stdin holds no signed content, so the message did not reach openssl on stdin: %q", in)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the marker file exists: a shell read the message")
+	}
 }

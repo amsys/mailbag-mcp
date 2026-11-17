@@ -451,6 +451,86 @@ func TestGmail_NoLabelCreatedWithoutWrite(t *testing.T) {
 	}
 }
 
+// TestGmail_NoNewLabelsRefusesUnknown holds D5.1 on Gmail, where a
+// label is a folder (E4): with NoNewLabels (a classify account) a name
+// of add_labels or move_to that the account does not have fails with
+// the error that lists the labels, before any message read or write,
+// and creates no label. A label that exists still goes through. With
+// the zero value an unknown name is created, as before.
+//
+// arch: D5.1, D12.1, E4
+func TestGmail_NoNewLabelsRefusesUnknown(t *testing.T) {
+	refused := []struct {
+		name   string
+		change mail.Change
+		label  string
+	}{
+		{"add_labels", mail.Change{NoNewLabels: true, AddLabels: []string{"AnyNewName"}}, "AnyNewName"},
+		{"move_to", mail.Change{NoNewLabels: true, MoveTo: "AnyNewName"}, "AnyNewName"},
+	}
+	for _, tc := range refused {
+		t.Run("refused/"+tc.name, func(t *testing.T) {
+			f, st := newMailFake(t, map[string][]string{"m1": {"INBOX"}})
+			p, _ := f.provider(nil)
+			_, err := p.Modify(context.Background(), []string{"m1"}, tc.change)
+			if err == nil {
+				t.Fatal("Modify with NoNewLabels and an unknown label: no error")
+			}
+			for _, want := range []string{`"` + tc.label + `"`, "Receipts, Projects/Alpha, Trash", "INBOX"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not hold %q", err, want)
+				}
+			}
+			if n := count(f, http.MethodPost, apiPrefix+"labels"); n != 0 {
+				t.Errorf("labels.create calls = %d, want 0", n)
+			}
+			if n := count(f, http.MethodPost, apiPrefix+"messages/batchModify"); n != 0 {
+				t.Errorf("batchModify calls = %d, want 0", n)
+			}
+			if w := writes(f); len(w) != 0 {
+				t.Errorf("write requests = %+v, want none", w)
+			}
+			if n := count(f, http.MethodGet, apiPrefix+"messages/m1"); n != 0 {
+				t.Errorf("messages.get calls = %d, want 0: the labels fail before a message is read", n)
+			}
+			if got := st.labelsOf("m1"); !reflect.DeepEqual(got, []string{"INBOX"}) {
+				t.Errorf("m1 labels = %v, want [INBOX]", got)
+			}
+		})
+	}
+
+	t.Run("known label", func(t *testing.T) {
+		f, st := newMailFake(t, map[string][]string{"m1": {"INBOX"}})
+		p, _ := f.provider(nil)
+		if _, err := p.Modify(context.Background(), []string{"m1"}, mail.Change{NoNewLabels: true, AddLabels: []string{"receipts"}}); err != nil {
+			t.Fatalf("Modify with NoNewLabels and a known label: %v", err)
+		}
+		if n := count(f, http.MethodPost, apiPrefix+"labels"); n != 0 {
+			t.Errorf("labels.create calls = %d, want 0", n)
+		}
+		if n := count(f, http.MethodPost, apiPrefix+"messages/batchModify"); n != 1 {
+			t.Errorf("batchModify calls = %d, want 1", n)
+		}
+		if got := st.labelsOf("m1"); !reflect.DeepEqual(got, []string{"INBOX", "Label_1"}) {
+			t.Errorf("m1 labels = %v, want [INBOX Label_1]", got)
+		}
+	})
+
+	t.Run("zero value creates", func(t *testing.T) {
+		f, st := newMailFake(t, map[string][]string{"m1": {"INBOX"}})
+		p, _ := f.provider(nil)
+		if _, err := p.Modify(context.Background(), []string{"m1"}, mail.Change{AddLabels: []string{"AnyNewName"}}); err != nil {
+			t.Fatalf("Modify without NoNewLabels: %v", err)
+		}
+		if n := count(f, http.MethodPost, apiPrefix+"labels"); n != 1 {
+			t.Errorf("labels.create calls = %d, want 1: without NoNewLabels an unknown name is created", n)
+		}
+		if got := st.labelsOf("m1"); !reflect.DeepEqual(got, []string{"INBOX", "Label_100"}) {
+			t.Errorf("m1 labels = %v, want [INBOX Label_100]", got)
+		}
+	})
+}
+
 // TestGmail_MoveReversesByLabelDiff holds IS8.4 and DS78.5: a move on
 // Gmail keeps the id and leaves a record whose Before and After labels
 // differ. The undo that reverseChange builds from that difference (add

@@ -25,7 +25,7 @@ import (
 // costs no budget (DS10.13). TestToolsDoc_EveryFieldHasText fails on a
 // field with no entry and on an entry with no field.
 //
-// arch: DS10.6, DS10.13
+// arch: DS10.6, DS10.13, DH5.3
 var fieldText = map[string]string{
 	"attachment.account":  "The alias of the account that holds the message.",
 	"attachment.id":       "The message id from search or read.",
@@ -34,7 +34,7 @@ var fieldText = map[string]string{
 
 	"bulk.account": "The alias of the account to change.",
 	"bulk.action":  "The change for each match: read, unread, star, unstar, archive, trash or move.",
-	"bulk.dry_run": "Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query.",
+	"bulk.dry_run": "Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. On JMAP a from: term matches whole words of the address, so -from:mailer does not exclude noreply@mailer.example.com. Read the listed rows.",
 	"bulk.folder":  "The folder to search. The default is INBOX.",
 	"bulk.max":     "The largest count of messages to change. The default is 500 and the limit is 5000.",
 	"bulk.move_to": "The target folder of the move action.",

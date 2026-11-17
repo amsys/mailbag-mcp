@@ -166,13 +166,12 @@ func (t *foldersTool) list(ctx context.Context, p Reader, acct config.Account, a
 	rows := make([]FolderRow, 0, len(list))
 	for _, f := range list {
 		// The name comes from the server and stays outside every
-		// fence (§3.15). Take the hidden characters out, the same as
-		// internal/cli does before a terminal sees the same value,
-		// and delete a fence marker prefix, so a name cannot forge a
-		// fence boundary in the model's view (G2).
-		name, _ := guard.StripInvisible(f.Name)
+		// fence (§3.15). Clean it, so a name cannot forge a fence
+		// boundary or a chat template token in the model's view (G2).
+		//
+		// arch: DH2.5
 		rows = append(rows, FolderRow{
-			Name:   guard.StripFenceMarkers(name),
+			Name:   guard.CleanServerName(f.Name),
 			Role:   f.Role,
 			Total:  f.Total,
 			Unread: f.Unread,

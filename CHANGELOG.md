@@ -24,7 +24,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   status `declined` and its link. A client that cannot ask gets a
   refusal, unless the new key `[unsubscribe] allow_without_elicitation`
   is true. The `[bulk]` key does not cover this question.
-- The Gmail `delete_filter` asks the human first.
+- The Gmail `delete_filter` asks the human first. The question shows
+  the filter id and the criteria and actions of the filter. A
+  `filter_id` that names no filter gets the class `not_found`, and
+  nobody is asked. The `[bulk]` key `allow_without_elicitation` also
+  covers this question.
 
 ### Changed
 

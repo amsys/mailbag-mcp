@@ -6,9 +6,9 @@
 // account through the gmail.Settings interface. An account of another
 // provider gets a note and no error. The access level depends on the
 // action (G21). Filter criteria, label names, vacation text and the
-// signature are fenced (§3.15). Three writes ask the human first: a
-// vacation that goes on, a signature, and a filter that hides mail
-// (DH3.2). On protocol 2026-07-28 and later the question goes back as
+// signature are fenced (§3.15). Four writes ask the human first: a
+// vacation that goes on, a signature, a filter that hides mail (DH3.2)
+// and a filter delete (DU8.1). On protocol 2026-07-28 and later the question goes back as
 // an input-required result, and the retry applies the stored change
 // (DH3.5).
 
@@ -182,6 +182,14 @@ type settingAsk func(ctx context.Context, acct config.Account, message string) (
 //
 // arch: DH3.4, DH3.6
 var errSettingNoElicitation = errors.New("this client cannot ask the human to confirm this Gmail settings change, so nothing changed; the human can make the change in Gmail")
+
+// errFilterNotFound is the refusal of a delete_filter whose filter_id
+// names no filter of the account. Nobody is asked and nothing changes.
+// The text does not echo the id, because the id is model input
+// (INV-10).
+//
+// arch: DU8.1, DU9.1
+var errFilterNotFound = public("not_found", "gmail_settings: the account has no filter with this filter_id; list_filters gives the ids")
 
 // settingSchema is the requested schema of a settings question. It has
 // no remember field: a session grant never covers these questions.
@@ -539,11 +547,13 @@ type settingChange struct {
 
 // prepareSetting builds the change of one write action. For
 // set_vacation it makes the one read of the current setting and merges
-// the call into it (R16-L7). It removes the fence markers from each
+// the call into it (R16-L7). For delete_filter it makes the one read of
+// the filter list and keeps the filter as Gmail holds it, so the
+// question shows what the filter does (DU8.1). It removes the fence markers from each
 // text that the call gives (DH2.6), so the question shows the stripped
 // value. The stored vacation subject and body stay as Gmail holds them.
 //
-// arch: DH2.6, DH3.2, DS9.7, R16-L7
+// arch: DH2.6, DH3.2, DS9.7, R16-L7, DU8.1
 func prepareSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (settingChange, error) {
 	c := settingChange{action: in.Action, account: in.Account}
 	switch in.Action {
@@ -580,7 +590,23 @@ func prepareSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (
 		if strings.TrimSpace(in.FilterID) == "" {
 			return settingChange{}, errors.New("gmail_settings: delete_filter needs filter_id")
 		}
-		c.filter = gmail.Filter{ID: in.FilterID}
+		// The retry of the MRTR path deletes the id of this stored
+		// filter and reads Gmail no more, so the human sees the filter
+		// that goes (I7).
+		fs, err := s.ListFilters(ctx)
+		if err != nil {
+			return settingChange{}, err
+		}
+		found := false
+		for _, f := range fs {
+			if f.ID == in.FilterID {
+				c.filter, found = f, true
+				break
+			}
+		}
+		if !found {
+			return settingChange{}, errFilterNotFound
+		}
 	default: // set_signature; settingsLevel refused every other action
 		c.sendAs = in.SendAs
 		c.signature = guard.StripFenceMarkers(in.Body)
@@ -619,16 +645,18 @@ func removesLabel(names []string, word string) bool {
 }
 
 // asks reports whether the human must confirm c: a vacation that goes
-// on (Gmail then sends mail), every signature, and a filter that hides
+// on (Gmail then sends mail), every signature, a filter that hides
 // mail from the owner (it marks mail read or takes it out of the
-// inbox).
+// inbox), and every filter delete (DU8.1). Undo cannot bring back a
+// deleted filter, and mail text must not start a write that the human
+// did not see.
 //
-// arch: DH3.2
+// arch: DH3.2, DU8.1
 func (c settingChange) asks() bool {
 	switch c.action {
 	case "set_vacation":
 		return c.vacation.Enabled
-	case "set_signature":
+	case "set_signature", "delete_filter":
 		return true
 	case "create_filter":
 		return c.filter.MarkRead || c.hidesInbox() || removesLabel(c.filter.RemoveLabels, "UNREAD")
@@ -643,12 +671,13 @@ func (c settingChange) hidesInbox() bool {
 }
 
 // question gives the text that the human accepts. It comes only from
-// c, which holds the bytes that leave. Each value folds onto one line,
+// c, which holds the bytes that leave, or for a delete the filter that
+// goes. Each value folds onto one line,
 // and each body line has the "> " prefix of the send summary, so a
 // value cannot look like another field. No line and no field is cut,
 // because a text that the human does not see must not go out (DH3.3).
 //
-// arch: DH3.3
+// arch: DH3.3, DU8.1
 func (c settingChange) question() string {
 	var b strings.Builder
 	field := func(label, value string) {
@@ -662,6 +691,40 @@ func (c settingChange) question() string {
 		fmt.Fprintf(&b, "%s:\n", label)
 		for _, l := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 			b.WriteString("> " + lineBreakFolder.Replace(l) + "\n")
+		}
+	}
+	// filter writes the criteria and the actions of a filter. A create
+	// and a delete show the same lines.
+	filter := func(f gmail.Filter) {
+		if f.From != "" {
+			field("From", f.From)
+		}
+		if f.To != "" {
+			field("To", f.To)
+		}
+		if f.Subject != "" {
+			field("Subject", f.Subject)
+		}
+		if f.Query != "" {
+			field("Query", f.Query)
+		}
+		if f.HasAttachment != nil {
+			field("Has attachment", pick(*f.HasAttachment, "yes", "no"))
+		}
+		if removesLabel(f.RemoveLabels, "INBOX") {
+			b.WriteString("A matching message skips the inbox.\n")
+		}
+		if f.MarkRead || removesLabel(f.RemoveLabels, "UNREAD") {
+			b.WriteString("A matching message is marked read.\n")
+		}
+		if f.Star {
+			b.WriteString("A matching message gets a star.\n")
+		}
+		for _, n := range f.AddLabels {
+			field("Add label", n)
+		}
+		for _, n := range f.RemoveLabels {
+			field("Remove label", n)
 		}
 	}
 	day := func(t time.Time) string {
@@ -692,40 +755,15 @@ func (c settingChange) question() string {
 		}
 		field("Send-as address", sendAs)
 		body("Signature", c.signature)
+	case "delete_filter":
+		b.WriteString("Delete this Gmail filter? Gmail then stops changing the messages that match it, and undo cannot bring the filter back.\n")
+		field("Account", c.account)
+		field("Filter id", c.filter.ID)
+		filter(c.filter)
 	default: // create_filter; asks is true for no other action
-		f := c.filter
 		b.WriteString("Create this Gmail filter? It changes each message that matches, with no later question.\n")
 		field("Account", c.account)
-		if f.From != "" {
-			field("From", f.From)
-		}
-		if f.To != "" {
-			field("To", f.To)
-		}
-		if f.Subject != "" {
-			field("Subject", f.Subject)
-		}
-		if f.Query != "" {
-			field("Query", f.Query)
-		}
-		if f.HasAttachment != nil {
-			field("Has attachment", pick(*f.HasAttachment, "yes", "no"))
-		}
-		if c.hidesInbox() {
-			b.WriteString("A matching message skips the inbox.\n")
-		}
-		if f.MarkRead || removesLabel(f.RemoveLabels, "UNREAD") {
-			b.WriteString("A matching message is marked read.\n")
-		}
-		if f.Star {
-			b.WriteString("A matching message gets a star.\n")
-		}
-		for _, n := range f.AddLabels {
-			field("Add label", n)
-		}
-		for _, n := range f.RemoveLabels {
-			field("Remove label", n)
-		}
+		filter(c.filter)
 	}
 	return b.String()
 }

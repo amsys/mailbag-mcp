@@ -214,9 +214,11 @@ func TestGmailSettings_VacationOnNeedsSend(t *testing.T) {
 // TestGmailSettings_VacationOffIsDraft holds G21: vacation off, the
 // filter writes and the signature need draft, and the three reads need
 // read. Each action at one level below its own is denied and makes no
-// call; at its own level it reaches its one Settings call.
+// call; at its own level it reaches its Settings calls. delete_filter
+// reads the filter list before its one write, so the question can show
+// the filter (DU8.1).
 //
-// arch: DS9.7, DS9.11, IS9.7
+// arch: DS9.7, DS9.11, IS9.7, DU8.1
 func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
@@ -227,7 +229,7 @@ func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 	}{
 		{GmailSettingsIn{Action: "set_vacation", Enabled: boolPtr(false)}, "read", "draft", "Vacation,SetVacation"},
 		{GmailSettingsIn{Action: "create_filter", From: "a@example.test"}, "read", "draft", "CreateFilter"},
-		{GmailSettingsIn{Action: "delete_filter", FilterID: "f1"}, "read", "draft", "DeleteFilter"},
+		{GmailSettingsIn{Action: "delete_filter", FilterID: "f1"}, "read", "draft", "ListFilters,DeleteFilter"},
 		{GmailSettingsIn{Action: "set_signature", Body: "Ann"}, "read", "draft", "SetSignature"},
 		{GmailSettingsIn{Action: "list_filters"}, "", "read", "ListFilters"},
 		{GmailSettingsIn{Action: "get_vacation"}, "", "read", "Vacation"},
@@ -242,6 +244,9 @@ func TestGmailSettings_VacationOffIsDraft(t *testing.T) {
 			}
 		}
 		h, w := settingsFixture(c.level)
+		if c.in.Action == "delete_filter" {
+			w.filters = []gmail.Filter{{ID: "f1", From: "a@example.test"}}
+		}
 		if _, err := h.run(ctx, c.in, settingsAcceptAll); err != nil {
 			t.Errorf("%s at %s: %v", c.in.Action, c.level, err)
 			continue

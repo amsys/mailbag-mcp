@@ -878,19 +878,22 @@ Some toolsets have more keys:
   allow_without_elicitation = true
   ```
 
-- `gmail_settings` asks you to confirm three kinds of change, each
-  time: `set_vacation` with `enabled` true, every `set_signature`, and
+- `gmail_settings` asks you to confirm four kinds of change, each
+  time: `set_vacation` with `enabled` true, every `set_signature`,
   `create_filter` when the filter marks mail as read or removes INBOX
-  or UNREAD. Each one sends text to other people or hides mail, and
-  `undo` cannot reverse it. The question shows the text that will go
-  out, line by line, or the criteria that will hide mail. A vacation
-  that is turned off, a filter that only adds a label or a star, and
-  `delete_filter` do not ask. The choice "do not ask again until
-  reconnect" does not apply: these questions come each time. A client
-  that cannot ask gets a refusal. The `[bulk]` key
-  `allow_without_elicitation` also covers these three questions, so
-  setting it lets such a client change them with no question. There is
-  no separate key.
+  or UNREAD, and every `delete_filter`. Each one sends text to other
+  people, hides mail or removes a filter, and `undo` cannot reverse
+  it. The question shows the text that will go out, line by line, or
+  the criteria that will hide mail. For `delete_filter` the question
+  shows the filter id and what the filter does now: its criteria and
+  its actions. A `filter_id` that names no filter of the account gets
+  the error class `not_found`, and nobody is asked. A vacation that is
+  turned off and a filter that only adds a label or a star do not ask.
+  The choice "do not ask again until reconnect" does not apply: these
+  questions come each time. A client that cannot ask gets a refusal.
+  The `[bulk]` key `allow_without_elicitation` also covers these four
+  questions, so setting it lets such a client change them with no
+  question. There is no separate key.
 
 - `unsubscribe` sends a one-click POST only when the message has a
   DKIM pass from your own mail server. Set `authserv_id` in `[verify]`

@@ -917,11 +917,18 @@ two files differ.
   flags. `TestJournal_ExtendWhileRecordOpen` (passes trivially on
   POSIX), `TestReplace_RetriesSharingError`,
   `TestReplace_GivesErrorAfterBudget`, `TestBulk_Detached` (Windows CI).
-- H14 Three Gmail settings writes ask the human each time (DH3, B5):
-  `set_vacation` with `enabled` true, every `set_signature`, and a
+- H14 Four Gmail settings writes ask the human each time (DH3, B5,
+  DU8.1): `set_vacation` with `enabled` true, every `set_signature`, a
   `create_filter` that marks mail read or removes INBOX or UNREAD (any
-  case, outer spaces trimmed). `set_vacation` off, `delete_filter`,
-  any other filter and the reads do not ask. The order stays:
+  case, outer spaces trimmed), and every `delete_filter`.
+  `set_vacation` off, any other filter and the reads do not ask.
+  `prepareSetting` for `delete_filter` reads `ListFilters` and keeps
+  the filter whose id matches, so the question shows its id, criteria
+  and actions, and the MRTR retry deletes that stored id with no second
+  read. An id that matches no filter gets `errFilterNotFound`
+  (`not_found`, no echo of the id: INV-10) before any question. A
+  test fake for a delete needs the filter in `filters`.
+  `TestGmailSettings_DeleteFilterAsks`. The order stays:
   OpenWriter, level check, type assertion, question, change, so a
   level refusal and the note for another provider come before any
   question and any record (I9). The question comes from the prepared

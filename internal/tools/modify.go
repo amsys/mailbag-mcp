@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The modify tool: one change over at most 500 messages, the undo of
+// one earlier operation, and the list of the last operations. The
+// result has two zones (DU5.5): ids, words, counts and registry notes
+// outside, and folder and label names in a fence under untrusted.
+
 package tools
 
 import (
@@ -60,37 +65,44 @@ const (
 
 // ModifyRow is one message of the call: the id it had, the id it has
 // now when a move gave it a new one (C5), and the fixed state word
-// "applied" or "gone" (D5.4).
+// "applied" or "gone" (D5.4). Both ids pass normalizeID for the
+// provider kind (DU3.2). A row whose id does not pass is left out, and
+// a new id that does not pass is left out of its row.
 type ModifyRow struct {
-	ID    string `json:"id"`
-	NewID string `json:"new_id,omitempty"`
-	State string `json:"state"`
+	ID    string `json:"id" strict:"id"`
+	NewID string `json:"new_id,omitempty" strict:"id"`
+	State string `json:"state" strict:"word"`
 }
 
-// UndoRow is one line of the undo list (§3.18). Summary is text this
-// tool wrote when it recorded the operation; see modifySummary.
+// UndoRow is one line of the undo list (§3.18, DU3.5). The id, the
+// time, the tool word, the count and Summary are outside. Summary is
+// a text of the note registry: closed action words and a count. The
+// folder and label names of the operation go to Untrusted.Detail in a
+// fence. A record whose summary is not a registry text (a record from
+// an earlier version) has no Summary; its whole summary line goes to
+// Untrusted.Detail.
 type UndoRow struct {
-	ID       string `json:"id"`
-	At       string `json:"at"`
-	Tool     string `json:"tool"`
-	Summary  string `json:"summary"`
-	Count    int    `json:"count"`
-	Reversed bool   `json:"reversed,omitempty"`
+	ID        string  `json:"id" strict:"id"`
+	At        string  `json:"at" strict:"date"`
+	Tool      string  `json:"tool" strict:"word"`
+	Summary   string  `json:"summary,omitempty" strict:"note"`
+	Count     int     `json:"count"`
+	Reversed  bool    `json:"reversed,omitempty"`
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
-// ModifyOut is the modify tool result (§3.16): the new ids and the
-// undo token, or the list of the last operations.
+// ModifyOut is the modify tool result (§3.16, DU5.5): the new ids and
+// the undo token, or the list of the last operations.
 //
-// No field of this struct carries sender-controlled text, so nothing
-// here is fenced (§3.15). The ids come from the server, the alias
-// comes from accounts.toml, and Summary and Note are text this tool
-// wrote. A folder name that reaches Summary loses its hidden
-// characters and its fence markers first, the same way
-// [FolderRow.Name] does. TestModify_ResultCarriesNoSenderText holds
-// that rule the way the fence walk holds it for the read results
-// (G3).
+// Head gives the nonce first. Outside: the alias from accounts.toml,
+// the rows and ids after normalizeID (DU3.2), the undo token, the
+// operations, the skipped ids and a note of the registry (DU3.5).
+// Untrusted.Detail holds the provider error text of a change that
+// stopped part of the way; the note ends with its class word (DU6.2).
+// Each UndoRow has its own untrusted zone for folder and label names.
 type ModifyOut struct {
-	Account string `json:"account"`
+	Head
+	Account string `json:"account" strict:"alias"`
 	// Applied holds one row for each message of the call. A row with
 	// the state "gone" names a message the call did not find (D5.4).
 	Applied []ModifyRow `json:"applied,omitempty"`
@@ -99,7 +111,7 @@ type ModifyOut struct {
 	// gave no new id for at least one message; Note then says so
 	// (§3.18, DS78.5). A message that the change left as it was does
 	// not empty it (R16-M5).
-	Undo string `json:"undo,omitempty"`
+	Undo string `json:"undo,omitempty" strict:"id"`
 	// ExpungePending says a move copied the messages and flagged the
 	// old copies deleted, but the server could not remove them
 	// (§3.10, C12). The caller must know: the message is in two
@@ -110,11 +122,15 @@ type ModifyOut struct {
 	// Skipped answers an undo: the ids of the messages that changed
 	// or went away since the operation. Undo left them as they are
 	// and reversed the rest (DS9.5, G17). The ids come from the
-	// journal, so they carry no fence (§3.15).
-	Skipped []string `json:"skipped,omitempty"`
+	// journal and pass normalizeID (DU3.2).
+	Skipped []string `json:"skipped,omitempty" strict:"id"`
 	// Note is text this tool wrote: a step that failed after the
-	// mailbox already changed, or why an option did nothing.
-	Note string `json:"note,omitempty"`
+	// mailbox already changed, or why an option did nothing. It is a
+	// text of the note registry (DU3.5).
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the provider error text that the note names by
+	// its class word (DU3.5, DU6.2).
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
 // AddModify adds the "modify" tool to srv (§3.16): one change over at
@@ -156,10 +172,21 @@ type modifyTool struct {
 // reaches a network call (G10). The access check of §3.17 is on the
 // next line, above every branch.
 //
-// arch: T5.3, §3.16, §3.18, App B, C18, H3, G10, D5.1, D12.1
+// The folder and label input is read before the access check, so the
+// level comes from the folder that the call names, also when it names
+// it by its folder_ref (DU3.3).
+//
+// The alias in the result is acct.Alias from accounts.toml, never the
+// input text (INV-10).
+//
+// arch: T5.3, §3.16, §3.18, App B, C18, H3, G10, D5.1, D12.1, DU3.3, DU5.5
 func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error) {
+	f := fencer(ctx)
 	p, acct, err := t.mail.OpenWriter(ctx, in.Account)
 	if err != nil {
+		return ModifyOut{}, err
+	}
+	if in, err = in.folderInput(); err != nil {
 		return ModifyOut{}, err
 	}
 	// §3.17, D5.1: the level comes from the request, above every
@@ -171,23 +198,55 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 
 	token := strings.TrimSpace(in.Undo)
 	if token == "" {
-		return t.applyChange(ctx, p, acct, in)
+		return t.applyChange(ctx, f, p, acct, in)
 	}
 	if in.hasChange() {
-		return ModifyOut{}, errors.New("undo takes the call on its own; send the change in a second call")
+		return ModifyOut{}, public("invalid_input", "undo takes the call on its own; send the change in a second call")
 	}
 	if strings.EqualFold(token, undoListWord) {
-		ops, err := undoList(t.journal, in.Account)
+		ops, err := undoList(f, t.journal, acct.Alias)
 		if err != nil {
 			return ModifyOut{}, err
 		}
-		out := ModifyOut{Account: in.Account, Operations: ops}
+		out := ModifyOut{Account: acct.Alias, Operations: ops}
 		if len(ops) == 0 {
 			out.Note = "this account has no recorded operation"
 		}
 		return out, nil
 	}
-	return t.reverse(ctx, p, in.Account, token)
+	return t.reverse(ctx, p, acct, token)
+}
+
+// folderInput gives a copy of in with the folder and label input read
+// (DU3.3). move_to passes folderArg: a folder_ref decodes to the raw
+// name, and a name loses its fence markers. Each label name of
+// add_labels and remove_labels passes guard.StripFenceMarkers, so a
+// fenced name that the model copies back from a result loses its
+// markers. mapPseudoLabels trims the line feeds that the fence leaves.
+//
+// arch: DU3.3, INV-10
+func (in ModifyIn) folderInput() (ModifyIn, error) {
+	moveTo, err := folderArg(in.MoveTo)
+	if err != nil {
+		return ModifyIn{}, err
+	}
+	in.MoveTo = moveTo
+	in.AddLabels = stripLabels(in.AddLabels)
+	in.RemoveLabels = stripLabels(in.RemoveLabels)
+	return in, nil
+}
+
+// stripLabels gives a copy of labels in which each name passed
+// guard.StripFenceMarkers (DU3.3). A nil list stays nil.
+func stripLabels(labels []string) []string {
+	if labels == nil {
+		return nil
+	}
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		out[i] = guard.StripFenceMarkers(l)
+	}
+	return out
 }
 
 // classifyLabels are the labels that need draft level even in
@@ -292,13 +351,19 @@ func (in ModifyIn) hasChange() bool {
 // that goes away during the change does not stop it, and the journal
 // row is written, so undo can find the change from a new session.
 //
-// arch: T5.3, §3.16, §3.18, App B, C18, DRV.11, DS11.9, D5.1, E4
-func (t *modifyTool) applyChange(ctx context.Context, p Writer, acct config.Account, in ModifyIn) (ModifyOut, error) {
+// The rows of the result pass normalizeID for the provider kind of
+// acct (DU3.2). The journal keeps the ids as the provider gave them.
+// A change that stopped part of the way gives a note that ends with
+// the class word of the error, and the error text goes to
+// Untrusted.Detail in a fence (DU3.5, DU6.2).
+//
+// arch: T5.3, §3.16, §3.18, App B, C18, DRV.11, DS11.9, D5.1, E4, DU3.2, DU3.5, DU6.2
+func (t *modifyTool) applyChange(ctx context.Context, f guard.Fencer, p Writer, acct config.Account, in ModifyIn) (ModifyOut, error) {
 	if len(in.IDs) == 0 {
-		return ModifyOut{}, errors.New("ids: name at least one message; the search tool gives the ids")
+		return ModifyOut{}, public("invalid_input", "ids: name at least one message; the search tool gives the ids")
 	}
 	if len(in.IDs) > MaxModifyIDs {
-		return ModifyOut{}, fmt.Errorf("ids: %d ids, and one call takes %d at most; the bulk tool handles a larger set", len(in.IDs), MaxModifyIDs)
+		return ModifyOut{}, public("limit", "ids: one call takes 500 ids at most; the bulk tool handles a larger set")
 	}
 	ch, err := changeOf(in)
 	if err != nil {
@@ -321,27 +386,28 @@ func (t *modifyTool) applyChange(ctx context.Context, p Writer, acct config.Acco
 	clearUnmoved(applied)
 
 	out := ModifyOut{
-		Account:        in.Account,
-		Applied:        append(rowsOf(applied), goneRows(gone)...),
+		Account:        acct.Alias,
+		Applied:        normalRows(acct.Provider, append(rowsOf(applied), goneRows(gone)...)),
 		ExpungePending: expungePending(applied),
 	}
 	if err != nil {
-		// The call stopped part of the way. The note names the error,
-		// and the steps below journal the messages that changed.
-		out.Note = fmt.Sprintf("the change stopped part of the way: %s; only the messages in applied changed",
-			errNote(err))
+		// The call stopped part of the way. The note names the class
+		// of the error, the error text goes to the fence, and the
+		// steps below journal the messages that changed.
+		out.Note = "the change stopped part of the way: " + classOf(err) + noteSep + "only the messages in applied changed"
+		out.Untrusted = errDetail(f, err)
 	}
 	if len(applied) == 0 {
 		out.Note = "no message changed; every id is gone, because another client expunged or moved the message"
 		return out, nil
 	}
 	if unresolved {
-		out.Note = addNote(out.Note, "the change is done; this operation has no undo token, because the server gave no new id for the move, and undo cannot find the message again by its old id")
+		out.Note = joinNote(out.Note, "the change is done; this operation has no undo token, because the server gave no new id for the move, and undo cannot find the message again by its old id")
 		return out, nil
 	}
-	rec, ok := recordChange(t.journal, t.logger, in.Account, modifySummary(ch, len(applied)), applied)
+	rec, ok := recordChange(t.journal, t.logger, acct.Alias, modifySummary(ch, len(applied)), applied)
 	if !ok {
-		out.Note = addNote(out.Note, "the change is done; this operation has no undo token, because the journal could not be written")
+		out.Note = joinNote(out.Note, "the change is done; this operation has no undo token, because the journal could not be written")
 		return out, nil
 	}
 	out.Undo = rec.ID
@@ -467,10 +533,11 @@ const undoChunk = MaxModifyIDs
 
 // undoList answers undo: "list" with the last operations of one
 // account, newest first (§3.16, §3.18). modify and bulk share it, and
-// it lists the records of both tools. open nil means undo.Open.
+// it lists the records of both tools. open nil means undo.Open. f
+// fences the folder and label names of each row (undoRow).
 //
-// arch: T5.3, §3.16, §3.18, DS9.5
-func undoList(open func() (*undo.Journal, error), account string) ([]UndoRow, error) {
+// arch: T5.3, §3.16, §3.18, DS9.5, DU3.5
+func undoList(f guard.Fencer, open func() (*undo.Journal, error), account string) ([]UndoRow, error) {
 	if open == nil {
 		open = undo.Open
 	}
@@ -484,28 +551,60 @@ func undoList(open func() (*undo.Journal, error), account string) ([]UndoRow, er
 	}
 	rows := make([]UndoRow, 0, len(recs))
 	for _, rec := range recs {
-		rows = append(rows, UndoRow{
-			ID:       rec.ID,
-			At:       rec.TS.UTC().Format(time.RFC3339),
-			Tool:     rec.Tool,
-			Summary:  serverText(rec.Summary),
-			Count:    len(rec.Changes),
-			Reversed: rec.Reversed(),
-		})
+		rows = append(rows, undoRow(f, rec))
 	}
 	return rows, nil
 }
 
-// reverse puts one recorded operation back (§3.18) through
-// reverseRecord and turns the result into the modify result.
+// undoRow gives the undo list row of one journal record (DU3.5).
 //
-// arch: T5.3, §3.18, C5, H3, DRV.11, DS9.5
-func (t *modifyTool) reverse(ctx context.Context, p Writer, account, token string) (ModifyOut, error) {
-	r, err := reverseRecord(ctx, t.journal, p, account, token, t.logger)
+// The journal keeps the summary as modifySummary wrote it: a registry
+// text, then optionally summaryNamesSep and the line with the folder
+// and label names. Summary gets the registry text, and the names go to
+// Untrusted.Detail in a fence of f. A summary whose first line is not
+// a registry text came from an earlier version or from a tool that
+// still writes names in it: the row then has no Summary, and the whole
+// summary goes to Untrusted.Detail. So no name is ever outside a
+// fence.
+//
+// arch: DU3.5, DU5.1, DU5.5, §3.18
+func undoRow(f guard.Fencer, rec undo.Record) UndoRow {
+	row := UndoRow{
+		ID:       rec.ID,
+		At:       rec.TS.UTC().Format(time.RFC3339),
+		Tool:     rec.Tool,
+		Count:    len(rec.Changes),
+		Reversed: rec.Reversed(),
+	}
+	head, names, _ := strings.Cut(rec.Summary, summaryNamesSep)
+	if _, ok := strictNote(head); ok && head != "" {
+		row.Summary = head
+	} else {
+		names = rec.Summary
+	}
+	if names != "" {
+		row.Untrusted = &Detail{Detail: f.Wrap(names)}
+	}
+	return row
+}
+
+// reverse puts one recorded operation back (§3.18) through
+// reverseRecord and turns the result into the modify result. The rows
+// and the skipped ids pass normalizeID for the provider kind of acct
+// (DU3.2).
+//
+// arch: T5.3, §3.18, C5, H3, DRV.11, DS9.5, DU3.2, DU3.5
+func (t *modifyTool) reverse(ctx context.Context, p Writer, acct config.Account, token string) (ModifyOut, error) {
+	r, err := reverseRecord(ctx, t.journal, p, acct.Alias, token, t.logger)
 	if err != nil {
 		return ModifyOut{}, err
 	}
-	out := ModifyOut{Account: account, Applied: r.Rows, ExpungePending: r.ExpungePending, Skipped: r.Skipped}
+	out := ModifyOut{
+		Account:        acct.Alias,
+		Applied:        normalRows(acct.Provider, r.Rows),
+		ExpungePending: r.ExpungePending,
+		Skipped:        normalIDs(acct.Provider, r.Skipped),
+	}
 	if r.Unchanged > 0 {
 		out.Note = fmt.Sprintf("%d of the %d messages needed no change to go back", r.Unchanged, r.Total)
 	}
@@ -513,9 +612,47 @@ func (t *modifyTool) reverse(ctx context.Context, p Writer, account, token strin
 		out.Note = "the operation is marked reversed; no message needed a change to go back"
 	}
 	if len(r.Skipped) > 0 {
-		out.Note = addNote(out.Note, fmt.Sprintf("%d messages changed or gone since the operation were left as they are", len(r.Skipped)))
+		out.Note = joinNote(out.Note, fmt.Sprintf("%d messages changed or gone since the operation were left as they are", len(r.Skipped)))
 	}
 	return out, nil
+}
+
+// normalRows gives the rows whose id passes normalizeID for the
+// provider kind, with each id in the form the server writes (DU3.2).
+// A row whose id does not pass is left out. A new id that does not
+// pass is left out of its row, and the row keeps its id.
+//
+// arch: DU3.2, INV-10
+func normalRows(kind string, rows []ModifyRow) []ModifyRow {
+	out := make([]ModifyRow, 0, len(rows))
+	for _, r := range rows {
+		id, ok := normalizeID(kind, r.ID)
+		if !ok {
+			continue
+		}
+		r.ID = id
+		if r.NewID != "" {
+			r.NewID, _ = normalizeID(kind, r.NewID)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// normalIDs gives the ids that pass normalizeID for the provider kind,
+// each in the form the server writes (DU3.2). An id that does not pass
+// is left out. A nil or empty list gives nil, so the field stays out
+// of the result.
+//
+// arch: DU3.2, INV-10
+func normalIDs(kind string, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if n, ok := normalizeID(kind, id); ok {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // reversal is the result of reverseRecord.
@@ -589,9 +726,9 @@ func reverseRecord(ctx context.Context, open func() (*undo.Journal, error), p Wr
 	})
 	switch {
 	case errors.Is(rerr, undo.ErrUnknown):
-		return reversal{}, errors.New("no operation of this account has that undo token; call modify with undo: \"list\" for the tokens that are left")
+		return reversal{}, public("not_found", "no operation of this account has that undo token; call modify with undo: \"list\" for the tokens that are left")
 	case errors.Is(rerr, undo.ErrAlreadyReversed):
-		return reversal{}, errors.New("that operation was reversed already; a second undo would put the change back")
+		return reversal{}, public("refused", "that operation was reversed already; a second undo would put the change back")
 	case rerr != nil:
 		return reversal{}, rerr
 	}
@@ -924,7 +1061,7 @@ func changeOf(in ModifyIn) (mail.Change, error) {
 	}
 	if ch.Read == nil && ch.Starred == nil && len(ch.AddLabels) == 0 &&
 		len(ch.RemoveLabels) == 0 && ch.MoveTo == "" && !ch.Archive && !ch.Trash {
-		return mail.Change{}, errors.New("name at least one change: read, starred, add_labels, remove_labels, move_to, archive or trash")
+		return mail.Change{}, public("invalid_input", "name at least one change: read, starred, add_labels, remove_labels, move_to, archive or trash")
 	}
 	return ch, nil
 }
@@ -955,15 +1092,15 @@ func mapPseudoLabels(ch *mail.Change, labels []string, add bool) error {
 	for _, raw := range labels {
 		label := strings.TrimSpace(raw)
 		if label == "" {
-			return errors.New("a label must have a name")
+			return public("invalid_input", "a label must have a name")
 		}
 		switch strings.ToUpper(label) {
 		case "UNREAD":
-			if err := setBool(&ch.Read, !add, "read"); err != nil {
+			if err := setBool(&ch.Read, !add, errReadBoth); err != nil {
 				return err
 			}
 		case "STARRED":
-			if err := setBool(&ch.Starred, add, "starred"); err != nil {
+			if err := setBool(&ch.Starred, add, errStarredBoth); err != nil {
 				return err
 			}
 		case "INBOX":
@@ -997,11 +1134,21 @@ func mapPseudoLabels(ch *mail.Change, labels []string, add bool) error {
 	return nil
 }
 
+// The errors of setBool for the two verbs of a *bool field (DU6.2).
+var (
+	errReadBoth    = public("invalid_input", "the call asks for read and for its opposite at the same time")
+	errStarredBoth = public("invalid_input", "the call asks for starred and for its opposite at the same time")
+)
+
+// errTwoTargets is the text of a call that names two move targets.
+const errTwoTargets = "name one of move_to, archive and trash; the INBOX and TRASH pseudo labels reach the same three fields"
+
 // setBool writes one *bool field of the change, and refuses a second
-// value that says the opposite of the first.
-func setBool(field **bool, value bool, name string) error {
+// value that says the opposite of the first with conflict, one of the
+// errors above.
+func setBool(field **bool, value bool, conflict error) error {
 	if *field != nil && **field != value {
-		return fmt.Errorf("the call asks for %s and for its opposite at the same time", name)
+		return conflict
 	}
 	v := value
 	*field = &v
@@ -1025,7 +1172,7 @@ func setMoveTarget(ch *mail.Change, moveTo string, archive, trash bool) error {
 	if ch.MoveTo == moveTo && ch.Archive == archive && ch.Trash == trash {
 		return nil
 	}
-	return errors.New("name one of move_to, archive and trash; the INBOX and TRASH pseudo labels reach the same three fields")
+	return public("invalid_input", errTwoTargets)
 }
 
 // checkTargets holds the rule of Appendix B: one call names one of
@@ -1041,26 +1188,68 @@ func checkTargets(ch mail.Change) error {
 		}
 	}
 	if n > 1 {
-		return errors.New("name one of move_to, archive and trash; the INBOX and TRASH pseudo labels reach the same three fields")
+		return public("invalid_input", errTwoTargets)
 	}
 	return nil
 }
 
-// modifySummary is the one-line summary the journal keeps for an
-// operation, and the line the undo list shows (§3.18).
+// summaryNamesSep ends the registry text of a journal summary. The
+// line with the folder and label names follows it (undoRow). No note
+// form holds a line feed, so the registry text never holds it.
+const summaryNamesSep = "\n"
+
+// modifySummary is the summary the journal keeps for an operation
+// (§3.18, DU3.5). Its first line is a text of the note registry:
+// closed action words and the count, for example "read, add 1 label,
+// move on 3 messages". The undo list shows it outside a fence. When
+// the change names a label or a folder, a second line follows with
+// the words of changeWords, and the undo list shows that line in a
+// fence (undoRow).
 //
-// A label name and a folder name go through serverText, so a hidden
-// character or a forged fence marker in one of them never reaches the
-// model through this line (§3.15, G2).
-//
-// arch: T5.3, §3.18, §3.15, G2
+// arch: T5.3, §3.18, §3.15, G2, DU3.5
 func modifySummary(ch mail.Change, count int) string {
-	return fmt.Sprintf("%s on %s", changeWords(ch), plural(count, "message"))
+	s := actionWords(ch) + " on " + plural(count, "message")
+	if len(ch.AddLabels) > 0 || len(ch.RemoveLabels) > 0 || ch.MoveTo != "" {
+		s += summaryNamesSep + changeWords(ch)
+	}
+	return s
 }
 
-// changeWords gives the words of one change for a summary, for
-// example "read, +Label, archive". modifySummary and the bulk summary
-// use it.
+// actionWords gives the closed action words of one change for the
+// registry text of a summary (DU3.5): read, unread, starred, not
+// starred, "add <n> label(s)", "remove <n> label(s)", trash, archive
+// and move. It names no label and no folder.
+//
+// arch: DU3.5
+func actionWords(ch mail.Change) string {
+	parts := make([]string, 0, 4)
+	if ch.Read != nil {
+		parts = append(parts, pick(*ch.Read, "read", "unread"))
+	}
+	if ch.Starred != nil {
+		parts = append(parts, pick(*ch.Starred, "starred", "not starred"))
+	}
+	if n := len(ch.AddLabels); n > 0 {
+		parts = append(parts, "add "+plural(n, "label"))
+	}
+	if n := len(ch.RemoveLabels); n > 0 {
+		parts = append(parts, "remove "+plural(n, "label"))
+	}
+	switch {
+	case ch.Trash:
+		parts = append(parts, "trash")
+	case ch.Archive:
+		parts = append(parts, "archive")
+	case ch.MoveTo != "":
+		parts = append(parts, "move")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// changeWords gives the words of one change with the names, for
+// example "read, +Label, archive". The second line of modifySummary
+// and the bulk summary use it. The undo list shows its text only in a
+// fence (undoRow).
 func changeWords(ch mail.Change) string {
 	parts := make([]string, 0, 4)
 	if ch.Read != nil {
@@ -1086,10 +1275,8 @@ func changeWords(ch mail.Change) string {
 	return strings.Join(parts, ", ")
 }
 
-// serverText makes one name safe to show outside a fence: no hidden
-// character, and no text that looks like a fence marker. A folder
-// name and a label name are not sender-controlled, so §3.15 keeps
-// them outside every fence, the same as [FolderRow.Name].
+// serverText takes the hidden characters and the fence markers out of
+// one name. changeWords and the bulk question use it.
 func serverText(s string) string {
 	clean, _ := guard.StripInvisible(s)
 	return guard.StripFenceMarkers(clean)

@@ -682,7 +682,7 @@ func (t *bulkTool) apply(ctx context.Context, p Writer, account string, ids []st
 // arch: DS9.5, H3, G17
 func (t *bulkTool) undo(ctx context.Context, p Writer, account, token string) (BulkOut, error) {
 	if strings.EqualFold(token, undoListWord) {
-		rows, err := undoList(t.journal, account)
+		rows, err := undoList(fencer(ctx), t.journal, account)
 		if err != nil {
 			return BulkOut{}, err
 		}

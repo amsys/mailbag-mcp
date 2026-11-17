@@ -89,3 +89,22 @@ func FuzzIDCodec(f *testing.F) {
 		}
 	})
 }
+
+// TestID_NewFormAndOldForm checks the new hex form, that the old dot
+// form still parses, and that a bad hex run is refused.
+//
+// arch: DU3.2, DU12.1
+func TestID_NewFormAndOldForm(t *testing.T) {
+	if got := FormatIMAPID(7, 9, "INBOX.a"); got != "7-9-494e424f582e61" {
+		t.Fatalf("FormatIMAPID = %q", got)
+	}
+	v, u, f, err := ParseIMAPID("7.9.INBOX-x.y")
+	if err != nil || v != 7 || u != 9 || f != "INBOX-x.y" {
+		t.Fatalf("old form = (%d, %d, %q, %v)", v, u, f, err)
+	}
+	for _, id := range []string{"7-9-", "7-9-zz", "7-9-abc", "7-9-4A", "7-x-41", "7-9"} {
+		if _, _, _, err := ParseIMAPID(id); err == nil {
+			t.Errorf("ParseIMAPID(%q): want an error", id)
+		}
+	}
+}

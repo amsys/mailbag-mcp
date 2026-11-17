@@ -2320,6 +2320,14 @@ func decodeStructured(t *testing.T, res *mcp.CallToolResult, out any) {
 	}
 }
 
+// rowEmail joins the from line, the subject and the preview of a
+// search row. These are the fields that the old email field held in
+// one fence. The row now has one fence for each field (DU5.2).
+func rowEmail(r tools.SearchRow) string {
+	u := r.Untrusted
+	return u.From + "\n" + u.Subject + "\n" + u.Preview
+}
+
 // TestServe_UndoRefusesChangedMessage holds I16 through the served
 // server, over the real IMAP provider and an in-process IMAP server.
 // The model marks a message read with the modify tool. A second IMAP
@@ -3139,11 +3147,11 @@ func TestServer_ReadPathHardening(t *testing.T) {
 		t.Fatalf("search gave %d rows, want the one fixture message: %s", len(rows.Rows), resultText(&found))
 	}
 	row := rows.Rows[0]
-	if strings.Contains(row.Email, "https://") {
-		t.Errorf("the search row holds a live link; the subject or the preview was not defanged (D4.1 item 3): %q", row.Email)
+	if strings.Contains(rowEmail(row), "https://") {
+		t.Errorf("the search row holds a live link; the subject or the preview was not defanged (D4.1 item 3): %q", rowEmail(row))
 	}
-	if !strings.Contains(row.Email, "hxxps[://]"+strings.ReplaceAll(t112Host, ".", "[.]")) {
-		t.Errorf("the search row holds no defanged copy of the fixture link; the fixture did not reach the row: %q", row.Email)
+	if !strings.Contains(rowEmail(row), "hxxps[://]"+strings.ReplaceAll(t112Host, ".", "[.]")) {
+		t.Errorf("the search row holds no defanged copy of the fixture link; the fixture did not reach the row: %q", rowEmail(row))
 	}
 
 	var readRes mcp.CallToolResult
@@ -3364,7 +3372,7 @@ func TestServer_ReadCarriesSignature(t *testing.T) {
 	ids := map[string]string{}
 	for _, r := range rows.Rows {
 		for _, s := range []string{"t86-verified", "t86-partial", "t86-plain"} {
-			if strings.Contains(r.Email, s) {
+			if strings.Contains(rowEmail(r), s) {
 				ids[s] = r.ID
 			}
 		}
@@ -3556,7 +3564,7 @@ func t114ReadStackWrap(t *testing.T, verifyToml string, mails map[string]string,
 	ids := map[string]string{}
 	for _, r := range rows.Rows {
 		for s := range mails {
-			if strings.Contains(r.Email, s) {
+			if strings.Contains(rowEmail(r), s) {
 				ids[s] = r.ID
 			}
 		}
@@ -3905,7 +3913,7 @@ func t128Read(t *testing.T, verifyToml, subject, raw string, wrap func(tools.Mai
 	}}, &found)
 	var rows tools.SearchOut
 	decodeStructured(t, &found, &rows)
-	if found.IsError || len(rows.Rows) != 1 || !strings.Contains(rows.Rows[0].Email, subject) {
+	if found.IsError || len(rows.Rows) != 1 || !strings.Contains(rowEmail(rows.Rows[0]), subject) {
 		t.Fatalf("search gave %d rows, want the one fixture %s: %s", len(rows.Rows), subject, resultText(&found))
 	}
 
@@ -4376,7 +4384,7 @@ func TestServer_SignatureCanaryFenced(t *testing.T) {
 	ids := map[string]string{}
 	for _, r := range rows.Rows {
 		for s := range mails {
-			if strings.Contains(r.Email, s) {
+			if strings.Contains(rowEmail(r), s) {
 				ids[s] = r.ID
 			}
 		}
@@ -4491,7 +4499,7 @@ func t133ReadStack(t *testing.T, mails map[string]string) (func(subject string) 
 	ids := map[string]string{}
 	for _, r := range rows.Rows {
 		for s := range mails {
-			if strings.Contains(r.Email, s) {
+			if strings.Contains(rowEmail(r), s) {
 				ids[s] = r.ID
 			}
 		}

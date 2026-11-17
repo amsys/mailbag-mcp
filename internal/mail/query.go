@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The common query grammar of §3.9 that every provider parses, and the
+// span and size values of its terms.
+
 package mail
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -101,9 +105,38 @@ func parseQueryToken(tok string) QueryTerm {
 		tok = tok[1:]
 	}
 	if field, value, ok := splitQueryField(tok); ok {
-		return QueryTerm{Field: field, Value: unquoteQuery(value), Not: not}
+		value = unquoteQuery(value)
+		if field == "in" {
+			value = folderRefName(value)
+		}
+		return QueryTerm{Field: field, Value: value, Not: not}
 	}
 	return QueryTerm{Field: "text", Value: unquoteQuery(tok), Not: not}
+}
+
+// folderRefName gives the folder name that the folder ref v holds
+// (DU3.3): "=" and the lowercase hex of the raw name bytes, 1 to 512
+// bytes. A value that is not such a ref comes back unchanged, so a
+// plain folder name in an in: word works as before. Every provider
+// reads in: through ParseQuery, so one decode serves all of them. The
+// tool layer decodes the same form in folderArg.
+//
+// arch: DU3.3
+func folderRefName(v string) string {
+	h, ok := strings.CutPrefix(v, "=")
+	if !ok || len(h) == 0 || len(h)%2 != 0 || len(h) > 1024 {
+		return v
+	}
+	for i := 0; i < len(h); i++ {
+		if c := h[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return v
+		}
+	}
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		return v
+	}
+	return string(b)
 }
 
 // splitQueryField reports whether tok starts with a recognized

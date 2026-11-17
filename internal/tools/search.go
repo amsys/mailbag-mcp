@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The search tool: one account or all of them, newest first. Each row
+// has two zones (DU5.2). This file also holds the row helpers that
+// read shares: the flag words, the label fences and the error detail.
+
 package tools
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -47,44 +49,73 @@ type SearchIn struct {
 	Cursor  string `json:"cursor,omitempty" jsonschema:"next_cursor; one account only"`
 }
 
-// SearchRow is one result line. §3.15: server data stays outside the
-// fence and every sender-controlled field sits inside one fence for
-// the row, which keeps the cost low.
+// SearchRow is one result line (DU5.2). The outside zone holds only
+// strings that this server writes in a closed grammar: the id, the
+// account alias, the folder ref, the date and the flag words. Every
+// string that a sender, a person or a mail server chose sits under
+// Untrusted, each in its own fence (DU5.1): the from line, the
+// subject, the preview, the folder name and the labels.
 type SearchRow struct {
-	ID      string `json:"id"`
-	Account string `json:"account"`
-	Folder  string `json:"folder"`
-	Date    string `json:"date"`
-	Flags   string `json:"flags,omitempty"`
-	Size    int64  `json:"size,omitempty"`
-	// Email holds from, subject and preview inside the fence markers
-	// the server instructions explain (App C).
-	Email string `json:"email"`
-	// Hidden is the count of hidden characters taken out of Email
-	// (§3.15). It stays outside the fence, because the server counted
-	// them, not the sender.
+	ID        string `json:"id" strict:"id"`
+	Account   string `json:"account" strict:"alias"`
+	FolderRef string `json:"folder_ref,omitempty" strict:"folder"`
+	Date      string `json:"date,omitempty" strict:"date"`
+	Flags     string `json:"flags,omitempty" strict:"flags"`
+	Size      int64  `json:"size,omitempty"`
+	// Untrusted holds the fenced fields of the row (DU5.1).
+	Untrusted SearchUntrusted `json:"untrusted"`
+	// Hidden is the count of hidden characters taken out of the from
+	// line, the subject and the preview (§3.15). It stays outside the
+	// fence, because the server counted them, not the sender.
 	Hidden int `json:"hidden_removed,omitempty"`
 }
 
-// AccountError names one account whose search failed (§3.16).
-type AccountError struct {
-	Account string `json:"account"`
-	Error   string `json:"error"`
+// SearchUntrusted is the untrusted zone of one row. Each field is one
+// fence of the nonce of the response; Labels has one fence for each
+// label or keyword (DU3.4).
+type SearchUntrusted struct {
+	From    string   `json:"from,omitempty"`
+	Subject string   `json:"subject,omitempty"`
+	Preview string   `json:"preview,omitempty"`
+	Folder  string   `json:"folder,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
 }
 
-// SearchOut is the search tool result (§3.16).
+// AccountError names one account whose search failed (§3.16). Error is
+// the class word of DU6.2. The error text can quote a stranger, so it
+// goes to Untrusted.Detail in a fence.
+type AccountError struct {
+	Account   string  `json:"account" strict:"alias"`
+	Error     string  `json:"error" strict:"word"`
+	Untrusted *Detail `json:"untrusted,omitempty"`
+}
+
+// Detail is the untrusted zone of an object that can carry text of
+// unknown origin, for example a provider error (DU3.5, DU6.2). Detail
+// is one fence of the nonce of the response.
+type Detail struct {
+	Detail string `json:"detail,omitempty"`
+}
+
+// SearchOut is the search tool result (§3.16, DU5.2). Head gives the
+// nonce first. Rows, the cursor, the account errors, Partial and Note
+// are outside; each row and each account error has its own untrusted
+// zone.
 type SearchOut struct {
+	Head
 	Rows       []SearchRow    `json:"rows"`
-	NextCursor string         `json:"next_cursor,omitempty"`
+	NextCursor string         `json:"next_cursor,omitempty" strict:"cursor"`
 	Errors     []AccountError `json:"errors,omitempty"`
-	// Partial is true when an account failed or the deadline ran out.
-	// The rows that did arrive are still in Rows (A8).
+	// Partial is true when an account failed, the deadline ran out, or
+	// a row was left out because its id did not pass normalizeID. The
+	// rows that did arrive are still in Rows (A8, DU3.2).
 	Partial bool `json:"partial,omitempty"`
-	// Note carries a provider's caller-visible note, such as "only
-	// the newest 500 matching messages were checked" (DRV.12). Like
-	// NextCursor, it belongs to one provider's result set, so only a
-	// single-account search carries one.
-	Note string `json:"note,omitempty"`
+	// Note carries a provider's caller-visible note, such as "the
+	// newest 500 matching messages were checked" (DRV.12). It passes
+	// the note registry (DU3.5). Like NextCursor, it belongs to one
+	// provider's result set, so only a single-account search carries
+	// one.
+	Note string `json:"note,omitempty" strict:"note"`
 }
 
 // AddSearch adds the "search" tool to srv (§3.16): read level, an
@@ -112,8 +143,12 @@ type searchTool struct{ mail Mail }
 // operators, so "OR" or a bad date says so instead of coming back as
 // an empty page.
 //
-// arch: T4.5, §3.16, §3.9, §3.15, A8, G10, A12
+// The handler takes the Fencer of the call once, before the fan-out.
+// Each goroutine gets it as an argument and only reads it (DU2.2).
+//
+// arch: T4.5, §3.16, §3.9, §3.15, A8, G10, A12, DU2.2, DU5.2
 func (t *searchTool) handle(ctx context.Context, in SearchIn) (SearchOut, error) {
+	f := fencer(ctx)
 	q, err := buildQuery(in)
 	if err != nil {
 		return SearchOut{}, err
@@ -124,6 +159,7 @@ func (t *searchTool) handle(ctx context.Context, in SearchIn) (SearchOut, error)
 	}
 
 	out := SearchOut{Rows: []SearchRow{}}
+	dropped := false
 	var mu sync.Mutex
 
 	// errgroup, not errgroup.WithContext: the first failure must not
@@ -135,24 +171,25 @@ func (t *searchTool) handle(ctx context.Context, in SearchIn) (SearchOut, error)
 			actx, cancel := context.WithTimeout(ctx, searchPerAccount)
 			defer cancel()
 
-			rows, next, note, err := t.one(actx, alias, q)
+			res, err := t.one(actx, f, alias, q)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				// The structured result does not pass through the
-				// redactor of Wrap, which only sees the error text of
-				// a failed call. Clean it here (§3.15, B4, DH2.5).
-				out.Errors = append(out.Errors, AccountError{Account: alias, Error: errNote(err)})
+				// The error text can quote a stranger. The class word
+				// stays outside; the text goes into a fence after the
+				// redactor (§3.15, B4, DH2.5, DU6.2).
+				out.Errors = append(out.Errors, accountError(f, alias, err))
 				return nil
 			}
-			out.Rows = append(out.Rows, rows...)
+			out.Rows = append(out.Rows, res.rows...)
+			dropped = dropped || res.dropped
 			if len(aliases) == 1 {
 				// A cursor, and a provider's note, are tied to one
 				// result set (§3.9, DRV.12). Neither can describe a
 				// merged list, so only a single-account search
 				// carries one.
-				out.NextCursor = next
-				out.Note = note
+				out.NextCursor = res.next
+				out.Note = res.note
 			}
 			return nil
 		})
@@ -167,25 +204,46 @@ func (t *searchTool) handle(ctx context.Context, in SearchIn) (SearchOut, error)
 		}
 	}
 	sortErrors(out.Errors)
-	out.Partial = len(out.Errors) > 0 || ctx.Err() != nil
+	out.Partial = len(out.Errors) > 0 || ctx.Err() != nil || dropped
 	return out, nil
 }
 
-// one searches a single account.
-func (t *searchTool) one(ctx context.Context, alias string, q mail.Query) ([]SearchRow, string, string, error) {
-	p, _, err := t.mail.Open(ctx, alias)
+// accountResult is the part of the result that one account gives.
+type accountResult struct {
+	rows    []SearchRow
+	next    string
+	note    string
+	dropped bool // a message was left out: its id did not pass normalizeID
+}
+
+// one searches a single account. A message whose id does not pass
+// normalizeID for the provider kind is left out, because the outside
+// zone cannot hold its id and a row with no id cannot be read or
+// changed (DU3.2). A cursor that does not match the strict kind cursor
+// is not written, and a note passes the note registry (DU3.5).
+func (t *searchTool) one(ctx context.Context, f guard.Fencer, alias string, q mail.Query) (accountResult, error) {
+	p, acct, err := t.mail.Open(ctx, alias)
 	if err != nil {
-		return nil, "", "", err
+		return accountResult{}, err
 	}
 	page, err := p.Search(ctx, q)
 	if err != nil {
-		return nil, "", "", err
+		return accountResult{}, err
 	}
-	rows := make([]SearchRow, 0, len(page.Messages))
+	res := accountResult{rows: make([]SearchRow, 0, len(page.Messages))}
 	for i := range page.Messages {
-		rows = append(rows, toRow(alias, page.Messages[i]))
+		row, ok := toSearchRow(f, acct.Provider, alias, page.Messages[i])
+		if !ok {
+			res.dropped = true
+			continue
+		}
+		res.rows = append(res.rows, row)
 	}
-	return rows, page.NextCursor, page.Note, nil
+	if page.NextCursor != "" && guard.Strict("cursor", page.NextCursor) {
+		res.next = page.NextCursor
+	}
+	res.note, _ = strictNote(page.Note)
+	return res, nil
 }
 
 // targets gives the accounts to search. An alias that the config does
@@ -202,16 +260,28 @@ func (t *searchTool) targets(ctx context.Context, account string) ([]string, err
 		return nil, err
 	}
 	if len(aliases) == 0 {
-		return nil, errors.New(addAccountHint)
+		return nil, public("not_found", addAccountHint)
 	}
 	return aliases, nil
 }
 
 // buildQuery turns the tool input into a provider query. A bad since
-// time or a cursor on a multi-account search fails the call: both are
-// wrong before any mailbox is asked.
+// time, a bad folder ref or a cursor on a multi-account search fails
+// the call: each is wrong before any mailbox is asked.
+//
+// The folder field passes folderArg, so it takes a name or a
+// folder_ref (DU3.3). The in: word of the query stays in Raw: each
+// provider reads it with mail.ParseQuery, which gives the name that a
+// valid ref holds. An in: value that is not a valid ref stays as the
+// model wrote it, and the provider reports the folder as unknown.
+//
+// arch: §3.9, DU3.3, DU6.2
 func buildQuery(in SearchIn) (mail.Query, error) {
-	q := mail.Query{Raw: in.Query, Folder: in.Folder, Limit: in.Limit, Cursor: in.Cursor}
+	folder, err := folderArg(in.Folder)
+	if err != nil {
+		return mail.Query{}, err
+	}
+	q := mail.Query{Raw: in.Query, Folder: folder, Limit: in.Limit, Cursor: in.Cursor}
 	if q.Limit <= 0 {
 		q.Limit = searchDefaultLimit
 	}
@@ -221,12 +291,12 @@ func buildQuery(in SearchIn) (mail.Query, error) {
 	if in.Since != "" {
 		ts, err := time.Parse(time.RFC3339, in.Since)
 		if err != nil {
-			return mail.Query{}, fmt.Errorf("since %q is not an RFC 3339 time such as 2026-09-01T00:00:00Z", in.Since)
+			return mail.Query{}, publicDetail("invalid_input", "since is not an RFC 3339 time such as 2026-09-01T00:00:00Z", in.Since)
 		}
 		q.Since = ts
 	}
 	if in.Cursor != "" && in.Account == "" {
-		return mail.Query{}, errors.New("a cursor belongs to one account; give the account it came from")
+		return mail.Query{}, public("invalid_input", "a cursor belongs to one account; give the account it came from")
 	}
 	return q, nil
 }
@@ -240,37 +310,141 @@ func errNote(err error) string {
 	return guard.Sanitize(guard.Redact(err.Error()))
 }
 
-// toRow builds one result line. Everything the sender controls goes
-// inside one fence; the id, account, folder, date, flags and size
-// stay outside it (§3.15).
+// accountError gives the error line of one account (DU5.2, DU6.2):
+// the class word outside, and the error text in a fence after the
+// redactor. Redact runs before the Sanitize of Wrap, so NFKC cannot
+// hide a token from it.
+//
+// arch: DU5.2, DU6.2, DH2.5
+func accountError(f guard.Fencer, alias string, err error) AccountError {
+	return AccountError{Account: alias, Error: classOf(err), Untrusted: errDetail(f, err)}
+}
+
+// errDetail gives the untrusted detail of an error: its text after
+// guard.Redact, in one fence of f. It is the two-zone twin of errNote:
+// a note outside ends with the class word, and this detail carries the
+// text (DU3.5).
+//
+// arch: DU3.5, DU6.2, DH2.5
+func errDetail(f guard.Fencer, err error) *Detail {
+	return &Detail{Detail: f.Wrap(guard.Redact(err.Error()))}
+}
+
+// wrapIf gives the fence of s, or "" when s is empty, so an empty
+// field with omitempty stays out of the result (DU4.1).
+//
+// arch: DU5.1
+func wrapIf(f guard.Fencer, s string) string {
+	if s == "" {
+		return ""
+	}
+	return f.Wrap(s)
+}
+
+// flagWords writes the flags of a row in the closed set of DU3.4. It
+// is the two-zone twin of flagText: it writes the words of the four
+// system flags only, and never a label or a keyword. Those go to
+// labelFences. An empty string means a read message with no other
+// flag.
+//
+// arch: DU3.4
+func flagWords(fl mail.Flags) string {
+	var parts []string
+	if !fl.Seen {
+		parts = append(parts, "unread")
+	}
+	if fl.Flagged {
+		parts = append(parts, "starred")
+	}
+	if fl.Answered {
+		parts = append(parts, "answered")
+	}
+	if fl.Draft {
+		parts = append(parts, "draft")
+	}
+	return strings.Join(parts, " ")
+}
+
+// labelFences gives one fence for each label or keyword name (DU3.4).
+// A person or a sender can choose a label name, so it never goes
+// outside. Each name gets its own fence, so the escaper sees each name
+// alone and finds a turn prefix at its start. An empty name is left
+// out.
+//
+// arch: DU3.4, DU5.1
+func labelFences(f guard.Fencer, labels []string) []string {
+	var out []string
+	for _, l := range labels {
+		if l != "" {
+			out = append(out, f.Wrap(l))
+		}
+	}
+	return out
+}
+
+// dateText writes the server time t in the strict kind date. A zero
+// time, or a time that the kind cannot hold, gives "", and the field
+// is then omitted (DU3.1).
+//
+// arch: DU3.1
+func dateText(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	s := t.UTC().Format(time.RFC3339)
+	if !guard.Strict("date", s) {
+		return ""
+	}
+	return s
+}
+
+// toSearchRow builds one two-zone result line (DU5.2). The id passes
+// normalizeID for the provider kind; ok is false when it does not, and
+// the caller leaves the row out (DU3.2). The folder is outside as a
+// ref and inside as a name (DU3.3). The flags are closed words, and
+// each label is a fence (DU3.4).
 //
 // The display name, subject and preview are defanged again after
 // guard.Sanitize. Sanitize runs NFKC and removes hidden characters,
 // and that can make a live link from a full-width or split link that
 // went in unchanged (D4.1 item 3). A search row shows a link target
 // only in its defanged form; read gives the real URL. Hidden counts
-// the characters of the raw text.
+// the hidden characters of the raw from line, subject and preview.
 //
-// arch: D4.1
-func toRow(alias string, m mail.Message) SearchRow {
-	head := "from: " + addressText(m.From) + "\nsubject: " + m.Subject
-	raw := head
-	body := mime.DefangLinks(guard.Sanitize(head))
-	if m.Preview != "" {
-		raw += "\npreview: " + m.Preview
-		body += "\npreview: " + mime.DefangLinks(guard.Sanitize(m.Preview))
+// arch: D4.1, DU5.1, DU5.2, DU3.2, DU3.3, DU3.4
+func toSearchRow(f guard.Fencer, kind, alias string, m mail.Message) (SearchRow, bool) {
+	id, ok := normalizeID(kind, m.ID)
+	if !ok {
+		return SearchRow{}, false
 	}
-	_, hidden := guard.StripInvisible(raw)
+	shown := func(s string) string {
+		if s == "" {
+			return ""
+		}
+		return f.Wrap(mime.DefangLinks(guard.Sanitize(s)))
+	}
+	from := addressText(m.From)
+	hidden := 0
+	for _, raw := range []string{from, m.Subject, m.Preview} {
+		_, n := guard.StripInvisible(raw)
+		hidden += n
+	}
 	return SearchRow{
-		ID:      m.ID,
-		Account: alias,
-		Folder:  guard.CleanServerName(m.Folder),
-		Date:    m.Date.UTC().Format(time.RFC3339),
-		Flags:   flagText(m.Flags),
-		Size:    m.Size,
-		Email:   guard.Fence("EMAIL", body),
-		Hidden:  hidden,
-	}
+		ID:        id,
+		Account:   alias,
+		FolderRef: folderRef(m.Folder),
+		Date:      dateText(m.Date),
+		Flags:     flagWords(m.Flags),
+		Size:      m.Size,
+		Untrusted: SearchUntrusted{
+			From:    shown(from),
+			Subject: shown(m.Subject),
+			Preview: shown(m.Preview),
+			Folder:  wrapIf(f, m.Folder),
+			Labels:  labelFences(f, m.Flags.Labels),
+		},
+		Hidden: hidden,
+	}, true
 }
 
 // addressText writes one address as "Name <user@host>", or just the

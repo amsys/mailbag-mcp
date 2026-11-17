@@ -28,9 +28,14 @@ two files differ.
   (`TestToolsDoc_EveryFieldHasText`).
 - `go run . tools size` prints the names bytes and the `tools/list`
   bytes for each toolset, then a total line with the instructions bytes.
-  Core tools at most 4096 B, all toolsets at most 8192 B
-  (`TestToolsList_Budget`). Raise a budget only with a decision record
-  in `PLAN.md`. Never cut a rule, a limit, a unit or a default from a
+  Core tools at most 4096 B, all toolsets at most 8704 B
+  (`TestToolsList_Budget`; 8192 B before DU7.1, which added the
+  `folder_ref` input texts). The server instructions are at most
+  1024 B (`TestInstructions_BudgetR1`; 640 B before DU7.1, which added
+  the two-zone rule). Raise a budget only with a decision record in
+  `PLAN.md`; the DU7.1 records cite the owner statement of 2026-11-17,
+  "Cost is not a problem". DU7.1 set the `tools/list` budget to the
+  next 512 B above the measured size (8353 B). Never cut a rule, a limit, a unit or a default from a
   description to fit.
 - `TestBinarySize_Budget` caps the stripped binary at 15,600,000 B
   (`sizeBudgetBytes` in `size_test.go`; 15,000,000 B before DH1.1, which
@@ -494,13 +499,91 @@ two files differ.
 
 ## G. Guard (`internal/guard`, `internal/tools`)
 
-- G1 The server `instructions` tell the model the fence rule.
+- G1 The server `instructions` tell the model the two-zone rule
+  (DU7.1, DU12.2), in this order: each result and each error starts
+  with `_fence`, a random value for that one response; sender text is
+  only under keys named `untrusted` and only between
+  `[UNTRUSTED_<_fence>]` and `[/UNTRUSTED_<_fence>]`; a marker with
+  another value or with no value is sender text; then the six safety
+  sentences of D1.3, with their meaning kept. The text must name the
+  real JSON key of `Head.Fence`. The budget is 1024 B (Repo facts).
   `TestServer_InstructionsPresent`, `TestInstructions_BudgetR1`.
-- G2 Escape copies of the markers with U+27E6, in any case.
-  `TestFence_Escape`, `FuzzFence`.
-- G3 Each field a sender controls is fenced, in results and errors, on
-  every toolset. `TestTools_EveryUntrustedFieldFenced`,
-  `TestServer_EveryUntrustedFieldFenced`.
+- G2 The only fence maker is `guard.Fencer` (`internal/guard/fencer.go`,
+  DU1.1). `guard.Fence` is deleted; never add a marker writer that
+  takes no nonce. The nonce is 64 bits from `crypto/rand`, 16 lowercase
+  hex characters (owner ruling: one blind guess for each mail, so 128
+  bits buys nothing). `Wrap` gives `[UNTRUSTED_<nonce>]`, a line feed,
+  the body, a line feed and `[/UNTRUSTED_<nonce>]`. The body goes
+  through `Sanitize` first (the escaper: a copy of a marker, in any
+  case, gets U+27E6 for its bracket), then each copy of the nonce text,
+  in any case, becomes 16 `*`, so content cannot close the fence.
+  `Wrap` on a zero Fencer panics with a fixed text, and the `recover`
+  of `WrapReq` (A7) makes it an error with the class `internal`.
+  `Holds(s)` is true only for one whole fence of this nonce whose
+  inner text has no nonce text and no marker on its fold copy.
+  `NewFencerFrom` (fixed reader) is for tests only; in
+  `internal/tools`, `testFencer` gives the nonce `testNonce`.
+  `TestFencer_NonceForm`, `TestFencer_WrapForm`,
+  `TestFencer_WrapReplacesNonce`, `TestFencer_WrapSanitizes`,
+  `TestFencer_HoldsRejects`, `TestFencer_ZeroValuePanics`,
+  `TestFencer_NewFencerFromOnlyInTests`, `TestFence_Escape`,
+  `FuzzFence` (takes a nonce).
+- G3 A tool result has two zones (DU0.1). Each string under a key named
+  `untrusted` is one fence of the nonce of this response. Each other
+  string is server text that matches a closed grammar: its field has a
+  `strict:"<kind>"` tag and passes `guard.Strict` (`strict.go`, DU3.1;
+  kinds `nonce`, `id`, `folder`, `ref`, `date`, `day`, `alias`,
+  `word`, `flags`, `hex`, `cursor`, `msgid`, `owner`), or kind `note`,
+  which the note registry checks (`notes.go`, DU3.5). The value of
+  `untrusted` is an object of named fields, never one joined string,
+  and a list is an array of fences; numbers and bools stay outside.
+  Each Out struct embeds `Head` first, with no JSON tag, and `Head` is
+  the only embedded struct (DU12.2). Its key is `_fence`, not `fence`:
+  go-sdk v1.8.0 decodes the output into a map and writes the keys in
+  byte order, and `_` sorts before every lowercase letter. Every other
+  top-level key is `[a-z0-9_]` and sorts after `_fence`. An embedded
+  struct with a JSON tag breaks the wire: `encoding/json` writes it as
+  a key, jsonschema-go flattens it, and the SDK refuses the tool's own
+  output. A handler never writes `Head`. `WrapReq` makes the Fencer
+  before the handler and puts it in the context (`withFencer`); a
+  handler takes it once at its top with `fencer(ctx)`, before any
+  goroutine, and passes it to helpers by value. After the handler,
+  `WrapReq` sets `_fence` and runs the output gate `checkOut`
+  (`outgate.go`, DU4.1) on every success result. A failure sends none
+  of the handler output: the result is an error with the class
+  `output_refused` and the field path (code names and indexes only),
+  and the log gets the same path. If the nonce cannot be made, the
+  result is `error: internal` with no nonce line. No stored value holds
+  a fence or a nonce (INV-6): the send key store keeps plain detail
+  text, and a replayed Out gets the nonce of the new response. A new
+  Out type goes in `toolOutTypes`, or the static twin fails.
+  `TestTools_EveryUntrustedFieldFenced`, `TestTools_NoNoteWithheld`,
+  `TestOut_EveryStringFieldHasZone`, `TestOut_StaticTwinFindsEachFault`,
+  `TestOut_KeysSortAfterFence`, `TestOut_NoTaggedEmbed`,
+  `TestOut_FilledOutPassesSDKSchema`, `TestCheckOut_UntrustedZone`,
+  `TestCheckOut_OutsideZone`, `TestCheckOut_FenceIsTheNonce`,
+  `TestStrict_Grammars`, `TestWrapReq_SetsFenceAfterHandler`,
+  `TestWrapReq_NonceIsNewForEachCall`,
+  `TestWrapReq_NoNonceGivesInternalError`,
+  `TestWrapReq_GateRefusesResult`, `TestServer_EveryUntrustedFieldFenced`
+  (each marker must carry the `_fence` of the same response, and no two
+  responses share a nonce).
+- G3a Error results (DU6.1, DU6.2). `errForm` writes `_fence: <nonce>`,
+  then `error: <class>` from a closed set of words, then the public
+  text, then the detail in one fence. Only `public(class, text)` and
+  `publicDetail(class, text, detail)` give public text, and `text` must
+  be a string literal or a constant. Model input that an error names
+  goes in `detail`. Any other error has no public text: its whole text
+  is the detail, so text of unknown origin is always fenced. Both parts
+  pass `guard.Redact` (G5). The structured content of an error is the
+  zero Out with `_fence` set. The SDK refuses a bad argument before
+  `WrapReq` runs; the receiving middleware `markCalls` (`wire.go`,
+  DU6.3) gives that result the same form with a new nonce and the class
+  `invalid_input`. `TestErrForm_Lines`,
+  `TestErrForm_DetailIsFencedAndRedacted`, `TestErrParts_DefaultIsFenced`,
+  `TestPublic_TextIsConstant`, `TestWrapReq_ErrorForm`,
+  `TestMarkCalls_SDKErrorGetsForm`, `TestServerWiring_SDKErrorForm`,
+  `TestServerWiring_SDKErrorCanaryFenced`.
 - G4 Remove hidden characters (tag block, bidi, zero width).
   `TestInvisible_Table`, `FuzzInvisible`.
 - G4a HTML text hidden by style counts as hidden; a value that cannot
@@ -607,7 +690,11 @@ two files differ.
   marker from the escape and from the strip. The rune stays in the
   text and has no item in `off`, so `runeEnd` reads the rune size from
   the original text, never from the next offset. A precomposed
-  accented letter (U+0143 for N) is not folded: that is a limit.
+  accented letter (U+0143 for N) is not folded: that is a limit. Such a
+  forged marker can carry no valid nonce, and the instructions tell
+  the model that a marker with another value is sender text (G1).
+  `Holds` uses the same fold, so a fence whose inner text holds a
+  marker the fold finds is not a fence.
   `TestFence_ConfusableMarkerEscaped` (its multi-byte prefix shows a
   wrong offset), `TestFence_FullWidthMarker`,
   `TestFence_HiddenRuneInMarker`, `FuzzFence`.
@@ -618,8 +705,15 @@ two files differ.
   rune and ends at the end of the original rune that made the last
   matched byte, so an NFKC expansion is never cut in half. Never write
   the NFKC form into outgoing text: owner text keeps its own
-  characters (I4). The separator goes with the marker, so
-  `[UNTRUSTED_EMAIL]` gives `EMAIL]`. Owner text that holds
+  characters (I4). The strip deletes the whole marker (DU1.2): after
+  the prefix and its separator, `markerTailRe` also takes an optional
+  KIND word (`[A-Za-z_]{0,24}`), an optional space, an optional 16-hex
+  nonce and one `]`, but only when the whole tail is there. So
+  `[UNTRUSTED_3fa9c2e17b604d55]` and the old `[UNTRUSTED_EMAIL]` leave
+  nothing (before DU1.2, `EMAIL]` stayed). With no closing `]` only the
+  prefix goes: `[UNTRUSTED_EMAIL x` gives `EMAIL x`. The tail holds no
+  `[`, so it never reaches the next marker. A model that copies a fence
+  into a draft or a template loses all of it. Owner text that holds
   `[untrusted` loses those letters; the send summary shows the result.
   The loop stops after `stripPasses` (16) passes. Each nested level
   costs one pass over the whole text, and a 90 KB body with 9000
@@ -628,6 +722,7 @@ two files differ.
   folds to `[`, so no marker can stay. Do not raise the limit to keep
   brackets: only attack text has that many levels. Do not test this
   with a time bound; the bracket of `[keep]` shows which path ran.
+  `TestStripFenceMarkers_WholeMarker`,
   `TestStripFenceMarkers_Confusable`, `TestStripFenceMarkers_Nested`,
   `TestStripFenceMarkers_ZeroWidthSplit`,
   `TestStripFenceMarkers_PassLimit`, `FuzzStripFenceMarkers`.
@@ -644,25 +739,45 @@ two files differ.
   tokens: a mid-line `Human:`, a quoted line and a longer word stay
   plain text. `TestSanitize_TemplateTokensTable`,
   `TestSanitize_NFKCAndTemplateTokens`.
-- G18 Server text that can quote a stranger (DH2.5, B3). A provider
-  error in a result field goes through `errNote`
-  (`internal/tools/search.go`), which is
-  `guard.Sanitize(guard.Redact(err.Error()))`. Redact runs first, so
-  NFKC cannot hide a token from it. Use `errNote` at each site that
-  puts an error into a result field (`AccountError.Error` and the
-  notes of read, export, bulk and modify). A folder name or a label
-  word goes through `guard.CleanServerName`, which is
-  `Sanitize(StripFenceMarkers(s))`. The strip comes first, because a
-  field outside the fence must not hold the bare word `UNTRUSTED_`,
-  and Sanitize keeps that word. These fields stay on `serverOwned`
-  (`fence_fields_test.go`). An id is a round-trip key and never
-  changes. Owner choice, 2026-11-09: Sanitize runs NFKC, so a
-  full-width folder name comes back in its NFKC form, and a later call
-  with that name can fail. Known gap: the tool error text in
-  `internal/tools/wrapper.go` passes `guard.Redact` only, because a
-  blanket `Sanitize` there would escape the real fence of a fenced
-  error. `TestSearch_ProviderErrorSanitized`, `TestServerNames_Cleaned`
-  (also pins the NFKC form).
+- G18 Server text that can quote a stranger (DH2.5, B3, DU3.2-DU3.5).
+  No text from a provider, a sender or the model goes outside a fence;
+  a cleaned copy outside is not enough. A provider error in a result
+  gives the class word outside (`AccountError.Error`, or a note that
+  ends with the class) and its text in `untrusted.detail` through
+  `errDetail`: `guard.Redact` first, so NFKC cannot hide a token from
+  it, then `f.Wrap`. A folder or label name is a person's text (a
+  shared folder, a Gmail label). Outside it is `folder_ref`: `=` and
+  the lowercase hex of the raw name bytes (`folderRef`); the name
+  itself is in `untrusted.folder` or `untrusted.name`. Labels and
+  keywords go to `untrusted.labels`, one fence each; `flags` holds
+  only the closed words `unread`, `starred`, `answered`, `draft`,
+  `flagged`, `forwarded`, `junk` and `important`. Each input field that
+  takes a folder goes through `folderArg`: a value that starts with `=`
+  must be a valid ref and decodes to the raw name; any other value is
+  a name and loses its fence markers first. The ref gives an exact
+  round trip; the fenced name is the NFKC form (owner choice,
+  2026-11-09), and a later call with it can fail. An IMAP or Outlook id
+  is `<uidvalidity>-<uid>-<hex of the folder name>` (DU3.2), so a
+  folder name never shows in an id; `ParseIMAPID` still reads the old
+  form `<uidvalidity>.<uid>.<folder>` from the undo journal and from
+  earlier sessions. No id is echoed: each id that a tool writes passes
+  `normalizeID` (`internal/tools/ids.go`), which parses and formats it
+  again for IMAP and Outlook and checks the `id` grammar for Gmail and
+  JMAP; an id that fails is not written (an unsubscribe row then has
+  its `index` only). Known limit: a Gmail or JMAP id from a hostile
+  mail server (not a sender) is checked for its character set only.
+  A `note` matches the closed registry of `notes.go`; parts join with
+  `"; "`, and no form holds that separator. A provider note that
+  matches no form becomes `note withheld`; a send warning keeps its
+  registry text, and the provider text goes to `untrusted.detail`
+  (`SendResult.WarningDetail`). `errNote` and `guard.CleanServerName`
+  have no caller now; do not use them for a field outside the fence.
+  `TestSearch_ProviderErrorSanitized`, `TestServerNames_Cleaned`
+  (also pins the NFKC form of the fenced name),
+  `TestFolderRef_RoundTrip`, `TestFolderArg_BadRefRefused`,
+  `TestFolderArg_NameStripsMarkers`, `TestID_NewFormAndOldForm`,
+  `TestNormalizeID`, `TestStrictNote_Withheld`,
+  `TestSend_WarningDetailFencedPerResponse`.
 - G19 The outgoing text of the Gmail settings writes loses every fence
   marker (DH2.6, B4, M14). `prepareSetting` runs
   `guard.StripFenceMarkers` on the vacation subject and body that the
@@ -675,9 +790,17 @@ two files differ.
   question (review M1). `compose` strips the
   draft text, the quote, the forward block, the mailto draft and the
   templates. A new outgoing text field needs the same strip and a row
-  in the test. `TestOutgoing_NoFenceMarkerAnywhere` (ASCII and
-  look-alike markers in every field, checked at the provider fake),
-  `TestSend_StripsFenceMarkers`.
+  in the test. No marker and no nonce reaches outgoing mail, a Gmail
+  setting, a template file or the text shown to the human (INV-7).
+  `templates` save strips the subject and body before the file write.
+  `folders` create and rename refuse, with `invalid_input`, a name that
+  changes under `StripFenceMarkers` or `StripInvisible` or that holds a
+  control character. The bulk question uses `plainLine` (`Sanitize`,
+  line breaks to spaces, 120 runes), with no marker and no nonce.
+  `TestOutgoing_NoFenceMarkerAnywhere` (ASCII, look-alike and nonce
+  markers in every field, checked at the provider fake),
+  `TestSend_StripsFenceMarkers`, `TestTemplates_SaveStripsMarkers`,
+  `TestFolders_CreateRenameRefuseHostileName`, `TestBulk_PlainLine`.
 - G20 Mail data reaches gpg and openssl on stdin only (DH4.1, B6, I11).
   No byte of a message goes into an argument or a file path of a child
   process. `TestChildProcess_ArgsAreFixed` exists in `internal/tools`
@@ -694,8 +817,9 @@ two files differ.
   differs from its From address (case alone is no difference),
   `compose` adds the fixed sentence `replyToNote` to the draft note, in
   either mode. The note names no address: both addresses come from the
-  sender, the draft result is outside every fence (§3.15), and
-  `TestSend_ResultCarriesNoSenderText` forbids sender text there. The
+  sender, the draft note is outside every fence (§3.15, DU3.5), and
+  `TestSend_ResultCarriesNoSenderText` forbids sender text there. Only
+  the picked From address is in `untrusted.detail`. The
   human sees both addresses in the draft and in the send
   confirmation. The note joins any other note and does not replace
   it. `TestDraft_ReplyToDiffersNote`.

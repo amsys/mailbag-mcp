@@ -36,8 +36,8 @@ const (
 type FoldersIn struct {
 	Account string `json:"account"`
 	Action  string `json:"action,omitempty"`
-	Name    string `json:"name,omitempty"`
-	NewName string `json:"new_name,omitempty"`
+	Name    string `json:"name,omitempty" jsonschema:"name or folder_ref"`
+	NewName string `json:"new_name,omitempty" jsonschema:"name or folder_ref"`
 }
 
 // FolderRow is one line of the folders result (§3.16). A folder name

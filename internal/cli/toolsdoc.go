@@ -35,9 +35,9 @@ var fieldText = map[string]string{
 	"bulk.account": "The alias of the account to change.",
 	"bulk.action":  "The change for each match: read, unread, star, unstar, archive, trash or move.",
 	"bulk.dry_run": "Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. On JMAP a from: term matches whole words of the address, so -from:mailer does not exclude noreply@mailer.example.com. Read the listed rows.",
-	"bulk.folder":  "The folder to search. The default is INBOX.",
+	"bulk.folder":  "The folder to search, as a name or a folder_ref. The default is INBOX.",
 	"bulk.max":     "The largest count of messages to change. The default is 500 and the limit is 5000.",
-	"bulk.move_to": "The target folder of the move action.",
+	"bulk.move_to": "The target folder of the move action, as a name or a folder_ref.",
 	"bulk.query":   "The search query that selects the messages, in the syntax of search.",
 	"bulk.undo":    "An undo token reverses one earlier bulk change. The value list shows the recent tokens.",
 
@@ -67,8 +67,8 @@ var fieldText = map[string]string{
 
 	"folders.account":  "The alias of the account.",
 	"folders.action":   "The action: list (the default), create, rename or delete.",
-	"folders.name":     "The folder to create, rename or delete.",
-	"folders.new_name": "The new name of the folder for rename.",
+	"folders.name":     "The folder to create, rename or delete, as a name or a folder_ref.",
+	"folders.new_name": "The new name of the folder for rename, as a name or a folder_ref.",
 
 	"gmail_settings.account":        "The alias of a Gmail account.",
 	"gmail_settings.action":         "The action: list_filters, create_filter, delete_filter, get_vacation, set_vacation, get_signature or set_signature.",
@@ -92,7 +92,7 @@ var fieldText = map[string]string{
 	"modify.add_labels":    "The labels or keywords to add.",
 	"modify.archive":       "Move the messages to the archive.",
 	"modify.ids":           "The message ids from search. The limit is 500.",
-	"modify.move_to":       "The folder to move the messages to. A move out of junk removes $junk and adds $notjunk. A move into junk does the reverse.",
+	"modify.move_to":       "The folder to move the messages to, as a name or a folder_ref. A move out of junk removes $junk and adds $notjunk. A move into junk does the reverse.",
 	"modify.read":          "Mark the messages as read (true) or unread (false).",
 	"modify.remove_labels": "The labels or keywords to remove.",
 	"modify.starred":       "Star (true) or unstar (false) the messages.",
@@ -109,9 +109,9 @@ var fieldText = map[string]string{
 
 	"search.account": "The alias of the account to search. With no alias, the search covers all accounts.",
 	"search.cursor":  "The next_cursor value of an earlier result, to get the next page. It works for one account only.",
-	"search.folder":  "The folder to search. The default is INBOX.",
+	"search.folder":  "The folder to search, as a name or a folder_ref. A folder_ref is the = form that a result gives. Give a name that starts with = as its folder_ref. The default is INBOX.",
 	"search.limit":   "The largest count of results. The default is 20 and the limit is 100.",
-	"search.query":   "The search terms, for example from:, subject:, is:unread or after:YYYY-MM-DD. All terms must match. An empty query gives the newest messages.",
+	"search.query":   "The search terms, for example from:, subject:, is:unread or after:YYYY-MM-DD. The in: term takes a folder name or a folder_ref. All terms must match. An empty query gives the newest messages.",
 	"search.since":   "An RFC 3339 time. The search gives only messages that are newer.",
 
 	"send.account":         "The alias of the account that sends.",

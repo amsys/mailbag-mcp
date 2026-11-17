@@ -651,8 +651,8 @@ List folders, or create, rename or delete one (draft level). The server delimite
 |---|---|---|---|
 | `account` | string | yes | The alias of the account. |
 | `action` | string | no | The action: list (the default), create, rename or delete. |
-| `name` | string | no | The folder to create, rename or delete. |
-| `new_name` | string | no | The new name of the folder for rename. |
+| `name` | string | no | The folder to create, rename or delete, as a name or a folder_ref. |
+| `new_name` | string | no | The new name of the folder for rename, as a name or a folder_ref. |
 
 #### read
 
@@ -676,9 +676,9 @@ Search one account, or all when account is omitted. Newest first; preview fenced
 |---|---|---|---|
 | `account` | string | no | The alias of the account to search. With no alias, the search covers all accounts. |
 | `cursor` | string | no | The next_cursor value of an earlier result, to get the next page. It works for one account only. |
-| `folder` | string | no | The folder to search. The default is INBOX. |
+| `folder` | string | no | The folder to search, as a name or a folder_ref. A folder_ref is the = form that a result gives. Give a name that starts with = as its folder_ref. The default is INBOX. |
 | `limit` | integer | no | The largest count of results. The default is 20 and the limit is 100. |
-| `query` | string | no | The search terms, for example from:, subject:, is:unread or after:YYYY-MM-DD. All terms must match. An empty query gives the newest messages. |
+| `query` | string | no | The search terms, for example from:, subject:, is:unread or after:YYYY-MM-DD. The in: term takes a folder name or a folder_ref. All terms must match. An empty query gives the newest messages. |
 | `since` | string | no | An RFC 3339 time. The search gives only messages that are newer. |
 
 ### decrypt
@@ -704,7 +704,7 @@ Change flags, labels or folder, or undo a change. A move out of junk marks the m
 | `add_labels` | array of string | no | The labels or keywords to add. |
 | `archive` | boolean | no | Move the messages to the archive. |
 | `ids` | array of string | no | The message ids from search. The limit is 500. |
-| `move_to` | string | no | The folder to move the messages to. A move out of junk removes $junk and adds $notjunk. A move into junk does the reverse. |
+| `move_to` | string | no | The folder to move the messages to, as a name or a folder_ref. A move out of junk removes $junk and adds $notjunk. A move into junk does the reverse. |
 | `read` | boolean | no | Mark the messages as read (true) or unread (false). |
 | `remove_labels` | array of string | no | The labels or keywords to remove. |
 | `starred` | boolean | no | Star (true) or unstar (false) the messages. |
@@ -766,9 +766,9 @@ Change every message that matches a query, after the human confirms (one time, o
 | `account` | string | yes | The alias of the account to change. |
 | `action` | string | no | The change for each match: read, unread, star, unstar, archive, trash or move. |
 | `dry_run` | boolean | no | Set true to count the matches and list up to 50 rows with their dates. Nothing changes and nobody is asked. It works with read access. Call it before a change by sender, and keep receipts, invoices and account mail out of the query. On JMAP a from: term matches whole words of the address, so -from:mailer does not exclude noreply@mailer.example.com. Read the listed rows. |
-| `folder` | string | no | The folder to search. The default is INBOX. |
+| `folder` | string | no | The folder to search, as a name or a folder_ref. The default is INBOX. |
 | `max` | integer | no | The largest count of messages to change. The default is 500 and the limit is 5000. |
-| `move_to` | string | no | The target folder of the move action. |
+| `move_to` | string | no | The target folder of the move action, as a name or a folder_ref. |
 | `query` | string | no | The search query that selects the messages, in the syntax of search. |
 | `undo` | string | no | An undo token reverses one earlier bulk change. The value list shows the recent tokens. |
 

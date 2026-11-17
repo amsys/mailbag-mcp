@@ -135,13 +135,15 @@ func checkNoSecretProps(t *testing.T, toolName string, schema any) {
 
 // TestToolsList_Budget checks I3 for each set: the tools/list JSON of
 // the core tools is at most 4096 bytes, and with every toolset on it
-// is at most 8192 bytes. The budget is the reason send and modify are
+// is at most 8704 bytes. The budget is the reason send and modify are
 // toolsets and not core tools (D1.1, D2.1). Only a decision record in
 // PLAN.md may raise these numbers (§3.16). The four S9 toolsets
-// (unsubscribe, bulk, templates, gmail_settings) are in "all", and
-// G20 keeps that budget at 8192 bytes.
+// (unsubscribe, bulk, templates, gmail_settings) are in "all". G20
+// kept that budget at 8192 bytes. DU7.1 raised it to 8704 bytes, the
+// next 512 above the 8353 bytes measured after the folder_ref input
+// descriptions (DU3.3, DU12.1), with the PLAN.md record of 2026-11-17.
 //
-// arch: D2.1, D2.2, D8.1 I3, §3.16, §9 U7, DS9.8, DS9.9, IS9.8, IS9.9, G20
+// arch: D2.1, D2.2, D8.1 I3, §3.16, §9 U7, DS9.8, DS9.9, IS9.8, IS9.9, G20, DU7.1, DU12.1
 func TestToolsList_Budget(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -149,7 +151,7 @@ func TestToolsList_Budget(t *testing.T) {
 		budget   int
 	}{
 		{"core", nil, 4096},
-		{"all", allToolsets(), 8192},
+		{"all", allToolsets(), 8704},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := listTools(t, tc.toolsets...)

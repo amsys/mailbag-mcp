@@ -65,6 +65,7 @@
           "type": "boolean"
         },
         "folder": {
+          "description": "name or folder_ref",
           "type": "string"
         },
         "max": {
@@ -72,6 +73,7 @@
           "type": "integer"
         },
         "move_to": {
+          "description": "name or folder_ref",
           "type": "string"
         },
         "query": {
@@ -244,9 +246,11 @@
           "type": "string"
         },
         "name": {
+          "description": "name or folder_ref",
           "type": "string"
         },
         "new_name": {
+          "description": "name or folder_ref",
           "type": "string"
         }
       },
@@ -382,6 +386,7 @@
           ]
         },
         "move_to": {
+          "description": "name or folder_ref",
           "type": "string"
         },
         "read": {
@@ -480,7 +485,7 @@
           "type": "string"
         },
         "folder": {
-          "description": "default INBOX",
+          "description": "name or folder_ref; default INBOX",
           "type": "string"
         },
         "limit": {
@@ -488,7 +493,7 @@
           "type": "integer"
         },
         "query": {
-          "description": "from: to: cc: subject: body: has:attachment is:unread|read|starred in:FOLDER before:|after:YYYY-MM-DD newer_than:7d larger:5M -term \"phrase\". Terms join with AND. Empty = newest.",
+          "description": "from: to: cc: subject: body: has:attachment is:unread|read|starred in:FOLDER|folder_ref before:|after:YYYY-MM-DD newer_than:7d larger:5M -term \"phrase\". Terms join with AND. Empty = newest.",
           "type": "string"
         },
         "since": {

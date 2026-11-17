@@ -40,8 +40,8 @@ const (
 // every configured account.
 type SearchIn struct {
 	Account string `json:"account,omitempty"`
-	Query   string `json:"query,omitempty" jsonschema:"from: to: cc: subject: body: has:attachment is:unread|read|starred in:FOLDER before:|after:YYYY-MM-DD newer_than:7d larger:5M -term \"phrase\". Terms join with AND. Empty = newest."`
-	Folder  string `json:"folder,omitempty" jsonschema:"default INBOX"`
+	Query   string `json:"query,omitempty" jsonschema:"from: to: cc: subject: body: has:attachment is:unread|read|starred in:FOLDER|folder_ref before:|after:YYYY-MM-DD newer_than:7d larger:5M -term \"phrase\". Terms join with AND. Empty = newest."`
+	Folder  string `json:"folder,omitempty" jsonschema:"name or folder_ref; default INBOX"`
 	Since   string `json:"since,omitempty" jsonschema:"RFC 3339; newer only"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"default 20, max 100"`
 	Cursor  string `json:"cursor,omitempty" jsonschema:"next_cursor; one account only"`

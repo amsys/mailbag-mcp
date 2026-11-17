@@ -42,7 +42,7 @@ type ModifyIn struct {
 	Starred      *bool    `json:"starred,omitempty"`
 	AddLabels    []string `json:"add_labels,omitempty"`
 	RemoveLabels []string `json:"remove_labels,omitempty"`
-	MoveTo       string   `json:"move_to,omitempty"`
+	MoveTo       string   `json:"move_to,omitempty" jsonschema:"name or folder_ref"`
 	Archive      bool     `json:"archive,omitempty"`
 	Trash        bool     `json:"trash,omitempty"`
 	Undo         string   `json:"undo,omitempty" jsonschema:"token, or list"`

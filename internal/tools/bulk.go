@@ -52,9 +52,9 @@ const bulkPage = searchMaxLimit
 type BulkIn struct {
 	Account string `json:"account"`
 	Query   string `json:"query,omitempty"`
-	Folder  string `json:"folder,omitempty"`
+	Folder  string `json:"folder,omitempty" jsonschema:"name or folder_ref"`
 	Action  string `json:"action,omitempty" jsonschema:"read unread star unstar archive trash move"`
-	MoveTo  string `json:"move_to,omitempty"`
+	MoveTo  string `json:"move_to,omitempty" jsonschema:"name or folder_ref"`
 	Max     int    `json:"max,omitempty" jsonschema:"default 500, at most 5000"`
 	Undo    string `json:"undo,omitempty" jsonschema:"token, or list"`
 	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"count and up to 50 matching rows; changes nothing"`

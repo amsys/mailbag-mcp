@@ -6,6 +6,33 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Every tool result has two zones. The first field `_fence` holds a
+  nonce of 64 bits that is new for each response. Each string that a
+  sender controls sits under the key `untrusted`, in a fence marked
+  `[UNTRUSTED_<nonce>]`. A sender cannot guess the nonce, so a forged
+  marker no longer matches.
+- Every other string in a result must match a closed grammar. A runtime
+  gate checks this on each result. A result that breaks a rule is
+  refused with the error class `output_refused`.
+- Error results start with the line `_fence: <nonce>`. Folder names no
+  longer appear in ids or in plain fields.
+- The one-click `unsubscribe` and the Gmail `delete_filter` ask the
+  human first.
+
+### Changed
+
+- The output shape of every tool changed. Sender text moved under
+  `untrusted`. A model that reads a result must read both zones.
+- The IMAP and Outlook message id is now
+  `<uidvalidity>-<uid>-<hex of the folder name>`. The old form
+  `<uidvalidity>.<uid>.<folder>` still works as input.
+- A folder shows as `folder_ref` (`=` and hex of the name) plus the
+  name under `untrusted.folder`. Input fields that take a folder accept
+  a name or a `folder_ref`.
+- Some byte budgets are larger, because the new form is longer.
+
 ## [0.2.0-alpha.1] - 2026-11-17
 
 This is a pre-release for tests. `go install ...@latest` and the

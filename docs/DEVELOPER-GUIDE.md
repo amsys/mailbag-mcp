@@ -147,8 +147,8 @@ owner (see `docs/README.md`), not in this repository.
   accepts a socket from systemd. It exits after 15 minutes with no
   client.
 - `internal/tools`: the MCP tools, the toolsets, the access levels and
-  the provider factory. Each tool puts the text that a sender controls
-  between untrusted-content fences.
+  the provider factory. Each tool result has two zones (see "Output
+  zones" below).
 - `internal/mail`: the provider contract and the types that all
   providers share, with the search query parser.
 - `internal/imap`: the IMAP and SMTP provider on go-imap, with the
@@ -162,13 +162,47 @@ owner (see `docs/README.md`), not in this repository.
   and turns HTML into text with the hidden-text check.
 - `internal/verify`: the signature result that `read` shows (DKIM,
   S/MIME, OpenPGP).
-- `internal/guard`: the fences, the redaction of secrets in logs, the
+- `internal/guard`: the `Fencer`, the strict grammars, the redaction of secrets in logs, the
   path checks for save and attach, and the SSRF guard for outgoing HTTP.
 - `internal/undo`: the undo journal for `modify` and `bulk`.
 - `internal/config`: loads and checks `accounts.toml`.
 - `internal/secrets`: the system keyring, with a file fallback.
 - `internal/cli`: the terminal commands (`account`, `oauth`, `tools`,
   `doctor`, `service`) and the systemd user units.
+
+## Output zones
+
+Every tool result has two zones (`arch: DU10.1`).
+
+- `Head` is the first embedded field of each Out struct. It holds the
+  per-response nonce under the JSON key `_fence`. `WrapReq` sets it.
+  A handler never writes it.
+- `guard.Fencer` makes the nonce (64 bits, 16 lowercase hex digits).
+  `WrapReq` puts one `Fencer` in the context. A handler takes it with
+  `fencer(ctx)`. A helper with no context takes it as a parameter.
+  `Fencer.Wrap` puts a sender string in one fence marked with the nonce,
+  and `Fencer.Holds` tests that a string is one such fence.
+- Each string that a sender controls goes under the `untrusted` key,
+  inside a fence.
+- Each other string has a `strict` tag and must match a closed grammar
+  in `guard.Strict`. The `note` field must match the note registry.
+- A folder name is outside the strict zone as a name. The result shows
+  `folder_ref` (`=` and the hex of the name bytes) and the name in
+  `untrusted.folder`. An input field that takes a folder accepts a
+  name or a `folder_ref`.
+- An IMAP or Outlook id is `<uidvalidity>-<uid>-<hex of the folder
+  name>`. The old form with dots stays valid on input.
+- `checkOut` in `internal/tools/outgate.go` is the output gate. `WrapReq`
+  runs it on each success result. A result that breaks a rule becomes an
+  `output_refused` error with the JSON path of the field.
+- Static tests walk the Out type of each tool. A string field with no
+  `strict` tag and no place under `untrusted` fails. A top-level key must
+  sort after `_fence`, because the SDK sorts keys. No Out type embeds a
+  struct with a JSON tag.
+- A test that calls a handler direct uses `withFencer(ctx, testFencer(t))`.
+
+To add a tool field: give it a `strict` tag, or put it under
+`untrusted` and wrap it with the `Fencer`. Run the gate tests.
 
 ## Traps
 

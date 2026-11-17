@@ -46,21 +46,39 @@ type TemplatesIn struct {
 
 // TemplateRow is one template of a list result.
 //
-// arch: DS9.6
+// Zones (DU5.6): Name (kind alias) and Size are outside. The subject
+// is in Untrusted, because it was tool input once.
+//
+// arch: DS9.6, DU5.1, DU5.6
 type TemplateRow struct {
-	Name    string `json:"name"`
-	Subject string `json:"subject"` // fenced: it was tool input once
-	Size    int    `json:"size"`
+	Name      string            `json:"name" strict:"alias"`
+	Size      int               `json:"size"`
+	Untrusted TemplateUntrusted `json:"untrusted"`
+}
+
+// TemplateUntrusted is the untrusted zone of a [TemplateRow]. Subject
+// is one fence of the nonce of the response.
+//
+// arch: DU5.1, DU5.6
+type TemplateUntrusted struct {
+	Subject string `json:"subject,omitempty"`
 }
 
 // TemplatesOut is the result of the templates tool. Templates is set
 // by list, DraftID by draft. Note is text this server wrote.
+// Untrusted carries the detail of the draft tool, already one fence
+// of this response.
 //
-// arch: DS9.6
+// Zones (DU5.6): Head, Templates (rows as above), DraftID and Note
+// are outside; Untrusted is the only untrusted part.
+//
+// arch: DS9.6, DU5.1, DU5.6
 type TemplatesOut struct {
+	Head
 	Templates []TemplateRow `json:"templates,omitempty"`
-	DraftID   string        `json:"draft_id,omitempty"`
-	Note      string        `json:"note,omitempty"`
+	DraftID   string        `json:"draft_id,omitempty" strict:"id"`
+	Note      string        `json:"note,omitempty" strict:"note"`
+	Untrusted *Detail       `json:"untrusted,omitempty"`
 }
 
 // templateMaxBytes is the largest template file, line 1 included.
@@ -126,7 +144,7 @@ func (t *templatesTool) handle(ctx context.Context, in TemplatesIn) (TemplatesOu
 		return TemplatesOut{}, err
 	}
 	if in.Action == "list" {
-		return listTemplates(dir)
+		return listTemplates(fencer(ctx), dir)
 	}
 	if !config.ValidAlias(in.Name) {
 		return TemplatesOut{}, fmt.Errorf("templates: action %q needs a name of letters, digits, '-' and '_' only", in.Action)
@@ -166,7 +184,7 @@ func errTemplateSize(name string) error {
 // template was saved yet.
 //
 // arch: DS9.6, IS9.5
-func listTemplates(dir string) (TemplatesOut, error) {
+func listTemplates(f guard.Fencer, dir string) (TemplatesOut, error) {
 	root, err := os.OpenRoot(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return TemplatesOut{}, nil
@@ -207,9 +225,9 @@ func listTemplates(dir string) (TemplatesOut, error) {
 			continue
 		}
 		out.Templates = append(out.Templates, TemplateRow{
-			Name:    name,
-			Subject: guard.Fence("TEMPLATE", subject),
-			Size:    size,
+			Name:      name,
+			Size:      size,
+			Untrusted: TemplateUntrusted{Subject: f.Wrap(subject)},
 		})
 	}
 	if total > templatesListMax {
@@ -294,10 +312,13 @@ func readTemplate(dir, name string) ([]byte, error) {
 // in the directory, gets mode 0600 and is renamed onto <name>.md. A
 // rename replaces a template of the same name, and it replaces a
 // planted link; it never writes through one (IS9.5). The directory
-// is made with mode 0700 when it does not exist.
+// is made with mode 0700 when it does not exist. Subject and body
+// pass guard.StripFenceMarkers first, so a marker from mail text
+// never reaches the file (DU8.1).
 //
-// arch: DS9.6, IS9.5
+// arch: DS9.6, IS9.5, DU8.1
 func saveTemplate(dir, name, subject, body string) error {
+	subject, body = guard.StripFenceMarkers(subject), guard.StripFenceMarkers(body)
 	if strings.ContainsAny(subject, "\r\n") {
 		return errors.New("templates: subject must be one line")
 	}
@@ -403,7 +424,7 @@ func (t *templatesTool) draft(ctx context.Context, dir string, in TemplatesIn) (
 	if err != nil {
 		return TemplatesOut{}, err
 	}
-	return TemplatesOut{DraftID: out.DraftID, Note: out.Note}, nil
+	return TemplatesOut{DraftID: out.DraftID, Note: out.Note, Untrusted: out.Untrusted}, nil
 }
 
 // parseTemplate splits a template file into its subject (line 1) and

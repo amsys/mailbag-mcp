@@ -1849,14 +1849,16 @@ func TestServer_RemoteImageDraftCannotLeave(t *testing.T) {
 	}
 	var readOut struct {
 		Messages []struct {
-			Body string `json:"body"`
+			Untrusted struct {
+				Body string `json:"body"`
+			} `json:"untrusted"`
 		} `json:"messages"`
 	}
 	decodeStructured(t, &readRes, &readOut)
 	if len(readOut.Messages) != 1 {
 		t.Fatalf("read of the draft gave %d messages, want 1: %s", len(readOut.Messages), resultText(&readRes))
 	}
-	stored := readOut.Messages[0].Body
+	stored := readOut.Messages[0].Untrusted.Body
 	if !strings.Contains(stored, "<p>See you at lunch.</p>") {
 		t.Fatalf("read of the draft holds no HTML part:\n%s", stored)
 	}
@@ -3164,8 +3166,8 @@ func TestServer_ReadPathHardening(t *testing.T) {
 		t.Fatalf("read gave no message: %s", resultText(&readRes))
 	}
 	msg := readOut.Messages[0]
-	if strings.Contains(msg.Body, t112HiddenWord) {
-		t.Errorf("the hidden HTML run reached the read result (D4.1 item 2): %q", msg.Body)
+	if strings.Contains(msg.Untrusted.Body, t112HiddenWord) {
+		t.Errorf("the hidden HTML run reached the read result (D4.1 item 2): %q", msg.Untrusted.Body)
 	}
 	if msg.Hidden < 1 {
 		t.Errorf("hidden_removed = %d, want at least the one hidden run counted (D4.2)", msg.Hidden)
@@ -3173,8 +3175,8 @@ func TestServer_ReadPathHardening(t *testing.T) {
 	if !msg.PartsDiffer {
 		t.Error("parts_differ = false; the plain part and the HTML part of the fixture differ (D4.2)")
 	}
-	if !strings.Contains(msg.Body, "html body text") {
-		t.Errorf("Body does not hold the HTML part's text; want the HTML text when the parts differ (D4.2): %q", msg.Body)
+	if !strings.Contains(msg.Untrusted.Body, "html body text") {
+		t.Errorf("Body does not hold the HTML part's text; want the HTML text when the parts differ (D4.2): %q", msg.Untrusted.Body)
 	}
 }
 
@@ -3423,11 +3425,11 @@ func TestServer_ReadCarriesSignature(t *testing.T) {
 	} else if s.Verdict != "partial" || !s.Unsigned {
 		t.Errorf("signature = %+v, want partial with unsigned_parts_present (I17)", *s)
 	}
-	if strings.Contains(msg.Body, "T86-UNSIGNED-TAIL") {
-		t.Errorf("the body shows text outside the signed entity (D6.2): %q", msg.Body)
+	if strings.Contains(msg.Untrusted.Body, "T86-UNSIGNED-TAIL") {
+		t.Errorf("the body shows text outside the signed entity (D6.2): %q", msg.Untrusted.Body)
 	}
-	if !strings.Contains(msg.Body, "t86 signed text") {
-		t.Errorf("the body does not show the signed entity: %q", msg.Body)
+	if !strings.Contains(msg.Untrusted.Body, "t86 signed text") {
+		t.Errorf("the body does not show the signed entity: %q", msg.Untrusted.Body)
 	}
 	checkSignatureWire(t, "t86-partial", wire)
 
@@ -3761,8 +3763,8 @@ func TestServer_ReadUnknownHintStillChecks(t *testing.T) {
 			t.Errorf("%s: read fetched the whole source %d times, want 1: an unknown hint must fetch and check", subject, fetches)
 		}
 		checkSignatureWire(t, subject, wire)
-		if !strings.Contains(m.Body, "t127 signed text") {
-			t.Errorf("%s: body = %q, want the signed text", subject, m.Body)
+		if !strings.Contains(m.Untrusted.Body, "t127 signed text") {
+			t.Errorf("%s: body = %q, want the signed text", subject, m.Untrusted.Body)
 		}
 	}
 }
@@ -4081,7 +4083,7 @@ func TestServer_ReadInlineMarkerPastOffset(t *testing.T) {
 	var got []string
 	for _, off := range []int{0, 400} {
 		m, wire := read("t114-inline", map[string]any{"offset": off})
-		if off > 0 && strings.Contains(m.Body, "BEGIN PGP SIGNED MESSAGE") {
+		if off > 0 && strings.Contains(m.Untrusted.Body, "BEGIN PGP SIGNED MESSAGE") {
 			t.Fatalf("offset %d still shows the marker; the test does not reach the case", off)
 		}
 		s := m.Signature
@@ -4174,11 +4176,11 @@ func TestServer_ReadBodyIsVerifiedEntity(t *testing.T) {
 			t.Errorf("%s: signature = %+v, want openpgp partial pinned %s, signer_matches_from, unsigned_parts_present", subject, *s, wantFP)
 		}
 		checkSignatureWire(t, subject, wire)
-		if strings.Contains(m.Body, "T115-ATTACKER") {
-			t.Errorf("%s: the body shows attacker text next to the verdict of another entity (D6.2, I17): %q", subject, m.Body)
+		if strings.Contains(m.Untrusted.Body, "T115-ATTACKER") {
+			t.Errorf("%s: the body shows attacker text next to the verdict of another entity (D6.2, I17): %q", subject, m.Untrusted.Body)
 		}
-		if !strings.Contains(m.Body, "T115 REAL SIGNED TEXT") {
-			t.Errorf("%s: the body does not show the verified entity: %q", subject, m.Body)
+		if !strings.Contains(m.Untrusted.Body, "T115 REAL SIGNED TEXT") {
+			t.Errorf("%s: the body does not show the verified entity: %q", subject, m.Untrusted.Body)
 		}
 	}
 
@@ -4189,11 +4191,11 @@ func TestServer_ReadBodyIsVerifiedEntity(t *testing.T) {
 		t.Errorf("t115-smime-fake-first: signature = %+v, want smime with unsigned_parts_present", *s)
 	}
 	checkSignatureWire(t, "t115-smime-fake-first", wire)
-	if strings.Contains(m.Body, "T115-ATTACKER") {
-		t.Errorf("t115-smime-fake-first: the body shows attacker text next to the verdict of another entity: %q", m.Body)
+	if strings.Contains(m.Untrusted.Body, "T115-ATTACKER") {
+		t.Errorf("t115-smime-fake-first: the body shows attacker text next to the verdict of another entity: %q", m.Untrusted.Body)
 	}
-	if !strings.Contains(m.Body, "T115 SMIME SIGNED TEXT") {
-		t.Errorf("t115-smime-fake-first: the body does not show the S/MIME signed entity: %q", m.Body)
+	if !strings.Contains(m.Untrusted.Body, "T115 SMIME SIGNED TEXT") {
+		t.Errorf("t115-smime-fake-first: the body does not show the S/MIME signed entity: %q", m.Untrusted.Body)
 	}
 }
 

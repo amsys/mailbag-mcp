@@ -19,13 +19,19 @@ import (
 // sender text. Check passes each result through clean before it returns
 // it, so a checker that puts sender text in a field loses that field.
 //
-// arch: D6.1, I11
+// A tool result shows the block outside its untrusted zone, so each
+// string field carries a `strict` tag that names its grammar in
+// internal/guard: Type, Verdict and Trust are words, and Fingerprint
+// is hex of MinFingerprintHex to MaxFingerprintHex digits. The output
+// gate of internal/tools checks each value against its tag.
+//
+// arch: D6.1, I11, DU5.3, DU3.1
 type Signature struct {
-	Type              string `json:"type"`                  // one of the Type* words
-	Verdict           string `json:"verdict"`               // one of the Verdict* words
-	Fingerprint       string `json:"fingerprint,omitempty"` // lowercase hex only
+	Type              string `json:"type" strict:"word"`                 // one of the Type* words
+	Verdict           string `json:"verdict" strict:"word"`              // one of the Verdict* words
+	Fingerprint       string `json:"fingerprint,omitempty" strict:"hex"` // lowercase hex only
 	SignerMatchesFrom bool   `json:"signer_matches_from"`
-	Trust             string `json:"trust,omitempty"` // one of the Trust* words
+	Trust             string `json:"trust,omitempty" strict:"word"` // one of the Trust* words
 	Unsigned          bool   `json:"unsigned_parts_present,omitempty"`
 	Weak              bool   `json:"weak_algorithm,omitempty"`
 }
@@ -75,8 +81,14 @@ var (
 )
 
 // MaxFingerprintHex is the longest fingerprint that clean keeps: 128
-// hex characters, the size of a SHA-512 digest.
-const MaxFingerprintHex = 128
+// hex characters, the size of a SHA-512 digest. MinFingerprintHex is
+// the shortest: 8 hex characters. A real key id or fingerprint has 16
+// or more. The two bounds are the bounds of the strict kind hex
+// (DU3.1).
+const (
+	MaxFingerprintHex = 128
+	MinFingerprintHex = 8
+)
 
 // The D6.2 limits. A breach of one gives VerdictUnsupported, never
 // VerdictInvalid, because the server did not check the signature
@@ -173,7 +185,8 @@ func TypeHint(raw []byte) string {
 // clean enforces I11 on s. A Type that is not a known word drops the
 // result. A Verdict that is not a known word becomes unsupported. A
 // Fingerprint that is not hex, or a Trust that is not a known word,
-// becomes empty. The result can only hold enum words, hex and booleans.
+// becomes empty; so does a Fingerprint of fewer than MinFingerprintHex
+// digits. The result can only hold enum words, hex and booleans.
 func clean(s *Signature) *Signature {
 	if s == nil || !oneOf(s.Type, Types) {
 		return nil
@@ -201,10 +214,10 @@ func oneOf(v string, set []string) bool {
 	return false
 }
 
-// isHex is true for a lowercase hex string of at most
+// isHex is true for a lowercase hex string of MinFingerprintHex to
 // MaxFingerprintHex characters. An empty string is not hex.
 func isHex(v string) bool {
-	if v == "" || len(v) > MaxFingerprintHex {
+	if len(v) < MinFingerprintHex || len(v) > MaxFingerprintHex {
 		return false
 	}
 	for i := 0; i < len(v); i++ {

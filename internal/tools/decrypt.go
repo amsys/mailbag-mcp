@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The decrypt tool: one OpenPGP message through gpg. The result has
+// two zones like a read result (DU5.3): the decrypted text and the
+// attachment names are under untrusted.
+
 package tools
 
 import (
@@ -22,6 +26,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amsys/mailbag-mcp/internal/guard"
 	"github.com/amsys/mailbag-mcp/internal/mail"
 	"github.com/amsys/mailbag-mcp/internal/verify"
 )
@@ -32,17 +37,22 @@ type DecryptIn struct {
 	ID      string `json:"id" jsonschema:"from search"`
 }
 
-// DecryptOut is the decrypt tool result (D7.2).
+// DecryptOut is the decrypt tool result (D7.2, DU5.3). Head gives the
+// nonce first.
 //
-// Account and ID are the values of the call. Body holds the decrypted
-// text inside a BODY fence, because decrypted text is sender text
-// (G3). Truncated is true when the text stopped at the DRV.15 100k
+// Account is the alias of the call. ID is the id of the call after
+// normalizeID for the provider kind; an id that does not pass is not
+// written (DU3.2). Untrusted.Body holds the decrypted text in one
+// fence of the nonce, because decrypted text is sender text (G3,
+// DU5.1). Truncated is true when the text stopped at the DRV.15 100k
 // character cut; NextOffset then says where, the same field names
 // [ReadOut] uses for the same cut. Signature is the result of the
 // signature check on the decrypted entity; each field of it is server
-// text (I11). Hidden counts the hidden text that the sanitizer took
-// out of Body and of each Attachments[].File (D4.1). Note carries the
-// note that decryptTool.signature's call to readTool.signature gives
+// text with a strict tag (I11, DU5.3). Hidden counts the hidden text
+// that the sanitizer took out of the body and of each attachment name
+// and type (D4.1). Note is text of the note registry (DU3.5). It
+// carries the note that decryptTool.signature's call to
+// readTool.signature gives
 // for the signature check on the decrypted entity. In practice that
 // is always checkNotFinishedNote or the empty string: decrypt already
 // holds the plain bytes, so the fetch that notCheckedNote reports as
@@ -51,38 +61,45 @@ type DecryptIn struct {
 // reports; the field keeps the same note names read uses for the same
 // underlying check, in case a future change opens either of those two
 // branches. Note also carries, when the decrypted entity has no text
-// part to show, the fixed text noTextPartNote; the two join with a
-// line break when both apply (DR1G.9). Attachments is the walk's list
+// part to show, the fixed text noTextPartNote; the two join with
+// noteSep when both apply (DR1G.9, DU12.1 item 3). Attachments is the walk's list
 // of the parts it skipped as attachments; decrypt gives no attachment
 // content (D7.2).
 //
-// arch: DR1G.9
+// arch: DR1G.9, DU5.3
 type DecryptOut struct {
-	Account     string            `json:"account"`
-	ID          string            `json:"id"`
-	Body        string            `json:"body"`
+	Head
+	Account     string            `json:"account" strict:"alias"`
+	ID          string            `json:"id,omitempty" strict:"id"`
 	Truncated   bool              `json:"truncated,omitempty"`
 	NextOffset  int               `json:"next_offset,omitempty"`
 	Signature   *verify.Signature `json:"signature,omitempty"`
 	Hidden      int               `json:"hidden_removed,omitempty"`
-	Note        string            `json:"note,omitempty"`
+	Note        string            `json:"note,omitempty" strict:"note"`
 	Attachments []DecryptedFile   `json:"attachments,omitempty"`
+	// Untrusted holds the decrypted text (DU5.1).
+	Untrusted DecryptUntrusted `json:"untrusted"`
+}
+
+// DecryptUntrusted is the untrusted zone of a decrypt result. Body is
+// one fence of the nonce of the response; it is absent when the
+// decrypted entity has no text part to show.
+type DecryptUntrusted struct {
+	Body string `json:"body,omitempty"`
 }
 
 // DecryptedFile is one part of the decrypted entity that textParts.walk
 // (internal/tools/read.go) skipped as an attachment (DR1G.9, IR1G.6).
-// File is the sender's own file name, fenced the way read fences its
-// attachment names (§3.15, G3, IR1G.14). Type is the sanitized media
-// type stdmime.ParseMediaType gave the walk, a token that cannot carry
-// a fence marker or a hidden character, so it needs no fence. decrypt
-// gives no attachment content: Size is the decoded byte count, never
-// the bytes themselves (D7.2).
+// The sender's own file name and the media type are under Untrusted,
+// each in one fence, the way read gives its attachment rows (§3.15,
+// G3, IR1G.14, DU5.3). decrypt gives no attachment content: Size is
+// the decoded byte count, never the bytes themselves (D7.2).
 //
-// arch: DR1G.9, D7.2, IR1G.14
+// arch: DR1G.9, D7.2, IR1G.14, DU5.3
 type DecryptedFile struct {
-	File string `json:"file"`
-	Size int    `json:"size"`
-	Type string `json:"type"`
+	Size int `json:"size"`
+	// Untrusted holds the fenced file name and media type (DU5.1).
+	Untrusted FileUntrusted `json:"untrusted"`
 }
 
 // noTextPartNote is the fixed text decrypt gives when the decrypted
@@ -122,13 +139,15 @@ const maxStatus = 64 << 10
 const errSMIMEDecryptOff = "unsupported: S/MIME encryption has no integrity check, so decrypt does not open it"
 
 // The fixed errors of the decrypt tool. None of them holds gpg output,
-// sender text or decrypted text (I18, EFAIL).
+// sender text or decrypted text (I18, EFAIL). Each is server text with
+// a class word (DU6.2).
 var (
-	errDecryptFailed      = errors.New("decryption failed: no verified integrity check, so no text is shown")
-	errDecryptTimeout     = errors.New("decryption stopped at the 60 second limit; no text is shown")
-	errNotEncrypted       = errors.New("this message is not PGP/MIME or S/MIME encrypted; decrypt cannot open it")
-	errDecryptTooLarge    = errors.New("this message is too large to decrypt")
-	errDecryptUnsupported = errors.New("unsupported: gpg is not on PATH on this machine")
+	errDecryptFailed       = public("refused", "decryption failed: no verified integrity check, so no text is shown")
+	errDecryptTimeout      = public("timeout", "decryption stopped at the 60 second limit; no text is shown")
+	errNotEncrypted        = public("invalid_input", "this message is not PGP/MIME or S/MIME encrypted; decrypt cannot open it")
+	errDecryptTooLarge     = public("limit", "this message is too large to decrypt")
+	errDecryptUnsupported  = public("unavailable", "unsupported: gpg is not on PATH on this machine")
+	errSMIMEDecryptRefused = public("refused", errSMIMEDecryptOff)
 )
 
 // AddDecrypt adds the "decrypt" tool to srv (D7.2). The "decrypt"
@@ -172,17 +191,20 @@ type decryptTool struct {
 // The text reaches the result only when the status of the run has
 // DECRYPTION_OKAY and GOODMDC. Every other state gives a fixed error
 // and no text (EFAIL). The decrypted text goes through the read-side
-// sanitizer (D4.1) and into a BODY fence. It never goes to the log:
-// [Wrap] logs an error class only, and every error here is fixed text.
+// sanitizer (D4.1) and into one fence of the nonce. It never goes to
+// the log: [Wrap] logs an error class only, and every error here is
+// fixed text. The handler takes the Fencer of the call once, at its
+// top (DU2.2).
 //
-// arch: D7.2, D7.3, D10.3, D4.1, I10, I18, EFAIL
+// arch: D7.2, D7.3, D10.3, D4.1, I10, I18, EFAIL, DU2.2, DU5.3
 func (t *decryptTool) handle(ctx context.Context, in DecryptIn) (DecryptOut, error) {
-	p, _, err := t.mail.Open(ctx, in.Account)
+	f := fencer(ctx)
+	p, acct, err := t.mail.Open(ctx, in.Account)
 	if err != nil {
 		return DecryptOut{}, err
 	}
 	if in.ID == "" {
-		return DecryptOut{}, errors.New("id is required; take it from a search result")
+		return DecryptOut{}, public("invalid_input", "id is required; take it from a search result")
 	}
 	raw, err := p.Raw(ctx, in.ID)
 	if err != nil {
@@ -214,7 +236,7 @@ func (t *decryptTool) handle(ctx context.Context, in DecryptIn) (DecryptOut, err
 		// is not lost.
 		sig = statusSignature(status)
 	}
-	text, removed, attachments, attachmentsHidden, hasText := decryptedText(plain, sig)
+	text, removed, attachments, attachmentsHidden, hasText := decryptedText(f, plain, sig)
 	runes := []rune(text)
 	truncated := len(runes) > readCeilingMaxChars
 	var nextOffset int
@@ -227,20 +249,21 @@ func (t *decryptTool) handle(ctx context.Context, in DecryptIn) (DecryptOut, err
 	var hidden int
 	note := sigNote
 	if hasText {
-		body, hidden = fencedCount("BODY", cutRunes(text, 0, readCeilingMaxChars))
+		body, hidden = wrapCount(f, cutRunes(text, 0, readCeilingMaxChars))
 	} else {
-		note = addNote(note, noTextPartNote)
+		note = joinNote(note, noTextPartNote)
 	}
+	id, _ := normalizeID(acct.Provider, in.ID)
 	return DecryptOut{
 		Account:     in.Account,
-		ID:          in.ID,
-		Body:        body,
+		ID:          id,
 		Truncated:   truncated,
 		NextOffset:  nextOffset,
 		Signature:   sig,
 		Hidden:      removed + hidden + attachmentsHidden,
 		Note:        note,
 		Attachments: attachments,
+		Untrusted:   DecryptUntrusted{Body: body},
 	}, nil
 }
 
@@ -255,13 +278,14 @@ func (t *decryptTool) handle(ctx context.Context, in DecryptIn) (DecryptOut, err
 // never sits next to the verdict. Every other case keeps the
 // whole-entity walk of plainText, the part rule of an unsigned
 // message. The attachment list comes from that same walk either way,
-// whether or not it also found text (IR1G.6).
+// whether or not it also found text (IR1G.6). f fences the attachment
+// rows (DU2.2).
 //
-// arch: DRV.15, DRV.3, IRV.2, DR1G.9, IR1G.6
-func decryptedText(plain []byte, sig *verify.Signature) (text string, removed int, attachments []DecryptedFile, attachmentsHidden int, hasText bool) {
+// arch: DRV.15, DRV.3, IRV.2, DR1G.9, IR1G.6, DU2.2
+func decryptedText(f guard.Fencer, plain []byte, sig *verify.Signature) (text string, removed int, attachments []DecryptedFile, attachmentsHidden int, hasText bool) {
 	if ent, entOK, show := bodyEntity(plain, sig); show {
 		if entOK {
-			text, removed, _, hasText, attachments, attachmentsHidden = signedText(ent, "text")
+			text, removed, _, hasText, attachments, attachmentsHidden = signedText(f, ent, "text")
 			if !hasText {
 				text, removed = "", 0
 			}
@@ -269,7 +293,7 @@ func decryptedText(plain []byte, sig *verify.Signature) (text string, removed in
 		}
 		return "", 0, nil, 0, false
 	}
-	return plainText(plain)
+	return plainText(f, plain)
 }
 
 // signature checks a signature inside the decrypted entity with the
@@ -324,7 +348,7 @@ func encryptedPart(raw []byte) (cipher []byte, from string, err error) {
 	}
 	if mail.SMIMEKindOf(mt, params) == mail.SMIMEEnveloped {
 		// DR1G.18.1: the one predicate decides the S/MIME kind.
-		return nil, "", errors.New(errSMIMEDecryptOff)
+		return nil, "", errSMIMEDecryptRefused
 	}
 	switch mt {
 	case "multipart/encrypted":
@@ -385,15 +409,15 @@ func (d newlineDropper) Read(p []byte) (int, error) {
 // Content-Disposition: attachment is an attachment, the same as a
 // nested one (R16-L3). Output that is not a MIME entity (no
 // Content-Type at all) is plain text with no walk, so no attachment
-// list.
+// list. f fences the attachment rows (DU2.2).
 //
-// arch: DR1G.9, DRV.3, R16-L3
-func plainText(plain []byte) (text string, removed int, attachments []DecryptedFile, attachmentsHidden int, hasText bool) {
+// arch: DR1G.9, DRV.3, R16-L3, DU2.2
+func plainText(f guard.Fencer, plain []byte) (text string, removed int, attachments []DecryptedFile, attachmentsHidden int, hasText bool) {
 	part, err := netmail.ReadMessage(bytes.NewReader(plain))
 	if err != nil || part.Header.Get("Content-Type") == "" {
 		return string(plain), 0, nil, 0, true
 	}
-	text, removed, _, hasText, attachments, attachmentsHidden = entityBody(textproto.MIMEHeader(part.Header), part.Body, "text")
+	text, removed, _, hasText, attachments, attachmentsHidden = entityBody(f, textproto.MIMEHeader(part.Header), part.Body, "text")
 	return text, removed, attachments, attachmentsHidden, hasText
 }
 
@@ -602,16 +626,17 @@ func statusSignature(status []byte) *verify.Signature {
 	return s
 }
 
-// cleanFingerprint gives fpr as lowercase hex only, dropping it when
-// it holds any other byte. gpg writes fpr on its own status fd, but
-// this keeps the I11 rule of [verify.Signature] whatever gpg sends.
+// cleanFingerprint gives fpr in lowercase when it matches the strict
+// kind hex (8 to 128 hex digits), and "" in any other case. gpg writes
+// fpr on its own status fd, but this keeps the I11 rule of
+// [verify.Signature] whatever gpg sends, and the field outside the
+// untrusted zone always passes its grammar (DU3.1, DU5.3).
+//
+// arch: I11, DU3.1, DU5.3
 func cleanFingerprint(fpr string) string {
 	fpr = strings.ToLower(fpr)
-	for i := 0; i < len(fpr); i++ {
-		c := fpr[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return ""
-		}
+	if !guard.Strict("hex", fpr) {
+		return ""
 	}
 	return fpr
 }

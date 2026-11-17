@@ -3,7 +3,8 @@
 
 // The search tool: one account or all of them, newest first. Each row
 // has two zones (DU5.2). This file also holds the row helpers that
-// read shares: the flag words, the label fences and the error detail.
+// read shares: the flag words, the label fences, the date and the
+// error detail.
 
 package tools
 
@@ -342,8 +343,8 @@ func wrapIf(f guard.Fencer, s string) string {
 }
 
 // flagWords writes the flags of a row in the closed set of DU3.4. It
-// is the two-zone twin of flagText: it writes the words of the four
-// system flags only, and never a label or a keyword. Those go to
+// writes the words of the four system flags only, and never a label or
+// a keyword. Those go to
 // labelFences. An empty string means a read message with no other
 // flag.
 //
@@ -454,32 +455,6 @@ func addressText(a mail.Address) string {
 		return a.Address
 	}
 	return a.Name + " <" + a.Address + ">"
-}
-
-// flagText writes the flags a model acts on. An empty string means a
-// read message with no other flag. Each label word comes from the
-// server and is cleaned alone, so a turn prefix at the start of a word
-// is found.
-//
-// arch: DH2.5
-func flagText(f mail.Flags) string {
-	var parts []string
-	if !f.Seen {
-		parts = append(parts, "unread")
-	}
-	if f.Flagged {
-		parts = append(parts, "starred")
-	}
-	if f.Answered {
-		parts = append(parts, "answered")
-	}
-	if f.Draft {
-		parts = append(parts, "draft")
-	}
-	for _, l := range f.Labels {
-		parts = append(parts, guard.CleanServerName(l))
-	}
-	return strings.Join(parts, " ")
 }
 
 // sortRows puts the newest message first. Two messages with the same

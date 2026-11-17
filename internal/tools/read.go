@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Martin <dev@amsys.cz>
 // SPDX-License-Identifier: MIT
 
+// The read tool: one message, or its conversation. Each message has two
+// zones (DU5.3). This file also holds the walk of a MIME entity that
+// read and decrypt share, and its attachment rows.
+
 package tools
 
 import (
 	"bytes"
 	"context"
-	"errors"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,7 +20,6 @@ import (
 	"net/textproto"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -49,37 +52,43 @@ type ReadIn struct {
 	MarkRead bool   `json:"mark_read,omitempty"`
 }
 
-// AttachmentRow is one attachment of a read result.
+// AttachmentRow is one attachment of a read result (DU5.3).
 //
-// Ref and Size come from the server structure (BODYSTRUCTURE), so
-// they stay outside the fence. File holds the sender's file name and
-// the sender's media type, which §3.15 lists as sender-controlled, so
-// it is fenced (G3).
+// Ref and Size come from the server structure (BODYSTRUCTURE), so they
+// stay outside. Ref has the strict kind ref: a part id of digits and
+// dots as the provider gave it, or "=" and the hex of any other part
+// id (partRef). The file name and the media type are sender text
+// (§3.15), so they sit under Untrusted, each in its own fence.
 type AttachmentRow struct {
-	Ref  string `json:"ref"`
+	Ref  string `json:"ref,omitempty" strict:"ref"`
 	Size int64  `json:"size,omitempty"`
-	File string `json:"file"`
+	// Untrusted holds the fenced file name and media type (DU5.1).
+	Untrusted FileUntrusted `json:"untrusted"`
 }
 
-// ReadMessage is one message of a read result (§3.16).
+// FileUntrusted is the untrusted zone of one attachment: the file name
+// and the media type that the sender wrote. Each field is one fence of
+// the nonce of the response.
+type FileUntrusted struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+}
+
+// ReadMessage is one message of a read result (§3.16, DU5.3).
 //
-// Date is the server time (INTERNALDATE), never a Date header a
-// sender wrote, so it is the one date outside the fence (E12). Every
-// sender-controlled field of this message sits in Headers, Body or
-// AttachmentRow.File, each of them fenced (G3, §3.15).
+// The outside zone holds only strings that this server writes in a
+// closed grammar: the id (normalizeID), the folder ref, the server
+// time and the flag words. Date is the server time (INTERNALDATE),
+// never a Date header that a sender wrote (E12). Every string that a
+// sender, a person or a mail server chose sits under Untrusted.
 type ReadMessage struct {
-	ID     string `json:"id"`
-	Folder string `json:"folder"`
-	Date   string `json:"date"`
-	Flags  string `json:"flags,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	// Headers holds from, to, cc, reply-to and subject inside one
-	// fence. In a thread row of a message that the caller did not
-	// name, it also holds the preview of the thread search.
-	Headers string `json:"headers"`
-	// Body holds the decoded text of the message inside its own
-	// fence.
-	Body        string          `json:"body"`
+	ID        string `json:"id,omitempty" strict:"id"`
+	FolderRef string `json:"folder_ref,omitempty" strict:"folder"`
+	Date      string `json:"date,omitempty" strict:"date"`
+	Flags     string `json:"flags,omitempty" strict:"flags"`
+	Size      int64  `json:"size,omitempty"`
+	// Untrusted holds the fenced fields of the message (DU5.1).
+	Untrusted   ReadUntrusted   `json:"untrusted"`
 	Attachments []AttachmentRow `json:"attachments,omitempty"`
 	// Truncated is true when the body stopped at max_chars. Call
 	// read again with offset = next_offset for the rest.
@@ -91,24 +100,51 @@ type ReadMessage struct {
 	// D4.2). The server counted them, so it stays outside.
 	Hidden int `json:"hidden_removed,omitempty"`
 	// PartsDiffer is true when the text part and the HTML part differ
-	// and Body holds the text of the HTML part (D4.2). The server set
-	// it, so it stays outside.
+	// and the body holds the text of the HTML part (D4.2). The server
+	// set it, so it stays outside.
 	PartsDiffer bool `json:"parts_differ,omitempty"`
-	// Signature is the result of the signature check (D6.1). The
-	// server computed each field of it: enum words, hex and booleans
-	// only, never sender text (I11). So it stays outside the fence.
-	// A message with no signature has no block.
+	// Signature is the result of the signature check (D6.1). Each
+	// string field of it has a strict tag: enum words and hex only,
+	// never sender text (I11, DU5.3). A message with no signature has
+	// no block.
 	Signature *verify.Signature `json:"signature,omitempty"`
 }
 
-// ReadOut is the read tool result (§3.16). Messages holds one entry,
-// or the conversation when thread is true, oldest first.
+// ReadUntrusted is the untrusted zone of one message (DU5.1, DU5.3).
+// Each string is one fence of the nonce of the response. To, Cc,
+// ReplyTo and Labels have one fence for each address or name, so a
+// name cannot make a second entry of the list.
+//
+// Preview is set only on a thread row of a message that the caller did
+// not name. Such a row has no body, and the thread search read its
+// preview. The row of the named message has its body and no preview,
+// so Preview is a pointer: nil writes no key.
+type ReadUntrusted struct {
+	From    string   `json:"from,omitempty"`
+	To      []string `json:"to,omitempty"`
+	Cc      []string `json:"cc,omitempty"`
+	ReplyTo []string `json:"reply_to,omitempty"`
+	Subject string   `json:"subject,omitempty"`
+	Preview *string  `json:"preview,omitempty"`
+	Body    string   `json:"body,omitempty"`
+	Folder  string   `json:"folder,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
+}
+
+// ReadOut is the read tool result (§3.16, DU5.3). Head gives the nonce
+// first. Messages holds one entry, or the conversation when thread is
+// true, oldest first.
 type ReadOut struct {
-	Account  string        `json:"account"`
+	Head
+	Account  string        `json:"account" strict:"alias"`
 	Messages []ReadMessage `json:"messages"`
-	// Note is text this server wrote, never sender text: what a
-	// partial answer left out, or why an option did nothing.
-	Note string `json:"note,omitempty"`
+	// Note is text of the note registry (DU3.5): what a partial answer
+	// left out, or why an option did nothing. A part that names a
+	// failure ends with its class word.
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the error text that a note part names, in one
+	// fence after guard.Redact (DU3.5, DU6.2).
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
 // AddRead adds the "read" tool to srv (§3.16): read level, one
@@ -142,8 +178,13 @@ type readTool struct {
 // the result can set truncated and next_offset without a second
 // fetch.
 //
-// arch: T4.5, §3.16, §3.15, App B, G3, E12, G10
+// The handler takes the Fencer of the call once, at its top (DU2.2).
+// Every note part is a text of the note registry; the error text that
+// a part names goes to Untrusted.Detail (DU3.5).
+//
+// arch: T4.5, §3.16, §3.15, App B, G3, E12, G10, DU2.2, DU5.3, DU6.2
 func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
+	f := fencer(ctx)
 	// mark_read is a write (it carries out the STORE of §3.10), so it
 	// opens the same write-capable provider the modify tool uses
 	// (internal/tools/modify.go) instead of a second path to the IMAP
@@ -174,10 +215,10 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		return ReadOut{}, err
 	}
 	if in.ID == "" {
-		return ReadOut{}, errors.New("id is required; take one from a search row")
+		return ReadOut{}, public("invalid_input", "id is required; take one from a search row")
 	}
 	if in.Offset < 0 {
-		return ReadOut{}, errors.New("offset must not be negative")
+		return ReadOut{}, public("invalid_input", "offset must not be negative")
 	}
 	limit := in.MaxChars
 	if limit <= 0 {
@@ -198,6 +239,9 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 	}
 
 	var note string
+	// details collects the error texts that a note part names. They
+	// go into one fence of Untrusted.Detail (DU3.5).
+	var details []string
 	if in.MarkRead && !m.Flags.Seen {
 		// Read always peeks (C2), so the flag never moves on its own;
 		// this call is the STORE that internal/imap/modify.go carries
@@ -210,7 +254,8 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		ch := mail.Change{Read: &seen}
 		applied, merr := writer.Modify(ctx, []string{in.ID}, ch)
 		if merr != nil {
-			note = addNote(note, "mark_read could not be applied: "+errNote(merr))
+			note = joinNote(note, "mark_read could not be applied: "+classOf(merr))
+			details = append(details, "mark_read: "+merr.Error())
 		} else {
 			m.Flags.Seen = true
 		}
@@ -221,10 +266,10 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 
 	sig, raw, sigNote := t.signature(ctx, reader, m)
 	if sigNote != "" {
-		note = addNote(note, sigNote)
+		note = joinNote(note, sigNote)
 	}
 	if encrypted(m) {
-		note = addNote(note, encryptedNote)
+		note = joinNote(note, encryptedNote)
 	}
 	// sigNote is empty only when verify.Check finished. A check that
 	// did not finish gives an unsupported verdict over no verified
@@ -250,9 +295,9 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		var differ, ok bool
 		if entOK {
 			// read's own attachment list comes from the provider
-			// structure (toReadMessage), not from this walk, so the
+			// structure (readRow), not from this walk, so the
 			// DR1G.9 attachment return values are not read here.
-			text, removed, differ, ok, _, _ = signedText(ent, in.Format)
+			text, removed, differ, ok, _, _ = signedText(f, ent, in.Format)
 		}
 		if !ok {
 			text, removed, differ = "", 0, false
@@ -261,11 +306,11 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 				// The signed content is itself encrypted, for
 				// example an opaque signed-data whose content is
 				// enveloped-data: the D7.3 note, not text (DR1G.3).
-				note = addNote(note, encryptedNote)
+				note = joinNote(note, encryptedNote)
 			case sig.Unsigned:
-				note = addNote(note, "the body is empty: content sits outside the signature and the signed part has no text that this server can show")
+				note = joinNote(note, "the body is empty: content sits outside the signature and the signed part has no text that this server can show")
 			default:
-				note = addNote(note, "the body is empty: the signed part has no text that this server can show")
+				note = joinNote(note, "the body is empty: the signed part has no text that this server can show")
 			}
 		}
 		m.Body = cutRunes(text, in.Offset, limit+1)
@@ -273,7 +318,7 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		m.PartsDiffer = differ
 	}
 
-	full := toReadMessage(*m, limit, in.Offset)
+	full := readRow(f, acct.Provider, *m, false, limit, in.Offset)
 	full.Signature = sig
 	out := ReadOut{Account: in.Account, Messages: []ReadMessage{full}, Note: note}
 
@@ -281,8 +326,12 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		tr, terr := reader.Thread(ctx, in.ID)
 		if terr != nil {
 			// The message itself was read. A conversation that
-			// failed is a note, not a failed call (§3.10).
-			out.Note = addNote(out.Note, "the conversation could not be read: "+errNote(terr))
+			// failed is a note, not a failed call (§3.10). The note
+			// gives the class word; the error text goes to the
+			// detail (DU3.5).
+			out.Note = joinNote(out.Note, "the conversation could not be read: "+classOf(terr))
+			details = append(details, "conversation: "+terr.Error())
+			out.Untrusted = noteDetail(f, details)
 			return out, nil
 		}
 		list := tr.Messages
@@ -293,19 +342,20 @@ func (t *readTool) handle(ctx context.Context, in ReadIn) (ReadOut, error) {
 		// a thread of that size gets a best-effort note either way
 		// (DRV.16d).
 		if len(list) >= threadCutAt {
-			out.Note = addNote(out.Note, "the conversation may be longer than "+strconv.Itoa(threadCutAt)+" messages; only the newest "+strconv.Itoa(threadCutAt)+" are shown")
+			out.Note = joinNote(out.Note, "the conversation may be longer than "+strconv.Itoa(threadCutAt)+" messages; only the newest "+strconv.Itoa(threadCutAt)+" are shown")
 		}
 		// A folder the search could not read, or a preview it could
 		// not fetch, is a count only: no folder name, no sender text
 		// (DR1G.4, DR1G.5, DR1G.18.3, I14).
 		if tr.Skipped > 0 {
-			out.Note = addNote(out.Note, skippedFoldersNote(tr.Skipped))
+			out.Note = joinNote(out.Note, skippedFoldersNote(tr.Skipped))
 		}
 		if tr.PreviewsMissing > 0 {
-			out.Note = addNote(out.Note, missingPreviewsNote(tr.PreviewsMissing))
+			out.Note = joinNote(out.Note, missingPreviewsNote(tr.PreviewsMissing))
 		}
-		out.Messages = threadRows(list, full, in.ID, limit)
+		out.Messages = threadRows(f, acct.Provider, list, full, in.ID, limit)
 	}
+	out.Untrusted = noteDetail(f, details)
 	return out, nil
 }
 
@@ -330,26 +380,29 @@ func missingPreviewsNote(n int) string {
 // threadRows turns the conversation into result rows. The message the
 // caller named keeps the full body that Read decoded; the others come
 // from the thread search, which reads the headers and a preview only
-// (§3.10). The preview goes into the header fence as a "preview:"
-// line, as in a search row, so the note on missing previews names
-// data that the result holds (DR1G.18.3, R16-M7).
-func threadRows(list []*mail.Message, full ReadMessage, id string, limit int) []ReadMessage {
+// (§3.10). The preview of such a row goes to Untrusted.Preview, as in
+// a search row, so the note on missing previews names data that the
+// result holds (DR1G.18.3, R16-M7).
+//
+// The named message is found by its id. The caller can give the old
+// IMAP id form and the provider the new one (DU3.2), so two ids that
+// normalizeID gives the same value for are the same message.
+//
+// arch: §3.16, DR1G.18, DU3.2, DU5.3
+func threadRows(f guard.Fencer, kind string, list []*mail.Message, full ReadMessage, id string, limit int) []ReadMessage {
+	want, wantOK := normalizeID(kind, id)
 	rows := make([]ReadMessage, 0, len(list)+1)
 	found := false
 	for _, m := range list {
 		if m == nil {
 			continue
 		}
-		if m.ID == id {
+		if got, ok := normalizeID(kind, m.ID); m.ID == id || (ok && wantOK && got == want) {
 			rows = append(rows, full)
 			found = true
 			continue
 		}
-		head := headerText(*m)
-		if m.Preview != "" {
-			head += "\npreview: " + m.Preview
-		}
-		rows = append(rows, readRow(*m, head, limit, 0))
+		rows = append(rows, readRow(f, kind, *m, true, limit, 0))
 	}
 	if !found {
 		rows = append(rows, full)
@@ -357,15 +410,26 @@ func threadRows(list []*mail.Message, full ReadMessage, id string, limit int) []
 	return rows
 }
 
-// toReadMessage builds one result row and fences every
-// sender-controlled field of it (§3.15, G3).
-func toReadMessage(m mail.Message, limit, offset int) ReadMessage {
-	return readRow(m, headerText(m), limit, offset)
-}
-
-// readRow builds one result row with head as the text of the header
-// fence. It fences every sender-controlled field (§3.15, G3).
-func readRow(m mail.Message, head string, limit, offset int) ReadMessage {
+// readRow builds one two-zone result row (DU5.3). The id passes
+// normalizeID for the provider kind; an id that does not pass is not
+// written (DU3.2). The folder is outside as a ref and inside as a name
+// (DU3.3). The flags are closed words, and each label is a fence
+// (DU3.4). preview is true for a thread row of a message that the
+// caller did not name: that row shows the preview of the thread
+// search.
+//
+// The body is cut to the page before the fence, so the close marker is
+// the one of this server (DU5.3). Hidden counts the hidden characters
+// of the address lines, the subject, the preview, the body and the
+// attachment names and types, plus the HTML runs that the provider
+// took out (§3.15, D4.1).
+//
+// The Date header is not in the row because [mail.Message] does not
+// carry it: the provider reads INTERNALDATE, which the server owns,
+// and that value is the Date field outside (E12).
+//
+// arch: §3.15, G3, E12, DU3.2, DU3.3, DU3.4, DU5.1, DU5.3
+func readRow(f guard.Fencer, kind string, m mail.Message, preview bool, limit, offset int) ReadMessage {
 	body := m.Body
 	truncated := false
 	next := 0
@@ -375,55 +439,108 @@ func readRow(m mail.Message, head string, limit, offset int) ReadMessage {
 		next = offset + limit
 	}
 
-	fencedHead, headHidden := fencedCount("EMAIL", head)
-	fencedBody, bodyHidden := fencedCount("BODY", body)
+	hidden := m.HiddenRemoved
+	wrap := func(s string) string {
+		w, n := wrapCount(f, s)
+		hidden += n
+		return w
+	}
+	wrapList := func(list []mail.Address) []string {
+		var out []string
+		for _, a := range list {
+			if w := wrap(addressText(a)); w != "" {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	u := ReadUntrusted{
+		From:    wrap(addressText(m.From)),
+		To:      wrapList(m.To),
+		Cc:      wrapList(m.Cc),
+		ReplyTo: wrapList(m.ReplyTo),
+		Subject: wrap(m.Subject),
+		Body:    wrap(body),
+		Folder:  wrapIf(f, m.Folder),
+		Labels:  labelFences(f, m.Flags.Labels),
+	}
+	if preview && m.Preview != "" {
+		p := wrap(m.Preview)
+		u.Preview = &p
+	}
 	row := ReadMessage{
-		ID:          m.ID,
-		Folder:      guard.CleanServerName(m.Folder),
-		Date:        m.Date.UTC().Format(time.RFC3339),
-		Flags:       flagText(m.Flags),
+		FolderRef:   folderRef(m.Folder),
+		Date:        dateText(m.Date),
+		Flags:       flagWords(m.Flags),
 		Size:        m.Size,
-		Headers:     fencedHead,
-		Body:        fencedBody,
+		Untrusted:   u,
 		Truncated:   truncated,
 		NextOffset:  next,
-		Hidden:      headHidden + bodyHidden + m.HiddenRemoved,
 		PartsDiffer: m.PartsDiffer,
 	}
-	for _, a := range m.Attachments {
-		file, hidden := fencedCount("ATTACHMENT", "name: "+a.Filename+"\ntype: "+a.ContentType)
-		row.Hidden += hidden
-		row.Attachments = append(row.Attachments, AttachmentRow{Ref: a.Ref, Size: a.Size, File: file})
+	if id, ok := normalizeID(kind, m.ID); ok {
+		row.ID = id
 	}
+	for _, a := range m.Attachments {
+		row.Attachments = append(row.Attachments, AttachmentRow{
+			Ref:       partRef(a.Ref),
+			Size:      a.Size,
+			Untrusted: FileUntrusted{Name: wrap(a.Filename), Type: wrap(a.ContentType)},
+		})
+	}
+	row.Hidden = hidden
 	return row
 }
 
-// headerText writes the sender-controlled header lines of one
-// message. Every line here goes inside a fence.
+// partRefMax is the longest part id, in bytes, that partRef writes as
+// it is. A longer id, or one with a byte other than a digit or a dot,
+// is written as "=" and hex.
+const partRefMax = 64
+
+// partRefMaxBytes is the longest part id, in bytes, that the hex form
+// of the strict kind ref can hold (DU3.1).
+const partRefMaxBytes = 256
+
+// partRef writes the part id ref in the strict kind ref (DU5.3). An id
+// of 1 to 64 digits and dots stays as it is: the IMAP section number
+// that the attachment tool takes. Any other id, for example a file
+// name that a provider gives when the part has no id, is "=" and the
+// lowercase hex of its bytes; [refArg] gives the id back. An empty id,
+// or one of more than 256 bytes, gives "", and the field is omitted.
 //
-// The Date header is not in this text because [mail.Message] does not
-// carry it: the provider reads INTERNALDATE, which the server owns,
-// and that value is the ReadMessage.Date field outside the fence
-// (E12). No sender-written date reaches the result at all.
-func headerText(m mail.Message) string {
-	var b strings.Builder
-	b.WriteString("from: ")
-	b.WriteString(addressText(m.From))
-	if len(m.To) > 0 {
-		b.WriteString("\nto: ")
-		b.WriteString(addressListText(m.To))
+// arch: DU5.3, DU3.1
+func partRef(ref string) string {
+	if ref == "" || len(ref) > partRefMaxBytes {
+		return ""
 	}
-	if len(m.Cc) > 0 {
-		b.WriteString("\ncc: ")
-		b.WriteString(addressListText(m.Cc))
+	if len(ref) <= partRefMax && strings.Trim(ref, "0123456789.") == "" {
+		return ref
 	}
-	if len(m.ReplyTo) > 0 {
-		b.WriteString("\nreply-to: ")
-		b.WriteString(addressListText(m.ReplyTo))
+	return folderRefPrefix + hex.EncodeToString([]byte(ref))
+}
+
+// errRefText is the error text of a ref that starts with "=" and is
+// not "=" and hex. It echoes no part of the value (INV-10).
+const errRefText = `a ref that starts with "=" must be "=" and 2 to 512 lowercase hex digits; take it from a read result`
+
+// refArg reads one part ref input value: the inverse of [partRef]. A
+// value that starts with "=" must be "=" and 2 to 512 lowercase hex
+// digits, and refArg gives the part id that the hex holds. Any other
+// value is a part id or a file name, and refArg gives it as it is.
+//
+// arch: DU5.3
+func refArg(s string) (string, error) {
+	if !strings.HasPrefix(s, folderRefPrefix) {
+		return s, nil
 	}
-	b.WriteString("\nsubject: ")
-	b.WriteString(m.Subject)
-	return b.String()
+	if !guard.Strict("ref", s) {
+		return "", public("invalid_input", errRefText)
+	}
+	b, err := hex.DecodeString(s[len(folderRefPrefix):])
+	if err != nil {
+		return "", public("invalid_input", errRefText)
+	}
+	return string(b), nil
 }
 
 // addressListText writes a list of addresses on one line.
@@ -435,15 +552,34 @@ func addressListText(list []mail.Address) string {
 	return strings.Join(parts, ", ")
 }
 
-// fencedCount fences body and also reports how many hidden characters
-// the fence took out, so the row can show that count outside the
-// fence (§3.15).
-func fencedCount(kind, body string) (string, int) {
-	_, hidden := guard.StripInvisible(body)
-	return guard.Fence(kind, body), hidden
+// wrapCount gives the fence of s, or "" for an empty s, and the count
+// of hidden characters that the fence took out, so the row can show
+// that count outside (§3.15, DU5.1).
+//
+// arch: §3.15, DU5.1
+func wrapCount(f guard.Fencer, s string) (string, int) {
+	if s == "" {
+		return "", 0
+	}
+	_, hidden := guard.StripInvisible(s)
+	return f.Wrap(s), hidden
 }
 
-// addNote joins two note lines.
+// noteDetail gives the untrusted detail of the error texts that the
+// note parts of a result name, in one fence after guard.Redact, or nil
+// when there is none (DU3.5, DU6.2).
+//
+// arch: DU3.5, DU6.2, DH2.5
+func noteDetail(f guard.Fencer, lines []string) *Detail {
+	if len(lines) == 0 {
+		return nil
+	}
+	return &Detail{Detail: f.Wrap(guard.Redact(strings.Join(lines, "\n")))}
+}
+
+// addNote joins two note lines. export and templates use it; read and
+// decrypt use joinNote (bulk.go), which joins with noteSep so the note
+// registry can check each part (DU12.1 item 3).
 func addNote(have, add string) string {
 	if have == "" {
 		return add
@@ -828,15 +964,16 @@ func envelopedEntity(ent []byte) bool {
 // part.
 //
 // The entity is the first part of the multipart/signed entity, so the
-// preamble and the epilogue never reach the result (I17).
+// preamble and the epilogue never reach the result (I17). f fences the
+// names and types of the attachment list (DU2.2).
 //
-// arch: D6.2, I17, DRV.3, IRV.2
-func signedText(ent []byte, format string) (text string, removed int, differ, ok bool, attachments []DecryptedFile, attachmentsHidden int) {
+// arch: D6.2, I17, DRV.3, IRV.2, DU2.2
+func signedText(f guard.Fencer, ent []byte, format string) (text string, removed int, differ, ok bool, attachments []DecryptedFile, attachmentsHidden int) {
 	part, err := netmail.ReadMessage(bytes.NewReader(ent))
 	if err != nil {
 		return "", 0, false, false, nil, 0
 	}
-	return entityBody(textproto.MIMEHeader(part.Header), part.Body, format)
+	return entityBody(f, textproto.MIMEHeader(part.Header), part.Body, format)
 }
 
 // entityBody gives the text of one entity with the part rule of an
@@ -848,12 +985,13 @@ func signedText(ent []byte, format string) (text string, removed int, differ, ok
 // no such part. attachments and attachmentsHidden are the walk's DR1G.9
 // list of skipped attachments and the hidden count fencing them took
 // out; they are filled whether or not a text part was found, since
-// the walk does not stop early for decrypt's sake (IR1G.6).
+// the walk does not stop early for decrypt's sake (IR1G.6). f fences
+// the names and types of that list (DU2.2).
 //
-// arch: DRV.3, D4.2, DR1G.9, IR1G.6
-func entityBody(h textproto.MIMEHeader, body io.Reader, format string) (text string, removed int, differ, ok bool, attachments []DecryptedFile, attachmentsHidden int) {
+// arch: DRV.3, D4.2, DR1G.9, IR1G.6, DU2.2
+func entityBody(f guard.Fencer, h textproto.MIMEHeader, body io.Reader, format string) (text string, removed int, differ, ok bool, attachments []DecryptedFile, attachmentsHidden int) {
 	var tp textParts
-	tp.walk(h, body, 0)
+	tp.walk(f, h, body, 0)
 	if !tp.hasPlain && !tp.hasHTML {
 		return "", 0, false, false, tp.attachments, tp.attachmentsHidden
 	}
@@ -866,8 +1004,8 @@ func entityBody(h textproto.MIMEHeader, body io.Reader, format string) (text str
 // HTML source. attachments is the DR1G.9 list that the same walk
 // fills for a part it skips as an attachment, so decrypt needs no
 // second walk over the entity (IR1G.6). attachmentsHidden counts what
-// fencing each File name took out, for a caller's running hidden
-// count.
+// fencing each file name and media type took out, for a caller's
+// running hidden count.
 type textParts struct {
 	plain, html       string
 	hasPlain, hasHTML bool
@@ -880,10 +1018,10 @@ type textParts struct {
 // DecryptedFile (DR1G.9), and keeps the first plain part and the
 // first HTML part among the rest. Each text part is capped at
 // mime.MaxPartBytes before it is decoded, the window that the IMAP
-// provider fetches (§3.10).
+// provider fetches (§3.10). f fences the attachment rows (DU2.2).
 //
-// arch: DRV.3, §3.10, DR1G.9, IR1G.6
-func (tp *textParts) walk(h textproto.MIMEHeader, body io.Reader, depth int) {
+// arch: DRV.3, §3.10, DR1G.9, IR1G.6, DU2.2
+func (tp *textParts) walk(f guard.Fencer, h textproto.MIMEHeader, body io.Reader, depth int) {
 	if depth > verify.MaxDepth {
 		return
 	}
@@ -899,11 +1037,11 @@ func (tp *textParts) walk(h textproto.MIMEHeader, body io.Reader, depth int) {
 			if err != nil {
 				return
 			}
-			tp.walk(p.Header, p, depth+1)
+			tp.walk(f, p.Header, p, depth+1)
 		}
 	}
 	if disposition, filename := dispositionOf(h, params); mime.IsAttachment(disposition, filename) {
-		tp.addAttachment(filename, mt, ct, h.Get("Content-Transfer-Encoding"), body)
+		tp.addAttachment(f, filename, mt, ct, h.Get("Content-Transfer-Encoding"), body)
 		return
 	}
 	isPlain, isHTML := mt == "text/plain", mt == "text/html"
@@ -923,21 +1061,21 @@ func (tp *textParts) walk(h textproto.MIMEHeader, body io.Reader, depth int) {
 }
 
 // addAttachment appends one DecryptedFile for a part the walk skips as
-// an attachment (DR1G.9). File is the sender's own file name, fenced
-// like read's attachment names (§3.15, G3, IR1G.14); mt is the
-// sanitized media type stdmime.ParseMediaType gave the caller, a
-// token that cannot itself carry a fence marker or a hidden
-// character, so Type needs no fence. Size is the decoded byte count,
-// from mime.DecodedSize reading body as a stream: no decoded buffer
-// of the part is ever built, so decrypt gives no attachment content
-// (D7.2).
+// an attachment (DR1G.9). The sender's own file name and the media
+// type go under Untrusted, each in one fence of f, like the attachment
+// rows of read (§3.15, G3, IR1G.14, DU5.3). mt is the media type that
+// stdmime.ParseMediaType gave the caller. Size is the decoded byte
+// count, from mime.DecodedSize reading body as a stream: no decoded
+// buffer of the part is ever built, so decrypt gives no attachment
+// content (D7.2).
 //
-// arch: DR1G.9, D7.2, IR1G.14, IR1G.6
-func (tp *textParts) addAttachment(filename, mt, ct, cte string, body io.Reader) {
+// arch: DR1G.9, D7.2, IR1G.14, IR1G.6, DU2.2, DU5.3
+func (tp *textParts) addAttachment(f guard.Fencer, filename, mt, ct, cte string, body io.Reader) {
 	size := mime.DecodedSize(body, ct, cte)
-	file, hidden := fencedCount("ATTACHMENT", filename)
-	tp.attachmentsHidden += hidden
-	tp.attachments = append(tp.attachments, DecryptedFile{File: file, Size: size, Type: mt})
+	name, nameHidden := wrapCount(f, filename)
+	typ, typeHidden := wrapCount(f, mt)
+	tp.attachmentsHidden += nameHidden + typeHidden
+	tp.attachments = append(tp.attachments, DecryptedFile{Size: size, Untrusted: FileUntrusted{Name: name, Type: typ}})
 }
 
 // dispositionOf gives the disposition value and the file name of one

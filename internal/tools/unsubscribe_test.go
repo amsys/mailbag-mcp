@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,14 @@ import (
 // unsubAuthserv is the authserv_id of the [verify] config of these
 // tests.
 const unsubAuthserv = "mx.example.net"
+
+// Message ids in the IMAP form that [normalizeID] writes (DU3.2): the
+// folder is the hex of INBOX. unsubIDGone has no message behind it.
+const (
+	unsubIDA    = "1-1-494e424f58"
+	unsubIDB    = "1-2-494e424f58"
+	unsubIDGone = "1-3-494e424f58"
+)
 
 // unsubProvider is the send-test fake writer with one message for
 // each id. It records the ReadOpts of each Read.
@@ -171,13 +180,15 @@ func (s *oneClickServer) post() func(context.Context, string) (int, error) {
 	return oneClickPost(guard.NewHTTPClientFor(guard.HTTPOptions{Base: s.srv.Client().Transport}))
 }
 
-// wantFenced fails unless got is one URL fence around want.
+// wantFenced fails unless got is one fence of the test nonce around
+// want (DU5.1).
 func wantFenced(t *testing.T, got, want string) {
 	t.Helper()
-	if !strings.HasPrefix(got, "[UNTRUSTED_URL]\n") || !strings.HasSuffix(got, "\n[/UNTRUSTED_URL]") {
-		t.Fatalf("url = %q, want it fenced as URL", got)
+	f := testFencer(t)
+	if !f.Holds(got) {
+		t.Fatalf("url = %q, want it fenced with the nonce %s", got, f.Nonce())
 	}
-	if strings.Count(got, "[/UNTRUSTED_URL]") != 1 || strings.Count(got, "[UNTRUSTED_URL]") != 1 {
+	if strings.Count(got, "[UNTRUSTED_") != 1 || strings.Count(got, "[/UNTRUSTED_") != 1 {
 		t.Fatalf("url = %q, want exactly one fence", got)
 	}
 	if want != "" && !strings.Contains(got, want) {
@@ -197,11 +208,11 @@ func TestUnsubscribe_OneClickPostsWhenDKIMPass(t *testing.T) {
 	srv := newOneClickServer(t, nil)
 	target := strings.Replace(srv.srv.URL, "https://", "https://user:secret@", 1) + "/unsub?u=7"
 	h, prov, _ := unsubFixture(t, map[string]*mail.Message{
-		"a": listMsg("news@news.example.test", []string{"<mailto:leave@news.example.test>, <" + target + ">"}, oneClickPosts, passAuth("news.example.test")),
+		unsubIDA: listMsg("news@news.example.test", []string{"<mailto:leave@news.example.test>, <" + target + ">"}, oneClickPosts, passAuth("news.example.test")),
 	})
 	h.post = srv.post()
 
-	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a"}})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA}})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -209,7 +220,7 @@ func TestUnsubscribe_OneClickPostsWhenDKIMPass(t *testing.T) {
 		t.Fatalf("rows = %+v, want one", out.Rows)
 	}
 	r := out.Rows[0]
-	if r.ID != "a" || r.Method != "one-click" || r.Status != "done" || r.URL != "" || r.DraftID != "" {
+	if r.ID != unsubIDA || r.Method != "one_click" || r.Status != "done" || r.URL != "" || r.DraftID != "" {
 		t.Fatalf("row = %+v, want a one-click done row with no URL and no draft", r)
 	}
 	reqs := srv.requests()
@@ -235,10 +246,10 @@ func TestUnsubscribe_OneClickPostsWhenDKIMPass(t *testing.T) {
 
 	t.Run("read level refused", func(t *testing.T) {
 		h, prov, log := unsubFixture(t, map[string]*mail.Message{
-			"a": listMsg("news@news.example.test", []string{"<https://news.example.test/u>"}, oneClickPosts, passAuth("news.example.test")),
+			unsubIDA: listMsg("news@news.example.test", []string{"<https://news.example.test/u>"}, oneClickPosts, passAuth("news.example.test")),
 		})
 		h.mail.(*unsubMail).acct.Access = "read"
-		if _, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a"}}); !errors.Is(err, guard.ErrAccessDenied) {
+		if _, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA}}); !errors.Is(err, guard.ErrAccessDenied) {
 			t.Fatalf("err = %v, want ErrAccessDenied", err)
 		}
 		if len(log.urls) != 0 || len(prov.opts) != 0 {
@@ -258,7 +269,7 @@ func TestUnsubscribe_NoDKIMGivesLink(t *testing.T) {
 	cases := []struct {
 		name, auth, authserv string
 	}{
-		{"no header", "", unsubAuthserv},
+		{"no_header", "", unsubAuthserv},
 		{"no authserv_id", passAuth("news.example.test"), ""},
 		{"other authserv_id", "Authentication-Results: mx.attacker.test; dkim=pass header.d=news.example.test\r\n", unsubAuthserv},
 		{"dkim fail", "Authentication-Results: " + unsubAuthserv + "; dkim=fail header.d=news.example.test\r\n", unsubAuthserv},
@@ -268,15 +279,15 @@ func TestUnsubscribe_NoDKIMGivesLink(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, _, log := unsubFixture(t, map[string]*mail.Message{
-				"a": listMsg("news@news.example.test", []string{"<" + u + ">"}, oneClickPosts, c.auth),
+				unsubIDA: listMsg("news@news.example.test", []string{"<" + u + ">"}, oneClickPosts, c.auth),
 			})
 			h.mail.(*unsubMail).cfg.AuthservID = c.authserv
-			out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a"}})
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA}})
 			if err != nil {
 				t.Fatalf("handle: %v", err)
 			}
 			r := out.Rows[0]
-			if r.Method != "link" || r.Status != "not authenticated" || r.Note == "" {
+			if r.Method != "link" || r.Status != "not_authenticated" || r.Note == "" {
 				t.Fatalf("row = %+v, want a not authenticated link", r)
 			}
 			wantFenced(t, r.URL, u)
@@ -312,9 +323,9 @@ func TestUnsubscribe_NoPostHeaderGivesLink(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, _, log := unsubFixture(t, map[string]*mail.Message{
-				"a": listMsg("news@news.example.test", c.lists, c.posts, auth),
+				unsubIDA: listMsg("news@news.example.test", c.lists, c.posts, auth),
 			})
-			out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a"}})
+			out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA}})
 			if err != nil {
 				t.Fatalf("handle: %v", err)
 			}
@@ -325,7 +336,7 @@ func TestUnsubscribe_NoPostHeaderGivesLink(t *testing.T) {
 				}
 				return
 			}
-			if r.Method != "link" || r.Status != "see link" {
+			if r.Method != "link" || r.Status != "see_link" {
 				t.Fatalf("row = %+v, want a see link row", r)
 			}
 			wantFenced(t, r.URL, u)
@@ -355,7 +366,7 @@ func TestUnsubscribe_HTTPURLRefused(t *testing.T) {
 	}
 	for _, i := range []int{0, 2} {
 		r := out.Rows[i]
-		if r.Method != "none" || r.Status != "no header" || r.URL != "" || r.Note == "" {
+		if r.Method != "none" || r.Status != "no_header" || r.URL != "" || r.Note == "" {
 			t.Errorf("row %s = %+v, want none with a note and no URL", r.ID, r)
 		}
 	}
@@ -384,15 +395,15 @@ func TestUnsubscribe_HTTPURLRefused(t *testing.T) {
 // arch: DS9.3, DS9.12, IS9.1, IS9.6
 func TestUnsubscribe_MailtoMakesDraft(t *testing.T) {
 	h, prov, log := unsubFixture(t, map[string]*mail.Message{
-		"a": listMsg("news@news.example.test", []string{"<mailto:leave@news.example.test?subject=stop%20please>"}, nil, ""),
-		"b": listMsg("news@news.example.test", []string{"<https://news.example.test/u>, <mailto:off@news.example.test>"}, oneClickPosts, ""),
+		unsubIDA: listMsg("news@news.example.test", []string{"<mailto:leave@news.example.test?subject=stop%20please>"}, nil, ""),
+		unsubIDB: listMsg("news@news.example.test", []string{"<https://news.example.test/u>, <mailto:off@news.example.test>"}, oneClickPosts, ""),
 	})
-	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a", "b"}})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA, unsubIDB}})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	for _, r := range out.Rows {
-		if r.Method != "draft" || r.Status != "draft saved" || r.DraftID != prov.draftID || r.URL != "" {
+		if r.Method != "draft" || r.Status != "draft_saved" || r.DraftID != prov.draftID || r.URL != "" {
 			t.Errorf("row = %+v, want draft saved with id %s", r, prov.draftID)
 		}
 	}
@@ -421,14 +432,14 @@ func TestUnsubscribe_MailtoMakesDraft(t *testing.T) {
 // arch: DS9.3, DS9.12, IS9.1, IS9.6
 func TestUnsubscribe_NoHeader(t *testing.T) {
 	h, prov, log := unsubFixture(t, map[string]*mail.Message{
-		"a": listMsg("news@news.example.test", nil, oneClickPosts, passAuth("news.example.test")),
-		"b": listMsg("news@news.example.test", []string{"just text, no brackets"}, nil, ""),
+		unsubIDA: listMsg("news@news.example.test", nil, oneClickPosts, passAuth("news.example.test")),
+		unsubIDB: listMsg("news@news.example.test", []string{"just text, no brackets"}, nil, ""),
 	})
-	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"a", "b", "gone"}})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{unsubIDA, unsubIDB, unsubIDGone}})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	want := []struct{ method, status string }{{"none", "no header"}, {"none", "no header"}, {"none", "failed"}}
+	want := []struct{ method, status string }{{"none", "no_header"}, {"none", "no_header"}, {"none", "failed"}}
 	for i, r := range out.Rows {
 		if r.Method != want[i].method || r.Status != want[i].status || r.URL != "" || r.DraftID != "" {
 			t.Errorf("row %d = %+v, want %v", i, r, want[i])
@@ -519,12 +530,12 @@ func TestUnsubscribe_RedirectIsSeeLink(t *testing.T) {
 		t.Fatalf("handle: %v", err)
 	}
 	r := out.Rows[0]
-	if r.Method != "one-click" || r.Status != "see link" || r.Note == "" {
+	if r.Method != "one_click" || r.Status != "see_link" || r.Note == "" {
 		t.Fatalf("redirect row = %+v, want see link with a note", r)
 	}
 	wantFenced(t, r.URL, "/redirect")
 	g := out.Rows[1]
-	if g.Status != "see link" || !strings.Contains(g.Note, "410") {
+	if g.Status != "see_link" || !strings.Contains(g.Note, "410") {
 		t.Fatalf("gone row = %+v, want see link with status 410 in the note", g)
 	}
 	wantFenced(t, g.URL, "/gone")
@@ -581,5 +592,52 @@ func TestUnsubscribe_URLFenced(t *testing.T) {
 	wantFenced(t, out.Rows[2].URL, "")
 	if u, _ := url.Parse(forged); u == nil {
 		t.Fatal("the forged URL does not parse; the case tests nothing")
+	}
+}
+
+// TestUnsubscribe_RowsHaveIndexAndNormalizedID holds the id rules of
+// the rows: index is the place of the id in the input, an old-form id
+// leaves in the new form, and an id that fails normalizeID leaves no
+// id. The JSON of the row puts the URL under untrusted and nothing
+// else there.
+//
+// arch: DU5.1, DU5.6, DU3.2, DU6.2, DU12.1
+func TestUnsubscribe_RowsHaveIndexAndNormalizedID(t *testing.T) {
+	h, _, _ := unsubFixture(t, map[string]*mail.Message{
+		unsubIDA: listMsg("news@example.test", []string{"<https://news.example.test/u>"}, nil, ""),
+		"bad":    listMsg("news@example.test", []string{"<https://news.example.test/v>"}, nil, ""),
+	})
+	out, err := h.handle(withFencer(context.Background(), testFencer(t)), UnsubscribeIn{Account: "work", IDs: []string{"bad", "1.1.INBOX", unsubIDA}})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(out.Rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", out.Rows)
+	}
+	for i, r := range out.Rows {
+		if r.Index != i {
+			t.Errorf("row %d has index %d", i, r.Index)
+		}
+	}
+	if out.Rows[0].ID != "" {
+		t.Errorf("row 0 id = %q, want none for an id that fails normalizeID", out.Rows[0].ID)
+	}
+	if out.Rows[1].ID != unsubIDA || out.Rows[2].ID != unsubIDA {
+		t.Errorf("ids = %q, %q, want the new form %q", out.Rows[1].ID, out.Rows[2].ID, unsubIDA)
+	}
+	b, err := json.Marshal(out.Rows[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, top := raw["url"]; top {
+		t.Errorf("row JSON %s has url outside untrusted", b)
+	}
+	z, _ := raw["untrusted"].(map[string]any)
+	if s, _ := z["url"].(string); len(z) != 1 || !testFencer(t).Holds(s) {
+		t.Errorf("row JSON %s: untrusted = %v, want one fenced url", b, z)
 	}
 }

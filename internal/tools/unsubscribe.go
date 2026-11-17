@@ -41,40 +41,57 @@ type UnsubscribeIn struct {
 }
 
 // UnsubscribeRow is the result for one id. Method is one of
-// one-click, draft, link or none. Status is one of done, draft saved,
-// see link, not authenticated, no header or failed. URL is sender
-// text, so it is fenced. Note is text this server wrote.
+// one_click, draft, link or none. Status is one of done, draft_saved,
+// see_link, not_authenticated, no_header or failed. Both are words of
+// the strict kind word (no space, no hyphen).
 //
-// arch: DS9.3
+// Zones (DU5.1, DU5.6): Index (the place of the id in the input), ID
+// (only when [normalizeID] accepts it, in its new form), Method,
+// Status, DraftID and Note are outside. URL is sender text, so it
+// sits in one fence under untrusted. The embedded UnsubUntrusted
+// promotes the Go field URL.
+//
+// arch: DS9.3, DU5.1, DU5.6, DU3.2
 type UnsubscribeRow struct {
-	ID      string `json:"id"`
-	Method  string `json:"method"`
-	Status  string `json:"status"`
-	DraftID string `json:"draft_id,omitempty"`
-	URL     string `json:"url,omitempty"`
-	Note    string `json:"note,omitempty"`
+	Index          int    `json:"index"`
+	ID             string `json:"id,omitempty" strict:"id"`
+	Method         string `json:"method" strict:"word"`
+	Status         string `json:"status" strict:"word"`
+	DraftID        string `json:"draft_id,omitempty" strict:"id"`
+	Note           string `json:"note,omitempty" strict:"note"`
+	UnsubUntrusted `json:"untrusted,omitzero"`
+}
+
+// UnsubUntrusted is the untrusted zone of a row: the URL of a
+// List-Unsubscribe header, in a fence of the nonce of the response.
+//
+// arch: DU5.1, DU5.6
+type UnsubUntrusted struct {
+	URL string `json:"url,omitempty"`
 }
 
 // UnsubscribeOut is the result of the unsubscribe tool: one row for
-// each id, in input order.
+// each id, in input order. Head is outside; every row has the zones
+// of [UnsubscribeRow].
 //
-// arch: DS9.3
+// arch: DS9.3, DU5.1
 type UnsubscribeOut struct {
+	Head
 	Rows []UnsubscribeRow `json:"rows"`
 }
 
 // The words of UnsubscribeRow.Method and UnsubscribeRow.Status.
 const (
-	unsubMethodOneClick = "one-click"
+	unsubMethodOneClick = "one_click"
 	unsubMethodDraft    = "draft"
 	unsubMethodLink     = "link"
 	unsubMethodNone     = "none"
 
 	unsubStatusDone     = "done"
-	unsubStatusDraft    = "draft saved"
-	unsubStatusSeeLink  = "see link"
-	unsubStatusNoAuth   = "not authenticated"
-	unsubStatusNoHeader = "no header"
+	unsubStatusDraft    = "draft_saved"
+	unsubStatusSeeLink  = "see_link"
+	unsubStatusNoAuth   = "not_authenticated"
+	unsubStatusNoHeader = "no_header"
 	unsubStatusFailed   = "failed"
 )
 
@@ -162,23 +179,24 @@ func (t *unsubscribeTool) handle(ctx context.Context, in UnsubscribeIn) (Unsubsc
 	if src, ok := t.mail.(verifyConfigSource); ok {
 		cfg = src.VerifyConfig()
 	}
+	f := fencer(ctx)
 	out := UnsubscribeOut{Rows: make([]UnsubscribeRow, 0, len(in.IDs))}
-	for _, id := range in.IDs {
+	for i, id := range in.IDs {
 		if ctx.Err() != nil {
 			// The rows before this one may hold a POST that was sent,
 			// so the call gives them, not an error.
-			out.Rows = append(out.Rows, UnsubscribeRow{ID: id, Method: unsubMethodNone, Status: unsubStatusFailed, Note: unsubNoteTimeUp})
+			out.Rows = append(out.Rows, UnsubscribeRow{Index: i, ID: rowID(acct.Provider, id), Method: unsubMethodNone, Status: unsubStatusFailed, Note: unsubNoteTimeUp})
 			continue
 		}
-		out.Rows = append(out.Rows, t.one(ctx, p, cfg, in.Account, id))
+		out.Rows = append(out.Rows, t.one(ctx, f, p, cfg, in.Account, acct.Provider, i, id))
 	}
 	return out, nil
 }
 
 // one gives the row of one id, in the order of DS9.3: one-click, then
 // mailto, then the link, then nothing.
-func (t *unsubscribeTool) one(ctx context.Context, p Writer, cfg verify.Config, account, id string) UnsubscribeRow {
-	row := UnsubscribeRow{ID: id}
+func (t *unsubscribeTool) one(ctx context.Context, f guard.Fencer, p Writer, cfg verify.Config, account, kind string, index int, id string) UnsubscribeRow {
+	row := UnsubscribeRow{Index: index, ID: rowID(kind, id)}
 	m, err := p.Read(ctx, id, mail.ReadOpts{Headers: []string{hdrListUnsubscribe, hdrListUnsubscribePost}})
 	if err != nil || m == nil {
 		row.Method, row.Status, row.Note = unsubMethodNone, unsubStatusFailed, unsubNoteReadFailed
@@ -193,7 +211,7 @@ func (t *unsubscribeTool) one(ctx context.Context, p Writer, cfg verify.Config, 
 	postOK := len(lists) == 1 && oneClickHeader(m.Headers[hdrListUnsubscribePost])
 	if httpsURL != nil && postOK {
 		if t.dkim(m, cfg) {
-			return t.oneClick(ctx, row, httpsURL)
+			return t.oneClick(ctx, f, row, httpsURL)
 		}
 	}
 	if mailtoURL != nil {
@@ -201,7 +219,7 @@ func (t *unsubscribeTool) one(ctx context.Context, p Writer, cfg verify.Config, 
 	}
 	if httpsURL != nil {
 		row.Method, row.Status = unsubMethodLink, unsubStatusSeeLink
-		row.URL = guard.Fence("URL", httpsURL.String())
+		row.URL = f.Wrap(httpsURL.String())
 		if postOK {
 			// Only the DKIM rule stopped the POST (G18).
 			row.Status, row.Note = unsubStatusNoAuth, unsubNoteNoAuth
@@ -212,9 +230,16 @@ func (t *unsubscribeTool) one(ctx context.Context, p Writer, cfg verify.Config, 
 	return row
 }
 
+// rowID gives the id of a row in the form [normalizeID] writes, or the
+// empty string when the id does not pass (DU5.6).
+func rowID(kind, id string) string {
+	n, _ := normalizeID(kind, id)
+	return n
+}
+
 // oneClick sends the RFC 8058 POST. A 2xx is done; a refused redirect,
 // any other status or an error gives the link.
-func (t *unsubscribeTool) oneClick(ctx context.Context, row UnsubscribeRow, u *url.URL) UnsubscribeRow {
+func (t *unsubscribeTool) oneClick(ctx context.Context, f guard.Fencer, row UnsubscribeRow, u *url.URL) UnsubscribeRow {
 	row.Method = unsubMethodOneClick
 	status, err := t.post(ctx, u.String())
 	if err == nil && status >= 200 && status < 300 {
@@ -222,7 +247,7 @@ func (t *unsubscribeTool) oneClick(ctx context.Context, row UnsubscribeRow, u *u
 		return row
 	}
 	row.Status = unsubStatusSeeLink
-	row.URL = guard.Fence("URL", u.String())
+	row.URL = f.Wrap(u.String())
 	row.Note = unsubNotePostFailed
 	if err == nil {
 		row.Note = fmt.Sprintf("the one-click POST got status %d; open the link", status)

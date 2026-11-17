@@ -32,12 +32,12 @@ type AccountsIn struct{}
 // (DS6.9, OR1G.1, DR1G.6.2). It is empty when no login result is known
 // yet.
 type AccountRow struct {
-	Alias      string    `json:"alias"`
-	Email      string    `json:"email"`
-	Provider   string    `json:"provider"`
-	Access     string    `json:"access"`
-	Identities []string  `json:"identities,omitempty"`
-	State      AuthState `json:"state,omitempty"`
+	Alias      string    `json:"alias" strict:"alias"`
+	Email      string    `json:"email" strict:"owner"`
+	Provider   string    `json:"provider" strict:"word"`
+	Access     string    `json:"access" strict:"word"`
+	Identities []string  `json:"identities,omitempty" strict:"owner"`
+	State      AuthState `json:"state,omitempty" strict:"word"`
 	// IdentitySettings lists the identity tables of an account in
 	// identity mode (DI4). It is empty for any other account.
 	IdentitySettings []IdentityRow `json:"identity_settings,omitempty"`
@@ -48,8 +48,8 @@ type AccountRow struct {
 // row never holds signature text, so a model has no copy to retype
 // (I8).
 type IdentityRow struct {
-	Email               string   `json:"email"`
-	Name                string   `json:"name,omitempty"`
+	Email               string   `json:"email" strict:"owner"`
+	Name                string   `json:"name,omitempty" strict:"owner"`
 	Default             bool     `json:"default"`
 	Signature           bool     `json:"signature"`
 	SignatureHTML       bool     `json:"signature_html"`
@@ -59,7 +59,7 @@ type IdentityRow struct {
 	ReplyAboveQuote     bool     `json:"reply_above_quote"`
 	SignatureBelowQuote bool     `json:"signature_below_quote"`
 	ComposeHTML         bool     `json:"compose_html"`
-	ReplyMatch          []string `json:"reply_match,omitempty"`
+	ReplyMatch          []string `json:"reply_match,omitempty" strict:"owner"`
 }
 
 // identityRows builds the identity_settings rows of a. It returns nil
@@ -89,15 +89,20 @@ func identityRows(a config.Account) []IdentityRow {
 	return rows
 }
 
-// AccountsOut is the accounts tool result (§3.16).
+// AccountsOut is the accounts tool result (§3.16). Head is its first
+// field. Every string is server text or the owner's own config, so
+// the result has no untrusted zone (DU5.6).
+//
+// arch: DU5.6
 type AccountsOut struct {
+	Head
 	Accounts []AccountRow `json:"accounts"`
 	// Secrets is "keyring" or "file", the active secrets store (§3.4).
-	Secrets string `json:"secrets"`
+	Secrets string `json:"secrets" strict:"word"`
 	// AddHint is the command that adds an account. It is set only
 	// when Accounts is empty, so a model with accounts configured
 	// never sees it.
-	AddHint string `json:"add_hint,omitempty"`
+	AddHint string `json:"add_hint,omitempty" strict:"note"`
 }
 
 // AddAccounts adds the "accounts" tool to srv (§3.16): read level, no

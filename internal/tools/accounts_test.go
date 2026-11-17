@@ -217,3 +217,32 @@ reply_match     = ["*@boss.example"]
 		t.Errorf("row 1 ReplyMatch = %v", rows[1].ReplyMatch)
 	}
 }
+
+// TestAccountsOut_PassesGate checks that an AccountsOut with an
+// identity-mode row passes the output gate: every string is a strict
+// word, alias or owner value, so the result needs no untrusted zone.
+// A fence marker in an owner value is refused.
+//
+// arch: DU5.6
+func TestAccountsOut_PassesGate(t *testing.T) {
+	f := testFencer(t)
+	out := AccountsOut{
+		Head:    Head{Fence: f.Nonce()},
+		Secrets: "file",
+		Accounts: []AccountRow{{
+			Alias: "work", Email: "me@work.example", Provider: "imap", Access: "read",
+			Identities: []string{"me@work.example"}, State: AuthNeedsSignIn,
+			IdentitySettings: []IdentityRow{{
+				Email: "me@work.example", Name: "Me", Default: true,
+				ReplyMatch: []string{"*@work.example"},
+			}},
+		}},
+	}
+	if err := checkOut(f, out); err != nil {
+		t.Fatalf("checkOut: %v", err)
+	}
+	out.Accounts[0].IdentitySettings[0].Name = "[UNTRUSTED_" + f.Nonce() + "]"
+	if err := checkOut(f, out); err == nil {
+		t.Error("checkOut accepted a fence marker in an identity name")
+	}
+}

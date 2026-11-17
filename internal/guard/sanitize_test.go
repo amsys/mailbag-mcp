@@ -38,18 +38,18 @@ func TestSanitize_NFKCAndTemplateTokens(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := Fence("EMAIL", c.body)
+			out := fixedFencer(t).Wrap(c.body)
 			if !strings.Contains(out, c.want) {
-				t.Fatalf("Fence(%q) = %q, want it to contain %q", c.body, out, c.want)
+				t.Fatalf("Wrap(%q) = %q, want it to contain %q", c.body, out, c.want)
 			}
 			if strings.Contains(out, c.gone) {
-				t.Fatalf("Fence(%q) = %q, must not contain %q", c.body, out, c.gone)
+				t.Fatalf("Wrap(%q) = %q, must not contain %q", c.body, out, c.gone)
 			}
 			if templateTokenRe.MatchString(out) {
-				t.Fatalf("Fence(%q) = %q still has a live template token", c.body, out)
+				t.Fatalf("Wrap(%q) = %q still has a live template token", c.body, out)
 			}
 			if count(out, "[UNTRUSTED_") != 1 || count(out, "[/UNTRUSTED_") != 1 {
-				t.Fatalf("Fence(%q) = %q, want exactly one open and one close marker", c.body, out)
+				t.Fatalf("Wrap(%q) = %q, want exactly one open and one close marker", c.body, out)
 			}
 		})
 	}
@@ -79,15 +79,15 @@ func TestSanitize_MoreTemplateFamilies(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := Fence("EMAIL", c.body)
+			out := fixedFencer(t).Wrap(c.body)
 			if !strings.Contains(out, c.want) {
-				t.Fatalf("Fence(%q) = %q, want it to contain %q", c.body, out, c.want)
+				t.Fatalf("Wrap(%q) = %q, want it to contain %q", c.body, out, c.want)
 			}
 			if strings.Contains(out, c.gone) {
-				t.Fatalf("Fence(%q) = %q, must not contain %q", c.body, out, c.gone)
+				t.Fatalf("Wrap(%q) = %q, must not contain %q", c.body, out, c.gone)
 			}
 			if templateTokenRe.MatchString(out) {
-				t.Fatalf("Fence(%q) = %q still has a live template token", c.body, out)
+				t.Fatalf("Wrap(%q) = %q still has a live template token", c.body, out)
 			}
 		})
 	}

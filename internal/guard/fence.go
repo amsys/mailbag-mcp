@@ -155,27 +155,3 @@ func removeBrackets(s string) string {
 	b.WriteString(s[last:])
 	return b.String()
 }
-
-// Fence wraps body in `[UNTRUSTED_<KIND>]` ... `[/UNTRUSTED_<KIND>]`
-// markers. It is the one entry point for fencing sender-controlled
-// text: it runs Sanitize on body (NFKC, hidden characters removed,
-// markers and chat template tokens escaped, D4.1), so a caller cannot
-// break the fence by doing the steps in the wrong order (a hidden
-// character placed inside a forged marker would otherwise survive
-// escaping and turn real once something strips it later). kind is
-// upper-cased. Server-controlled fields never go through Fence
-// (§3.15): only a sender-controlled field does.
-//
-// arch: T2.1, §3.15, G2, G4, §10.4, D4.1
-func Fence(kind, body string) string {
-	k := strings.ToUpper(kind)
-	var b strings.Builder
-	b.WriteString("[UNTRUSTED_")
-	b.WriteString(k)
-	b.WriteString("]\n")
-	b.WriteString(Sanitize(body))
-	b.WriteString("\n[/UNTRUSTED_")
-	b.WriteString(k)
-	b.WriteString("]")
-	return b.String()
-}

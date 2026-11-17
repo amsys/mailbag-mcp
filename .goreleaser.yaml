@@ -114,8 +114,11 @@ changelog:
 # The release target is fixed, so the check and a snapshot run also work
 # in a clone with no GitHub remote. The release is a draft: the publish
 # job of release.yml makes it public after the owner approves (IS12.5).
+# A tag with a pre-release part (v0.2.0-alpha.1) gives a GitHub
+# pre-release, so it does not become the "Latest" release.
 release:
   draft: true
+  prerelease: auto
   github:
     owner: amsys
     name: mailbag-mcp

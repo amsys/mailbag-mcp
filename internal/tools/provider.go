@@ -94,8 +94,28 @@ const secretTimeout = 30 * time.Second
 // network call. The text (D10.3) absorbs the account-add sentence
 // that R1-A removed from Instructions.
 //
-// arch: D10.3
-var ErrUnknownAccount = errors.New(`unknown account; add one in a terminal with "mailbag-mcp account add"`)
+// It is a public error of the class unknown_account (DU12.3 item 5),
+// so the guidance is shown outside the fence. The error that
+// [Factory] gives also names the alias, in the fenced detail.
+//
+// arch: D10.3, DU6.2, DU12.3
+var ErrUnknownAccount = public("unknown_account", unknownAccountText)
+
+// unknownAccountText is the public text of [ErrUnknownAccount].
+const unknownAccountText = `unknown account; add one in a terminal with "mailbag-mcp account add"`
+
+// unknownAccountErr is the error of an alias that the config does not
+// hold. It holds a public error with the alias as its detail, and
+// errors.Is matches it with [ErrUnknownAccount].
+//
+// arch: DU6.2, DU12.3
+type unknownAccountErr struct{ error }
+
+// Is gives true for [ErrUnknownAccount].
+func (e unknownAccountErr) Is(target error) bool { return target == ErrUnknownAccount }
+
+// Unwrap gives the public error, so errors.As finds it.
+func (e unknownAccountErr) Unwrap() error { return e.error }
 
 // Reader is the read half of [Writer] (§3.7): the methods the
 // read-level tools of §3.17 call. It exists because the write half
@@ -821,18 +841,18 @@ func (f *Factory) account(alias string) (config.Account, error) {
 		// §3.15: check the alias against the pattern and the config
 		// before each other action. The alias becomes a keyring key
 		// and a file name (B17).
-		return config.Account{}, fmt.Errorf("%w: %q", ErrUnknownAccount, alias)
+		return config.Account{}, unknownAccountErr{publicDetail("unknown_account", unknownAccountText, alias)}
 	}
 	cfg, err := f.config()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return config.Account{}, fmt.Errorf("%w: %q; no account is configured yet", ErrUnknownAccount, alias)
+			return config.Account{}, unknownAccountErr{publicDetail("unknown_account", unknownAccountText+"; no account is configured yet", alias)}
 		}
 		return config.Account{}, err
 	}
 	acct, ok := cfg.Account(alias)
 	if !ok {
-		return config.Account{}, fmt.Errorf("%w: %q; call the accounts tool for the list", ErrUnknownAccount, alias)
+		return config.Account{}, unknownAccountErr{publicDetail("unknown_account", unknownAccountText+"; call the accounts tool for the list", alias)}
 	}
 	return acct, nil
 }

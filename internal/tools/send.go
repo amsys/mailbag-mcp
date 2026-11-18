@@ -44,6 +44,13 @@ const (
 	sendWindow     = time.Minute
 )
 
+// sendLimitText is the public text of the send limit (DU12.3 item 5).
+// A test holds its number equal to [sendsPerWindow]. The account and
+// the wait in seconds go in the detail.
+//
+// arch: DU6.2, DU12.3
+const sendLimitText = "the account reached the limit of 10 sends in one minute; wait the seconds that the detail gives, then send again"
+
 // sendLimiter counts the messages that left, for each account, inside
 // the last [sendWindow]. It holds the count in memory only, so a
 // restart of the server clears it (§3.11).
@@ -89,8 +96,8 @@ func (l *sendLimiter) take(key string) error {
 	if len(kept) >= sendsPerWindow {
 		l.at[key] = kept
 		wait := sendWindow - now.Sub(kept[0])
-		return fmt.Errorf("account %s reached the limit of %d sends in one minute; wait %d seconds and send again",
-			key, sendsPerWindow, int(wait.Seconds())+1)
+		return publicDetail("limit", sendLimitText,
+			fmt.Sprintf("account %s, wait %d seconds", key, int(wait.Seconds())+1))
 	}
 	if l.at == nil {
 		l.at = make(map[string][]time.Time)
@@ -220,7 +227,7 @@ const (
 // cannot ask the human. The text does not name the config key that
 // permits the send: the model reads this text, and only the human
 // may decide to turn the confirmation off.
-var errNoElicitation = errors.New("this client cannot ask the human to confirm a send, so nothing was sent; the human can send the draft from a mail program")
+var errNoElicitation = public("refused", "this client cannot ask the human to confirm a send, so nothing was sent; the human can send the draft from a mail program")
 
 // elicitCutoffProtocol is the first protocol version on which go-sdk
 // refuses a server request during a tool call. On that protocol the
@@ -236,24 +243,31 @@ const confirmInputID = "confirm"
 // errDraftChanged is the fixed refusal of a retry whose stored draft
 // source is not the source that the human saw in the confirmation
 // (DS14.5, IS14.1).
-var errDraftChanged = errors.New("the draft changed after the confirmation was shown, so nothing was sent; call send again to confirm the new draft")
+var errDraftChanged = public("refused", "the draft changed after the confirmation was shown, so nothing was sent; call send again to confirm the new draft")
 
 // errNotDraft is the fixed refusal for a draft_id that names a
 // message with no \Draft flag. The check runs before the prompt and
 // before the limit, so the human sees no prompt and the call spends
 // no send (D8.3).
-var errNotDraft = errors.New("draft_id names a message that is not a draft, so nothing was sent; save the message with the draft tool, then send its draft_id")
+var errNotDraft = public("invalid_input", "draft_id names a message that is not a draft, so nothing was sent; save the message with the draft tool, then send its draft_id")
 
 // errHTMLNotClean is the fixed refusal of D5.5 for a draft whose
 // HTML part is not already cut to the allowlist of [mime.AllowHTML].
 // The confirmation cannot show all of such a part, so nothing leaves.
 // The check runs before the prompt and before the limit, so the call
 // spends no send. It covers a draft that a mail program wrote too.
-var errHTMLNotClean = errors.New("the draft holds HTML that the confirmation cannot show in full, so nothing was sent; save it again with the draft tool")
+var errHTMLNotClean = public("refused", "the draft holds HTML that the confirmation cannot show in full, so nothing was sent; save it again with the draft tool")
 
 // notConfirmedText is the fixed error text of a confirmation that did
 // not complete: the client failed or the call ended during the wait.
 const notConfirmedText = "the confirmation did not complete, so nothing was sent"
+
+// errNotConfirmed is the public error of a confirmation that the
+// client failed. A wait that the context ended keeps the context
+// error, so its class stays timeout or canceled.
+//
+// arch: DU6.2, DU12.3
+var errNotConfirmed = public("refused", notConfirmedText)
 
 // confirmWaitLimit bounds the wait for the human's answer to the
 // elicitation of D5.2. [untimed] frees that wait from the tool
@@ -297,7 +311,7 @@ const confirmMaxRunes = 4000
 // errDraftTooLong is the fixed refusal for a body part whose unquoted
 // text is longer than [confirmMaxRunes]. The check runs before the
 // limit, so the call spends no send (D8.3).
-var errDraftTooLong = errors.New("the draft text is longer than 4000 characters, so the confirmation cannot show all of it; nothing was sent. Shorten the draft, or send it from a mail program")
+var errDraftTooLong = public("limit", "the draft text is longer than 4000 characters, so the confirmation cannot show all of it; nothing was sent. Shorten the draft, or send it from a mail program")
 
 // confirmFunc is the confirmation step of one send call. It runs after
 // the access check and the limit, and before the mail leaves. It gives
@@ -593,7 +607,7 @@ func (t *sendTool) runKeyed(ctx context.Context, in SendIn, claim func(account s
 		return SendOut{}, err
 	}
 	if strings.TrimSpace(in.DraftID) == "" {
-		return SendOut{}, errors.New("draft_id is empty; save the message with the draft tool first, then send its draft_id")
+		return SendOut{}, public("invalid_input", "draft_id is empty; save the message with the draft tool first, then send its draft_id")
 	}
 	// The alias that OpenWriter gives back names the account of the
 	// limit and of the key store: the account the provider opened.
@@ -697,7 +711,7 @@ func (t *sendTool) runKeyed(ctx context.Context, in SendIn, claim func(account s
 // errSendUnknown is the stored result of a send that stopped in a
 // panic. Nobody knows if the mail left, so the key keeps this error
 // and a repeat sends nothing (D5.3, I9).
-var errSendUnknown = errors.New("the send stopped with an internal error, and it is not known if the mail left; look in the Sent folder before you send again")
+var errSendUnknown = public("internal", "the send stopped with an internal error, and it is not known if the mail left; look in the Sent folder before you send again")
 
 // sessionOf gives the session of req, or nil when req has none.
 func sessionOf(req *mcp.CallToolRequest) *mcp.ServerSession {
@@ -759,7 +773,7 @@ func confirmReady(ctx context.Context, ss *mcp.ServerSession, p Writer, acct con
 		return "", err
 	}
 	if msg == nil {
-		return "", errors.New("draft_id names no message")
+		return "", public("not_found", "draft_id names no message")
 	}
 	if !msg.Flags.Draft {
 		return "", errNotDraft
@@ -819,7 +833,7 @@ func confirmByElicit(ctx context.Context, ss *mcp.ServerSession, p Writer, acct 
 		if ctxErr := wait.Err(); ctxErr != nil {
 			return "", fmt.Errorf("%s: %w", notConfirmedText, ctxErr)
 		}
-		return "", errors.New(notConfirmedText)
+		return "", errNotConfirmed
 	}
 	switch res.Action {
 	case "accept":
@@ -867,7 +881,7 @@ func draftSummary(ctx context.Context, p Writer, acct config.Account, alias, dra
 	}
 	head, err := netmail.ReadMessage(strings.NewReader(string(raw)))
 	if err != nil {
-		return "", errors.New("the draft has no readable header block; save it again with the draft tool")
+		return "", public("refused", "the draft has no readable header block; save it again with the draft tool")
 	}
 
 	// DRV.9: fromMailbox now removes the hidden characters itself,
@@ -1080,15 +1094,30 @@ func summaryAddrs(value string, show func(string) string) (string, error) {
 // recipientUnreadable is the fixed error for a draft whose To, Cc or
 // Bcc header h does not parse. The error names the header only. It
 // does not repeat the header text, because that text can come from
-// another mail program or a sender (REVIEW-2026-10-12 H3).
+// another mail program or a sender (REVIEW-2026-10-12 H3). The header
+// name is server text, so each name has its own public text.
+//
+// arch: DU6.2, DU12.3
 func recipientUnreadable(h string) error {
-	return fmt.Errorf("the %s header of the draft cannot be read as a list of addresses, so the confirmation cannot show its recipients and nothing was sent; save the draft again with the draft tool", h)
+	switch h {
+	case "To":
+		return public("refused", "the To header"+recipientUnreadableTail)
+	case "Cc":
+		return public("refused", "the Cc header"+recipientUnreadableTail)
+	case "Bcc":
+		return public("refused", "the Bcc header"+recipientUnreadableTail)
+	}
+	return publicDetail("refused", "a recipient header"+recipientUnreadableTail, h)
 }
+
+// recipientUnreadableTail is the end of the text of
+// [recipientUnreadable].
+const recipientUnreadableTail = " of the draft cannot be read as a list of addresses, so the confirmation cannot show its recipients and nothing was sent; save the draft again with the draft tool"
 
 // errBodyUnreadable is the fixed error for a draft whose body parts
 // cannot be read. The summary must show each part that leaves, so a
 // body it cannot read gives no prompt.
-var errBodyUnreadable = errors.New("the draft body cannot be read for the confirmation, so nothing was sent; save it again with the draft tool")
+var errBodyUnreadable = public("refused", "the draft body cannot be read for the confirmation, so nothing was sent; save it again with the draft tool")
 
 // summaryPart is one body part of the confirmation summary. links
 // holds the href targets of an HTML part.

@@ -1100,7 +1100,7 @@ func TestSend_NoElicitationRefuses(t *testing.T) {
 			t.Fatalf("send with no elicitation gave a success result: %+v", res)
 		}
 		text := textOf(t, res)
-		if !isErrForm(text, "error", "", errNoElicitation.Error()) {
+		if !isErrForm(text, "refused", errNoElicitation.Error(), "") {
 			t.Errorf("refusal = %q, want the error form of the fixed text %q", text, errNoElicitation.Error())
 		}
 		if strings.Contains(text, "allow_without_elicitation") {
@@ -1194,7 +1194,7 @@ func TestSend_ElicitationOutcomes(t *testing.T) {
 				if !res.IsError {
 					t.Fatalf("result = %+v, want an error", res)
 				}
-				if text := textOf(t, res); !isErrFormPrefix(text, "error", notConfirmedText) {
+				if text := textOf(t, res); !isErrForm(text, "refused", notConfirmedText, "") {
 					t.Errorf("error = %q, want the error form of the fixed text %q", text, notConfirmedText)
 				}
 			case c.wantSent:
@@ -1536,7 +1536,7 @@ func TestSend_NonDraftRefusedBeforePrompt(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errNotDraft.Error()) {
+		if !res.IsError || !isErrForm(textOf(t, res), "invalid_input", errNotDraft.Error(), "") {
 			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errNotDraft.Error())
 		}
 		if asked != 0 {
@@ -1551,7 +1551,7 @@ func TestSend_NonDraftRefusedBeforePrompt(t *testing.T) {
 		fm.acct.AllowWithoutElicitation = true
 		h := &sendTool{mail: fm}
 		res := callSendLegacyTool(t, h, sendArgs(), nil)
-		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errNotDraft.Error()) {
+		if !res.IsError || !isErrForm(textOf(t, res), "invalid_input", errNotDraft.Error(), "") {
 			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errNotDraft.Error())
 		}
 		wantNothingSpent(t, h, prov)
@@ -1575,7 +1575,7 @@ func TestSend_EmptyKeyRefused(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || !isErrForm(textOf(t, res), "error", "", errKeyEmpty.Error()) {
+		if !res.IsError || !isErrForm(textOf(t, res), "invalid_input", errKeyEmpty.Error(), "") {
 			t.Fatalf("key %q: result = %+v, want the error form of the fixed error %q", key, res, errKeyEmpty.Error())
 		}
 		if asked != 0 {
@@ -1611,7 +1611,7 @@ func TestSend_KeyBoundToDraft(t *testing.T) {
 		t.Fatalf("first send: %+v", first)
 	}
 	other := callSendLegacyTool(t, h, argsFor("1700000000.8.Drafts"), accept)
-	if !other.IsError || !isErrForm(textOf(t, other), "error", "", errKeyOtherDraft.Error()) {
+	if !other.IsError || !isErrForm(textOf(t, other), "invalid_input", errKeyOtherDraft.Error(), "") {
 		t.Fatalf("same key, other draft: result = %+v, want the error form of the fixed error %q", other, errKeyOtherDraft.Error())
 	}
 	again := callSendLegacyTool(t, h, argsFor("1700000000.7.Drafts"), accept)
@@ -1710,7 +1710,7 @@ func TestSend_SummaryShowsHiddenHTMLText(t *testing.T) {
 		asked++
 		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 	})
-	if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+	if !res.IsError || !isErrForm(textOf(t, res), "refused", errHTMLNotClean.Error(), "") {
 		t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 	}
 	if asked != 0 {
@@ -1775,7 +1775,7 @@ func TestSend_RefusesUncleanHTMLDraft(t *testing.T) {
 					elicit = nil
 				}
 				res := callSendLegacyTool(t, h, sendArgs(), elicit)
-				if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+				if !res.IsError || !isErrForm(textOf(t, res), "refused", errHTMLNotClean.Error(), "") {
 					t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 				}
 				if asked != 0 {
@@ -1833,7 +1833,7 @@ func TestSend_RefusesDeepNestHTML(t *testing.T) {
 				asked++
 				return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 			})
-			if !res.IsError || !isErrForm(textOf(t, res), "error", "", errHTMLNotClean.Error()) {
+			if !res.IsError || !isErrForm(textOf(t, res), "refused", errHTMLNotClean.Error(), "") {
 				t.Fatalf("result = %+v, want the error form of the fixed error %q", res, errHTMLNotClean.Error())
 			}
 			if asked != 0 {
@@ -2255,7 +2255,7 @@ func TestSend_TooLongRefusedBeforeLimit(t *testing.T) {
 			asked++
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"send": true}}, nil
 		})
-		if !res.IsError || !isErrForm(textOf(t, res), "error", "", want) {
+		if !res.IsError || !isErrForm(textOf(t, res), "limit", want, "") {
 			t.Fatalf("result = %+v, want the error form of the fixed error %q", res, want)
 		}
 		if asked != 0 {
@@ -3195,7 +3195,7 @@ func TestSend_MRTRNoElicitation(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); !isErrForm(text, "error", "", errNoElicitation.Error()) {
+	if text := textOf(t, res); !isErrForm(text, "refused", errNoElicitation.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errNoElicitation.Error())
 	}
 	wantNothingSpent(t, h, prov)
@@ -3306,7 +3306,7 @@ func TestSend_MRTRDraftChanged(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("result = %+v, want an error", res)
 	}
-	if text := textOf(t, res); !isErrForm(text, "error", "", errDraftChanged.Error()) {
+	if text := textOf(t, res); !isErrForm(text, "refused", errDraftChanged.Error(), "") {
 		t.Errorf("error = %q, want the error form of the fixed text %q", text, errDraftChanged.Error())
 	}
 	if len(prov.sentDrafts) != 0 {

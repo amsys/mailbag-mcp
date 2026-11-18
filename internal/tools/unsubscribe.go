@@ -13,7 +13,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,6 +33,12 @@ import (
 
 // MaxUnsubscribeIDs is the id limit of one unsubscribe call (DS9.3).
 const MaxUnsubscribeIDs = 50
+
+// unsubMaxIDsText is the public text of a call with more ids than
+// [MaxUnsubscribeIDs]. A test holds its number equal to the limit.
+//
+// arch: DU6.2, DU12.3
+const unsubMaxIDsText = "ids: one call takes 50 ids at most"
 
 // UnsubscribeIn is the input of the unsubscribe tool. The model gives
 // message ids only, never a URL: every URL comes from a header of one
@@ -298,7 +303,7 @@ func unsubAsk(ss *mcp.ServerSession) unsubConfirm {
 		if !canElicit(ss) {
 			return unsubNoAsk(acct)
 		}
-		return askConfirm(ctx, ss, acct, message, unsubSchema, notConfirmedText)
+		return askConfirm(ctx, ss, acct, message, unsubSchema, errNotConfirmed)
 	}
 }
 
@@ -373,10 +378,10 @@ func (t *unsubscribeTool) run(ctx context.Context, in UnsubscribeIn, claim unsub
 		return UnsubscribeOut{}, err
 	}
 	if len(in.IDs) == 0 {
-		return UnsubscribeOut{}, errors.New("ids: name at least one message; the search tool gives the ids")
+		return UnsubscribeOut{}, public("invalid_input", "ids: name at least one message; the search tool gives the ids")
 	}
 	if len(in.IDs) > MaxUnsubscribeIDs {
-		return UnsubscribeOut{}, fmt.Errorf("ids: %d ids, and one call takes %d at most", len(in.IDs), MaxUnsubscribeIDs)
+		return UnsubscribeOut{}, publicDetail("limit", unsubMaxIDsText, fmt.Sprintf("%d ids", len(in.IDs)))
 	}
 	var steps []unsubStep
 	if claim != nil {
@@ -661,7 +666,7 @@ func oneClickPost(c *http.Client) func(ctx context.Context, rawURL string) (int,
 			return 0, err
 		}
 		if !strings.EqualFold(u.Scheme, "https") {
-			return 0, errors.New("unsubscribe: the one-click URL is not https")
+			return 0, public("refused", "unsubscribe: the one-click URL is not https")
 		}
 		u.User = nil
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), strings.NewReader(oneClickBody))

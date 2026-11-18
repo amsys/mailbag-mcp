@@ -5,7 +5,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -161,13 +160,13 @@ func checkFolderArgs(action string, in FoldersIn) error {
 	switch action {
 	case folderActionCreate, folderActionRename, folderActionDelete:
 	default:
-		return fmt.Errorf("folders: action %q is not one of list, create, rename, delete", action)
+		return publicDetail("invalid_input", "folders: action is not one of list, create, rename, delete", action)
 	}
 	if strings.TrimSpace(in.Name) == "" {
-		return fmt.Errorf("folders: action %q needs name", action)
+		return publicDetail("invalid_input", "folders: this action needs name", action)
 	}
 	if action == folderActionRename && strings.TrimSpace(in.NewName) == "" {
-		return fmt.Errorf("folders: action %q needs new_name", action)
+		return publicDetail("invalid_input", "folders: this action needs new_name", action)
 	}
 	return nil
 }

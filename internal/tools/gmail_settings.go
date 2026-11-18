@@ -181,7 +181,7 @@ type settingAsk func(ctx context.Context, acct config.Account, message string) (
 // model reads this text and only the human may turn the question off.
 //
 // arch: DH3.4, DH3.6
-var errSettingNoElicitation = errors.New("this client cannot ask the human to confirm this Gmail settings change, so nothing changed; the human can make the change in Gmail")
+var errSettingNoElicitation = public("refused", "this client cannot ask the human to confirm this Gmail settings change, so nothing changed; the human can make the change in Gmail")
 
 // errFilterNotFound is the refusal of a delete_filter whose filter_id
 // names no filter of the account. Nobody is asked and nothing changes.
@@ -344,7 +344,7 @@ func (t *gmailSettingsTool) handle(ctx context.Context, in GmailSettingsIn) (Gma
 // arch: DH3.4, DH3.6
 func settingsAsk(ss *mcp.ServerSession) settingAsk {
 	return func(ctx context.Context, acct config.Account, message string) (string, error) {
-		outcome, err := askConfirm(ctx, ss, acct, message, settingSchema, bulkNotConfirmedText)
+		outcome, err := askConfirm(ctx, ss, acct, message, settingSchema, errBulkNotConfirmed)
 		if outcome == confirmNoElicitRefused {
 			return outcome, errSettingNoElicitation
 		}
@@ -425,14 +425,14 @@ func settingsLevel(in GmailSettingsIn) (guard.Level, error) {
 		return guard.LevelDraft, nil
 	case "set_vacation":
 		if in.Enabled == nil {
-			return "", errors.New("gmail_settings: set_vacation needs enabled true or false")
+			return "", public("invalid_input", "gmail_settings: set_vacation needs enabled true or false")
 		}
 		if *in.Enabled {
 			return guard.LevelSend, nil
 		}
 		return guard.LevelDraft, nil
 	default:
-		return "", fmt.Errorf("gmail_settings: action %q is not one of list_filters, create_filter, delete_filter, get_vacation, set_vacation, get_signature, set_signature", in.Action)
+		return "", publicDetail("invalid_input", "gmail_settings: action is not one of list_filters, create_filter, delete_filter, get_vacation, set_vacation, get_signature, set_signature", in.Action)
 	}
 }
 
@@ -593,7 +593,7 @@ func prepareSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn) (
 		}
 	case "delete_filter":
 		if strings.TrimSpace(in.FilterID) == "" {
-			return settingChange{}, errors.New("gmail_settings: delete_filter needs filter_id")
+			return settingChange{}, public("invalid_input", "gmail_settings: delete_filter needs filter_id")
 		}
 		// The retry of the MRTR path deletes the id of this stored
 		// filter and reads Gmail no more, so the human sees the filter
@@ -889,19 +889,19 @@ func vacationOf(in GmailSettingsIn, cur gmail.Vacation) (gmail.Vacation, error) 
 	if in.Start != "" {
 		d, err := time.ParseInLocation(dayLayout, in.Start, time.Local)
 		if err != nil {
-			return gmail.Vacation{}, fmt.Errorf("gmail_settings: start %q is not a date of the form YYYY-MM-DD", in.Start)
+			return gmail.Vacation{}, publicDetail("invalid_input", "gmail_settings: start is not a date of the form YYYY-MM-DD", in.Start)
 		}
 		v.Start = d
 	}
 	if in.End != "" {
 		d, err := time.ParseInLocation(dayLayout, in.End, time.Local)
 		if err != nil {
-			return gmail.Vacation{}, fmt.Errorf("gmail_settings: end %q is not a date of the form YYYY-MM-DD", in.End)
+			return gmail.Vacation{}, publicDetail("invalid_input", "gmail_settings: end is not a date of the form YYYY-MM-DD", in.End)
 		}
 		v.End = d.AddDate(0, 0, 1)
 	}
 	if !v.Start.IsZero() && !v.End.IsZero() && !v.Start.Before(v.End) {
-		return gmail.Vacation{}, errors.New("gmail_settings: end is before start")
+		return gmail.Vacation{}, public("invalid_input", "gmail_settings: end is before start")
 	}
 	return v, nil
 }

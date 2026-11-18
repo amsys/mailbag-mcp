@@ -573,7 +573,7 @@ func TestGmailSettings_DeleteFilterAsks(t *testing.T) {
 	t.Run("a client that cannot ask deletes nothing without the key", func(t *testing.T) {
 		h, rec := deleteFixture("draft")
 		res, asked := settingsDial(t, h, false).run("gmail_settings", deleteArgs("f2"), nil)
-		if asked != 0 || !res.IsError || !isErrForm(bulkText(res), "error", "", errSettingNoElicitation.Error()) {
+		if asked != 0 || !res.IsError || !isErrForm(bulkText(res), "refused", errSettingNoElicitation.Error(), "") {
 			t.Fatalf("asked %d, result %s, want the error form of the fixed refusal", asked, bulkText(res))
 		}
 		if n := countCalls(rec.settingsWriter, "DeleteFilter"); n != 0 {
@@ -669,7 +669,7 @@ func TestGmailSettings_DeleteFilterAsks(t *testing.T) {
 		h, rec := deleteFixture("draft")
 		cs := settingsMRTR(t, h)(nil)
 		res := settingsCall(t, cs, deleteArgs("f2"), "", nil)
-		if !res.IsError || res.NeedsInput() || !isErrForm(bulkText(res), "error", "", errSettingNoElicitation.Error()) {
+		if !res.IsError || res.NeedsInput() || !isErrForm(bulkText(res), "refused", errSettingNoElicitation.Error(), "") {
 			t.Fatalf("result %s, want the error form of the fixed refusal", bulkText(res))
 		}
 		if n := countCalls(rec.settingsWriter, "DeleteFilter"); n != 0 {
@@ -1307,7 +1307,7 @@ func TestGmailSettings_MRTRRetry(t *testing.T) {
 		h, w := settingsFixture("send")
 		cs := settingsMRTR(t, h)(nil)
 		res := settingsCall(t, cs, vacationAwayArgs(), "", nil)
-		if !res.IsError || res.NeedsInput() || !isErrForm(bulkText(res), "error", "", errSettingNoElicitation.Error()) {
+		if !res.IsError || res.NeedsInput() || !isErrForm(bulkText(res), "refused", errSettingNoElicitation.Error(), "") {
 			t.Fatalf("result %s, want the error form of the fixed refusal", bulkText(res))
 		}
 		if n := countCalls(w, "SetVacation"); n != 0 {

@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +18,17 @@ const keyTTL = 24 * time.Hour
 // errKeyInFlight is the fixed error of D5.3 for a key that a send
 // still holds. The text is server text only. It never names the key,
 // because the key is model text.
-var errKeyInFlight = errors.New("a send with this idempotency_key is still in progress, so this call sent nothing; wait for the first call to end, then call send again with the same idempotency_key to read its result")
+var errKeyInFlight = public("refused", "a send with this idempotency_key is still in progress, so this call sent nothing; wait for the first call to end, then call send again with the same idempotency_key to read its result")
 
 // errKeyEmpty is the fixed error for an empty idempotency_key. The
 // schema lists the field as required, and I9 must not depend on the
 // model, so the store refuses the call.
-var errKeyEmpty = errors.New("idempotency_key is empty, so nothing was sent; call send again with a new idempotency_key for this send")
+var errKeyEmpty = public("invalid_input", "idempotency_key is empty, so nothing was sent; call send again with a new idempotency_key for this send")
 
 // errKeyOtherDraft is the fixed error for a key that a call used with
 // another draft_id. The stored result belongs to the other draft, so
 // the store does not give it back for this draft.
-var errKeyOtherDraft = errors.New("this idempotency_key was used with another draft_id, so this call sent nothing; use a new idempotency_key for each draft")
+var errKeyOtherDraft = public("invalid_input", "this idempotency_key was used with another draft_id, so this call sent nothing; use a new idempotency_key for each draft")
 
 // keyStore is the idempotency key store of D5.3. It holds each
 // (account, idempotency_key) pair in memory, per process, for

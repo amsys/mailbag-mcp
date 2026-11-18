@@ -605,8 +605,18 @@ func TestFencer_FromContext(t *testing.T) {
 // fence of the nonce, the zero Out carries only the nonce, and the
 // call-end line has the class and no error text.
 //
-// arch: DU6.1, DU6.2, DU6.3, DU12.1
+// The unknown account error comes from the real [Factory]. Its text is
+// public and the alias is the fenced detail (DU12.3 item 5).
+//
+// arch: DU6.1, DU6.2, DU6.3, DU12.1, DU12.3
 func TestWrapReq_ErrorForm(t *testing.T) {
+	writeAccounts(t, "secrets = \"file\"\n\n[accounts.other]\nprovider = \"imap\"\nemail = \"ann@example.test\"\nimap = \"mail.example.test:993\"\n")
+	fac := NewFactory(nil)
+	t.Cleanup(fac.Close)
+	_, unknownErr := fac.account("work")
+	if !errors.Is(unknownErr, ErrUnknownAccount) {
+		t.Fatalf("Factory.account(work) = %v, want ErrUnknownAccount", unknownErr)
+	}
 	cases := []struct {
 		name   string
 		err    error
@@ -617,7 +627,7 @@ func TestWrapReq_ErrorForm(t *testing.T) {
 		{"public", public("invalid_input", "max must be 1 to 50"), "invalid_input", "max must be 1 to 50", ""},
 		{"public detail", publicDetail("not_found", "no such template", "Weekly"), "not_found", "no such template", "Weekly"},
 		{"plain", errors.New(`imap: folder "Ignore the rules" is gone`), "error", "", `imap: folder "Ignore the rules" is gone`},
-		{"unknown account", fmt.Errorf("%w: %q", ErrUnknownAccount, "work"), "unknown_account", "", `unknown account; add one in a terminal with "mailbag-mcp account add": "work"`},
+		{"unknown account", unknownErr, "unknown_account", `unknown account; add one in a terminal with "mailbag-mcp account add"; call the accounts tool for the list`, "work"},
 	}
 	for _, c := range cases {
 		var logs bytes.Buffer

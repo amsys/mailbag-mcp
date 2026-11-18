@@ -8,7 +8,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -179,6 +178,13 @@ var errBulkNoElicitation = public("refused", "this client cannot ask the human t
 // bulkNotConfirmedText is the error text of a question that did not
 // complete: the client failed or the call ended during the wait.
 const bulkNotConfirmedText = "the confirmation did not complete, so nothing changed"
+
+// errBulkNotConfirmed is the public error of a question that the
+// client failed (DU12.3 item 5). bulk, gmail_settings and their tests
+// share it.
+//
+// arch: DU6.2, DU12.3
+var errBulkNotConfirmed = public("refused", bulkNotConfirmedText)
 
 // bulkActions maps each action word to its change. move takes its
 // target from move_to.
@@ -1021,7 +1027,7 @@ func bulkActionText(ch mail.Change) string {
 //
 // arch: DS9.4, D5.1, D5.2, H1, H4
 func askBulk(ctx context.Context, ss *mcp.ServerSession, acct config.Account, message string) (string, error) {
-	outcome, err := askConfirm(ctx, ss, acct, message, bulkSchema, bulkNotConfirmedText)
+	outcome, err := askConfirm(ctx, ss, acct, message, bulkSchema, errBulkNotConfirmed)
 	if outcome == confirmNoElicitRefused {
 		return outcome, errBulkNoElicitation
 	}
@@ -1035,10 +1041,12 @@ func askBulk(ctx context.Context, ss *mcp.ServerSession, acct config.Account, me
 // [confirmNoElicitRefused] with a nil error, so that each caller
 // gives its own fixed refusal. The wait uses the call context without
 // the tool deadline, bounded by [confirmWaitLimit]. A question that
-// does not complete gives an error with the text notConfirmedText.
+// the client fails gives notConfirmed, a public error. A wait that the
+// context ended gives the text of notConfirmed with the context error
+// wrapped, so its class stays timeout or canceled.
 //
-// arch: DH3.4, DS9.4, D5.2, H4
-func askConfirm(ctx context.Context, ss *mcp.ServerSession, acct config.Account, message string, schema map[string]any, notConfirmedText string) (string, error) {
+// arch: DH3.4, DS9.4, D5.2, H4, DU12.3
+func askConfirm(ctx context.Context, ss *mcp.ServerSession, acct config.Account, message string, schema map[string]any, notConfirmed error) (string, error) {
 	if !canElicit(ss) {
 		if acct.BulkAllowWithoutElicitation {
 			return confirmNoElicitAllowed, nil
@@ -1055,9 +1063,9 @@ func askConfirm(ctx context.Context, ss *mcp.ServerSession, acct config.Account,
 	})
 	if err != nil {
 		if ctxErr := wait.Err(); ctxErr != nil {
-			return "", fmt.Errorf("%s: %w", notConfirmedText, ctxErr)
+			return "", fmt.Errorf("%s: %w", notConfirmed.Error(), ctxErr)
 		}
-		return "", errors.New(notConfirmedText)
+		return "", notConfirmed
 	}
 	return bulkOutcome(res), nil
 }

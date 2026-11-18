@@ -513,8 +513,10 @@ func TestTemplates_Levels(t *testing.T) {
 		fx := newAccessFixture(t, guard.LevelDraft)
 		h := &templatesTool{mail: fx.mail}
 		_, err := h.handle(withFencer(context.Background(), testFencer(t)), TemplatesIn{Account: "work", Action: "delete", Name: "gone"})
-		if err == nil || !strings.Contains(err.Error(), `template "gone" does not exist`) {
-			t.Errorf("err = %v, want the missing template named", err)
+		// DU12.3 item 5: the text is public and the name is the
+		// fenced detail.
+		if pub, detail := errParts(err); err == nil || classOf(err) != "not_found" || pub != "the template does not exist" || detail != "gone" {
+			t.Errorf("err = %v, want class not_found, the public text and the missing template named in the detail", err)
 		}
 	})
 }

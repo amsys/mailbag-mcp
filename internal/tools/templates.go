@@ -134,7 +134,7 @@ func (t *templatesTool) handle(ctx context.Context, in TemplatesIn) (TemplatesOu
 		need = guard.LevelRead
 	case "save", "delete", "draft":
 	default:
-		return TemplatesOut{}, fmt.Errorf("templates: action %q is not one of list, save, delete, draft", in.Action)
+		return TemplatesOut{}, publicDetail("invalid_input", "templates: action is not one of list, save, delete, draft", in.Action)
 	}
 	if err := guard.Require(acct, need); err != nil {
 		return TemplatesOut{}, err
@@ -147,7 +147,7 @@ func (t *templatesTool) handle(ctx context.Context, in TemplatesIn) (TemplatesOu
 		return listTemplates(fencer(ctx), dir)
 	}
 	if !config.ValidAlias(in.Name) {
-		return TemplatesOut{}, fmt.Errorf("templates: action %q needs a name of letters, digits, '-' and '_' only", in.Action)
+		return TemplatesOut{}, publicDetail("invalid_input", "templates: this action needs a name of letters, digits, '-' and '_' only", in.Action)
 	}
 	switch in.Action {
 	case "save":
@@ -167,14 +167,24 @@ func templatesDir() (string, error) {
 	return filepath.Join(base, templatesDirName), nil
 }
 
-// errTemplateMissing names a template that does not exist.
+// errTemplateMissing names a template that does not exist. The name
+// is the detail.
+//
+// arch: DU6.2, DU12.3
 func errTemplateMissing(name string) error {
-	return fmt.Errorf("template %q does not exist", name)
+	return publicDetail("not_found", "the template does not exist", name)
 }
 
-// errTemplateSize names a template larger than templateMaxBytes.
+// templateSizeText is the public text of a template larger than
+// [templateMaxBytes]. A test holds its number equal to the cap.
+const templateSizeText = "the template is larger than 65536 bytes"
+
+// errTemplateSize names a template larger than templateMaxBytes. The
+// name is the detail.
+//
+// arch: DU6.2, DU12.3
 func errTemplateSize(name string) error {
-	return fmt.Errorf("template %q is larger than %d bytes", name, templateMaxBytes)
+	return publicDetail("limit", templateSizeText, name)
 }
 
 // listTemplates gives the name, line 1 and size of each template,
@@ -248,7 +258,7 @@ func templateLine1(root *os.Root, file string) (string, int, error) {
 		return "", 0, err
 	}
 	if !fi.Mode().IsRegular() {
-		return "", 0, errors.New("not a regular file")
+		return "", 0, public("refused", "not a regular file")
 	}
 	f, err := root.Open(file)
 	if err != nil {
@@ -287,7 +297,7 @@ func readTemplate(dir, name string) ([]byte, error) {
 		return nil, fmt.Errorf("template %q cannot be read: %w", name, err)
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("template %q is not a regular file", name)
+		return nil, publicDetail("refused", "the template is not a regular file", name)
 	}
 	if fi.Size() > templateMaxBytes {
 		return nil, errTemplateSize(name)
@@ -320,7 +330,7 @@ func readTemplate(dir, name string) ([]byte, error) {
 func saveTemplate(dir, name, subject, body string) error {
 	subject, body = guard.StripFenceMarkers(subject), guard.StripFenceMarkers(body)
 	if strings.ContainsAny(subject, "\r\n") {
-		return errors.New("templates: subject must be one line")
+		return public("invalid_input", "templates: subject must be one line")
 	}
 	content := subjectPrefix + subject + "\n\n" + body
 	if len(content) > templateMaxBytes {
@@ -411,7 +421,7 @@ func (t *templatesTool) draft(ctx context.Context, dir string, in TemplatesIn) (
 			keys = append(keys, fmt.Sprintf("%q", k))
 		}
 		slices.Sort(keys)
-		return TemplatesOut{}, fmt.Errorf("template %q needs values in vars for: %s", in.Name, strings.Join(keys, ", "))
+		return TemplatesOut{}, publicDetail("invalid_input", "the template needs values in vars for the keys that the detail names", fmt.Sprintf("template %q: %s", in.Name, strings.Join(keys, ", ")))
 	}
 	h := &draftTool{mail: t.mail}
 	out, err := h.handle(ctx, DraftIn{
@@ -434,7 +444,7 @@ func parseTemplate(name, data string) (string, string, error) {
 	line = strings.TrimSuffix(line, "\r")
 	subject, ok := strings.CutPrefix(line, subjectPrefix)
 	if !ok {
-		return "", "", fmt.Errorf("template %q has no %q line 1", name, strings.TrimSpace(subjectPrefix))
+		return "", "", publicDetail("refused", "the template has no \"Subject:\" line 1", name)
 	}
 	if r, ok := strings.CutPrefix(rest, "\r\n"); ok {
 		rest = r

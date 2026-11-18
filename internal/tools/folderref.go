@@ -11,7 +11,6 @@ package tools
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"strings"
 
 	"github.com/amsys/mailbag-mcp/internal/guard"
@@ -27,7 +26,7 @@ const folderRefMaxBytes = 512
 
 // errFolderRef is the error of a value that starts with "=" and is not
 // a valid folder ref. The text echoes no part of the value (INV-10).
-var errFolderRef = errors.New(`a folder value that starts with "=" must be a folder_ref: "=" and 2 to 1024 lowercase hex digits`)
+var errFolderRef = public("invalid_input", `a folder value that starts with "=" must be a folder_ref: "=" and 2 to 1024 lowercase hex digits`)
 
 // folderRef gives the ref of the folder or label name. The ref holds
 // the raw bytes of the name as the provider gave them, so it is the

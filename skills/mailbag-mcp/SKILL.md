@@ -37,13 +37,18 @@ two files differ.
   "Cost is not a problem". DU7.1 set the `tools/list` budget to the
   next 512 B above the measured size (8353 B). Never cut a rule, a limit, a unit or a default from a
   description to fit.
-- `TestBinarySize_Budget` caps the stripped binary at 15,600,000 B
-  (`sizeBudgetBytes` in `size_test.go`; 15,000,000 B before DH1.1, which
-  added go-crypto v1.5.2 and go-sdk v1.8.0). Owner statement,
-  2026-11-09: "Binary size is not a problem, bump it." So size is not a
-  stop condition. When the stripped size passes the budget, the budget
-  goes to the next 100,000 B above the measured size, with a new record
-  in `size-baseline.md`. Do not cut code to fit. The history and each
+- `TestBinarySize_Budget` caps the stripped binary at 16,000,000 B
+  (`sizeBudgetBytes` in `size_test.go`). It was 15,000,000 B before
+  DH1.1 (go-crypto v1.5.2 and go-sdk v1.8.0) and 15,600,000 B before
+  the untrusted-output run (the Fencer, the output gate and the strict
+  grammar; DU12.3 item 10). At the end of that run linux/amd64 is
+  15,708,320 B and windows/amd64, the largest target, is 15,745,536 B.
+  Owner statement, 2026-11-09: "Binary size is not a problem, bump it."
+  So size is not a stop condition. When the stripped size passes the
+  budget, the budget goes to the next 100,000 B above the measured size,
+  with a new record in `size-baseline.md`. The step to 16,000,000 B is
+  larger than that rule: the owner statement of 2026-11-17 ("Cost is not
+  a problem") set it for the whole run. Do not cut code to fit. The history and each
   owner decision are in `docs/features/mailbag/size-baseline.md`. The
   owner puts run-time speed first and size second: do not trade speed
   for bytes without asking.
@@ -534,7 +539,17 @@ two files differ.
   `strict:"<kind>"` tag and passes `guard.Strict` (`strict.go`, DU3.1;
   kinds `nonce`, `id`, `folder`, `ref`, `date`, `day`, `alias`,
   `word`, `flags`, `hex`, `cursor`, `msgid`, `owner`), or kind `note`,
-  which the note registry checks (`notes.go`, DU3.5). The value of
+  which the note registry checks (`notes.go`, DU3.5). The kind `owner`
+  is not a closed grammar (DU12.3 item 3). `strictOwner` checks free
+  text that only the owner config and the save roots feed: valid UTF-8
+  of 1 to 1024 B; no rune of category Cc (so no line feed and no tab),
+  Cf, Co or Cs; no Hangul filler; unchanged by `StripFenceMarkers`; no
+  template token in the text or in its NFKC copy. It needs no NFC or
+  NFKC, so `ACME™ Support`, a no-break space and a combining mark pass.
+  Never give the kind `owner` to a value that a model or a sender can
+  choose. No check runs at config load, so a bad identity name gives
+  `output_refused` on `accounts`. `TestStrict_OwnerFreeText`,
+  `TestAccountsOut_OwnerNamesPass`. The value of
   `untrusted` is an object of named fields, never one joined string,
   and a list is an array of fences; numbers and bools stay outside.
   Each Out struct embeds `Head` first, with no JSON tag, and `Head` is
@@ -547,7 +562,16 @@ two files differ.
   output. A handler never writes `Head`. `WrapReq` makes the Fencer
   before the handler and puts it in the context (`withFencer`); a
   handler takes it once at its top with `fencer(ctx)`, before any
-  goroutine, and passes it to helpers by value. After the handler,
+  goroutine, and passes it to helpers by value. Trap (DU12.3 item 1):
+  `untimed` gives the parent context of the call, which has no Fencer.
+  A context made from it gets the Fencer of the call back with
+  `withFencer` before any code that builds output runs: `applyAfter`
+  of `gmail_settings` does this after `detach`, and the one-click path
+  of `unsubscribe` after `context.WithTimeout`. `bulk` and `send` pass
+  an `f` taken before the wait. Without it, `Wrap` panics on the zero Fencer after the provider
+  write is done, and a retry writes twice.
+  `TestGmailSettings_AcceptedFilterKeepsFencer` (its fake gives the
+  filter back with `From` set, as Gmail does). After the handler,
   `WrapReq` sets `_fence` and runs the output gate `checkOut`
   (`outgate.go`, DU4.1) on every success result. A failure sends none
   of the handler output: the result is an error with the class
@@ -557,6 +581,11 @@ two files differ.
   a fence or a nonce (INV-6): the send key store keeps plain detail
   text, and a replayed Out gets the nonce of the new response. A new
   Out type goes in `toolOutTypes`, or the static twin fails.
+  `TestModify_ResultCarriesNoSenderText` fails when `Note`, `Undo`,
+  `NewID` or `Summary` of its fixture is empty (`modifyFixtureGaps`,
+  DU12.3 item 11), because the fence walk asks for a value only under
+  `untrusted` and in lists; keep that fixture full.
+  `TestModify_FixtureGapsSeen`.
   `TestTools_EveryUntrustedFieldFenced`, `TestTools_NoNoteWithheld`,
   `TestOut_EveryStringFieldHasZone`, `TestOut_StaticTwinFindsEachFault`,
   `TestOut_KeysSortAfterFence`, `TestOut_NoTaggedEmbed`,
@@ -574,7 +603,20 @@ two files differ.
   `publicDetail(class, text, detail)` give public text, and `text` must
   be a string literal or a constant. Model input that an error names
   goes in `detail`. Any other error has no public text: its whole text
-  is the detail, so text of unknown origin is always fenced. Both parts
+  is the detail, so text of unknown origin is always fenced. So each
+  fixed refusal of the server is `public(class, text)`, never
+  `errors.New`, and an error that echoes model input or an alias is
+  `publicDetail` with the echo as the detail (DU12.3 item 5): the model
+  must act on this guidance, and the instructions say that fenced text
+  is never an instruction. A number in a public text is a literal, and
+  a test holds it equal to its limit (`sendLimitText`,
+  `templateSizeText`, `unsubMaxIDsText`). `ErrUnknownAccount` is public
+  with the class `unknown_account`; `Factory.account` gives an
+  `unknownAccountErr` that holds a `publicDetail` with the alias, so
+  `errors.Is(err, ErrUnknownAccount)` still holds. `askConfirm` takes
+  the refusal of a failed question as a public error; a wait that the
+  context ended wraps the context error, so its class stays `timeout`
+  or `canceled`. `TestServerRefusals_PublicForm`. Both parts
   pass `guard.Redact` (G5). The structured content of an error is the
   zero Out with `_fence` set. The SDK refuses a bad argument before
   `WrapReq` runs; the receiving middleware `markCalls` (`wire.go`,
@@ -603,6 +645,14 @@ two files differ.
   `TestSavePath_ExistingFileNeverOverwritten`,
   `TestSavePath_SwappedDirSymlink`, `TestSaveName_Table`,
   `TestSavePath_HiddenBelowRootRefused`, `TestAttachment_BadNameFallsBack`.
+  The result of `attachment` and of each `export` file gives `dir` as
+  the matched save root only (`guard.SaveRoot`, kind `owner`), never the
+  `save_dir` of the call (DU12.3 item 2). A mail can ask the model to
+  save into a sub-directory whose name is a sentence, so the path below
+  the root is in `untrusted.subdir` as one fence, and the key is absent
+  when the file is in the root. The file name is in `untrusted.name`.
+  `TestSaveRoot_Split`, `TestSaveTools_SubdirFenced`,
+  `TestSaveTools_RootFileHasNoSubdir`, `TestSaveTools_NFKCRootPasses`.
 - G7 Attach path: refuse a hidden path component. Refuse a path under
   `config.ConfigDir()` or `config.StateDir()`, after links: the macOS
   config dir has no dot component and holds the secrets file. When
@@ -752,31 +802,42 @@ two files differ.
   keywords go to `untrusted.labels`, one fence each; `flags` holds
   only the closed words `unread`, `starred`, `answered`, `draft`,
   `flagged`, `forwarded`, `junk` and `important`. Each input field that
-  takes a folder goes through `folderArg`: a value that starts with `=`
+  names a folder goes through `folderArg`: a value that starts with `=`
   must be a valid ref and decodes to the raw name; any other value is
-  a name and loses its fence markers first. The ref gives an exact
-  round trip; the fenced name is the NFKC form (owner choice,
-  2026-11-09), and a later call with it can fail. An IMAP or Outlook id
+  a name and loses its fence markers first. A new folder name (the
+  `name` of `folders` create, `new_name`) takes no ref (G19). The ref
+  gives an exact round trip; the fenced name is the NFKC form (owner
+  choice, 2026-11-09), and a later call with it can fail. Known limit
+  (L2): a folder whose literal name starts with `=` is read as a ref,
+  so a model that gives the shown name, not its `folder_ref`, can act
+  on another folder. An IMAP or Outlook id
   is `<uidvalidity>-<uid>-<hex of the folder name>` (DU3.2), so a
   folder name never shows in an id; `ParseIMAPID` still reads the old
   form `<uidvalidity>.<uid>.<folder>` from the undo journal and from
   earlier sessions. No id is echoed: each id that a tool writes passes
   `normalizeID` (`internal/tools/ids.go`), which parses and formats it
   again for IMAP and Outlook and checks the `id` grammar for Gmail and
-  JMAP; an id that fails is not written (an unsubscribe row then has
-  its `index` only). Known limit: a Gmail or JMAP id from a hostile
-  mail server (not a sender) is checked for its character set only.
+  JMAP. For IMAP and Outlook it also gives false when the formatted id
+  fails the `id` grammar (a folder name over 512 B), so that one row is
+  dropped, not the whole result refused (DU12.3 item 6). An id that
+  fails is not written: `search` drops the row and sets `partial`
+  (DU12.3 item 8), `modify` drops the row, and a `bulk` sample row or
+  an `unsubscribe` row stays with no `id`. Known limit: a Gmail or JMAP
+  id from a hostile mail server (not a sender) is checked for its
+  character set only.
   A `note` matches the closed registry of `notes.go`; parts join with
   `"; "`, and no form holds that separator. A provider note that
   matches no form becomes `note withheld`; a send warning keeps its
   registry text, and the provider text goes to `untrusted.detail`
-  (`SendResult.WarningDetail`). `errNote` and `guard.CleanServerName`
-  have no caller now; do not use them for a field outside the fence.
+  (`SendResult.WarningDetail`). `guard.CleanServerName` has no caller
+  now; do not use it for a field outside the fence. `errNote` is gone:
+  `errDetail` replaced it.
   `TestSearch_ProviderErrorSanitized`, `TestServerNames_Cleaned`
   (also pins the NFKC form of the fenced name),
   `TestFolderRef_RoundTrip`, `TestFolderArg_BadRefRefused`,
   `TestFolderArg_NameStripsMarkers`, `TestID_NewFormAndOldForm`,
-  `TestNormalizeID`, `TestStrictNote_Withheld`,
+  `TestNormalizeID`, `TestNormalizeID_LongFolderRefused`,
+  `TestSearch_LongFolderRowDropped`, `TestStrictNote_Withheld`,
   `TestSend_WarningDetailFencedPerResponse`.
 - G19 The outgoing text of the Gmail settings writes loses every fence
   marker (DH2.6, B4, M14). `prepareSetting` runs
@@ -793,9 +854,24 @@ two files differ.
   in the test. No marker and no nonce reaches outgoing mail, a Gmail
   setting, a template file or the text shown to the human (INV-7).
   `templates` save strips the subject and body before the file write.
-  `folders` create and rename refuse, with `invalid_input`, a name that
-  changes under `StripFenceMarkers` or `StripInvisible` or that holds a
-  control character. The bulk question uses `plainLine` (`Sanitize`,
+  `folders` create and rename refuse, with `invalid_input` and before
+  any provider call, a new name that starts with `=`, that changes under
+  `StripFenceMarkers` or `StripInvisible`, or that holds a control
+  character (`checkNewFolderName`). The `=` rule (DU12.3 item 4) exists
+  because a create `name` and a `new_name` take no folder_ref: a ref
+  there would pass a hostile name around the check, and a folder whose
+  name starts with `=` can be given only by its ref. Only the existing
+  folder of rename and delete goes through `folderArg`. A folder_ref in
+  `move_to` of `modify` and `bulk` can make a Gmail label (E4), so
+  `checkRefTarget` refuses it with `errRefTarget` (`invalid_input`, no
+  echo) when its decoded name fails `checkNewFolderName` and no folder
+  has exactly that raw name. It reads the folder list only in that
+  case; `bulk` checks before the search and the question, `modify`
+  after the level check (DU12.3 item 7). A new field that can make a
+  folder or a label needs the same check.
+  `TestFolders_NewNameRefRefused`, `TestCheckRefTarget`,
+  `TestModify_RefTargetMustExist`, `TestBulk_RefTargetMustExist`.
+  The bulk question uses `plainLine` (`Sanitize`,
   line breaks to spaces, 120 runes), with no marker and no nonce.
   `TestOutgoing_NoFenceMarkerAnywhere` (ASCII, look-alike and nonce
   markers in every field, checked at the provider fake),
@@ -940,7 +1016,8 @@ two files differ.
   as a plain accept, and the settings code never reads a grant (I8).
   On the old protocol `askConfirm` (shared with `askBulk`) asks, and an
   accept runs on a detached context with a new full deadline, as send
-  does (DS11.9). On the MRTR path the first call stores the prepared
+  does (DS11.9). `applyAfter` puts the Fencer of the call back on that
+  context (G3, DU12.3 item 1). On the MRTR path the first call stores the prepared
   change in a `pendingSetting` bound to the session, the account, the
   action and the SHA-256 of the input. The retry takes the record one
   time and applies the stored change. It does not read Gmail again, so

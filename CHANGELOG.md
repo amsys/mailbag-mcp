@@ -29,6 +29,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `filter_id` that names no filter gets the class `not_found`, and
   nobody is asked. The `[bulk]` key `allow_without_elicitation` also
   covers this question.
+- The `dir` of an `attachment` or `export` result holds only the
+  allowed save root. The path below the root that the call chose is in
+  `untrusted.subdir`, inside a fence. A mail could ask the model to save
+  into a directory whose name is an instruction; that name no longer
+  shows outside a fence.
+- A new folder name must not start with `=`: `folders` refuses such a
+  create `name` or rename `new_name` with the class `invalid_input`.
+  These two fields take no `folder_ref`.
+- A `folder_ref` in `move_to` of `modify` or `bulk` must name a folder
+  that exists when its name starts with `=`, or holds fence marker
+  text, a hidden character or a control character. So a move cannot
+  make such a Gmail label.
 
 ### Changed
 
@@ -38,9 +50,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `<uidvalidity>-<uid>-<hex of the folder name>`. The old form
   `<uidvalidity>.<uid>.<folder>` still works as input.
 - A folder shows as `folder_ref` (`=` and hex of the name) plus the
-  name under `untrusted.folder`. Input fields that take a folder accept
-  a name or a `folder_ref`.
-- Some byte budgets are larger, because the new form is longer.
+  name under `untrusted.folder`. Input fields that name an existing
+  folder accept a name or a `folder_ref`.
+- An IMAP or Outlook message in a folder whose name is longer than 512
+  bytes is left out of a result, as a message whose id does not parse
+  is. `search` then sets `partial`. One such message does not make the
+  whole result fail.
+- The fixed refusals of the server (send, idempotency key, Gmail
+  settings, templates, unsubscribe, folders, an unknown account) give
+  their guidance outside the fence, with a class word: `refused`,
+  `invalid_input`, `limit`, `not_found` or `unknown_account`. Model
+  input that a refusal names, such as an alias or a template name, is
+  in a fence after the text. Some texts changed: the send limit gives
+  the account and the wait in the fenced part.
+- Text from your own setup (the addresses, identity names and
+  `reply_match` entries of `accounts.toml`, and the save roots) is
+  checked free text, not a closed grammar. It must have no control
+  character, no hidden character, no fence marker and no chat template
+  token, and it need not be in NFKC form, so a name such as
+  `ACME™ Support` passes. A value that fails gives `output_refused`.
+- The byte budgets are larger, because the new form is longer: the
+  `tools/list` reply with every toolset on is at most 8704 B (was
+  8192 B), the server instructions are at most 1024 B (was 640 B), and
+  the stripped release binary is at most 16,000,000 B (was
+  15,600,000 B).
+
+### Fixed
+
+- A Gmail settings change that the human accepts no longer ends with
+  `error: internal` after Gmail made the change. The fault came with the
+  two-zone form and was in no release.
 
 ## [0.2.0-alpha.1] - 2026-11-17
 

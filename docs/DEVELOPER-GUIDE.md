@@ -86,13 +86,18 @@ each input field is in `internal/cli/toolsdoc.go`.
 The `tools/list` reply goes into the context of the model at each
 session start. `go run . tools size` prints its size per tool.
 `TestToolsList_Budget` in `internal/tools/schema_test.go` keeps the
-core tools at 4096 B or less and all tools at 8192 B or less. Do not
-raise these numbers without a decision record in `PLAN.md`.
+core tools at 4096 B or less and all tools at 8704 B or less (8192 B
+before the `folder_ref` input texts). `TestInstructions_BudgetR1` in the
+same file keeps the server instructions at 1024 B or less (640 B before
+the two-zone rule). Do not raise these numbers without a decision
+record in `PLAN.md`. `PLAN.md` is a private record that git does not
+track, so the comment of each budget test also names the reason for
+the present number.
 
 ### Binary size
 
 `TestBinarySize_Budget` (`size_test.go`) builds the stripped binary and
-fails above `sizeBudgetBytes` (15,600,000 B). The measured history and
+fails above `sizeBudgetBytes` (16,000,000 B). The measured history and
 each decision that raised the budget are in
 `docs/features/mailbag/size-baseline.md`. Raise the budget only with a
 new record in that file.

@@ -24,11 +24,13 @@ search {"query": "is:unread from:billing"}
   {"id": "1700000001-4211-494e424f58", "account": "work",
    "folder_ref": "=494e424f58", "date": "2026-10-12T08:14:00Z", "flags": "unread",
    "untrusted": {
+     "folder": "[UNTRUSTED_3fa9c2e17b604d55]\nINBOX\n[/UNTRUSTED_3fa9c2e17b604d55]",
      "from": "[UNTRUSTED_3fa9c2e17b604d55]\nBilling <billing@shop.example.com>\n[/UNTRUSTED_3fa9c2e17b604d55]",
      "subject": "[UNTRUSTED_3fa9c2e17b604d55]\nInvoice 2026-118\n[/UNTRUSTED_3fa9c2e17b604d55]"}},
   {"id": "1600000002-977-494e424f58", "account": "home",
    "folder_ref": "=494e424f58", "date": "2026-10-11T17:40:00Z", "flags": "unread",
    "untrusted": {
+     "folder": "[UNTRUSTED_3fa9c2e17b604d55]\nINBOX\n[/UNTRUSTED_3fa9c2e17b604d55]",
      "from": "[UNTRUSTED_3fa9c2e17b604d55]\nbilling@power.example.org\n[/UNTRUSTED_3fa9c2e17b604d55]",
      "subject": "[UNTRUSTED_3fa9c2e17b604d55]\nYour October bill\n[/UNTRUSTED_3fa9c2e17b604d55]"}}
 ]}

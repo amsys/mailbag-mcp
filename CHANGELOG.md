@@ -88,6 +88,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A Gmail settings change that the human accepts no longer ends with
   `error: internal` after Gmail made the change. The fault came with the
   two-zone form and was in no release.
+- `attachment` decodes the `ref` that `read` gives as `=` and hex for a
+  part id that is not digits and dots, for example a JMAP part id. Such
+  an attachment can be saved again. A `ref` that starts with `=` and is
+  not `=` and 2 to 512 lowercase hex digits is refused with the class
+  `invalid_input`. The fault came with the two-zone form and was in no
+  release.
+- `folders` create, rename and delete: when the change is done but the
+  folder list after it cannot be read, the call is a success. The
+  `folders` list is empty, the new `note` says that the change is done
+  and gives the error class, and the error text is in
+  `untrusted.detail`. Before, the call gave an error, so a retry could
+  fail or make a second folder.
 
 ## [0.2.0-alpha.1] - 2026-11-17
 

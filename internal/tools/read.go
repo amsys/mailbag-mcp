@@ -527,8 +527,10 @@ const errRefText = `a ref that starts with "=" must be "=" and 2 to 512 lowercas
 // value that starts with "=" must be "=" and 2 to 512 lowercase hex
 // digits, and refArg gives the part id that the hex holds. Any other
 // value is a part id or a file name, and refArg gives it as it is.
+// The attachment tool runs it on its ref input before the provider
+// call (DU12.4 item 3).
 //
-// arch: DU5.3
+// arch: DU5.3, DU12.4
 func refArg(s string) (string, error) {
 	if !strings.HasPrefix(s, folderRefPrefix) {
 		return s, nil

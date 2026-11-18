@@ -95,6 +95,11 @@ var noteTexts = []string{
 	"no message needed a change to go back",
 	"{n} messages changed or gone since the operation were left as they are",
 
+	// folders: a create, rename or delete whose list read failed after
+	// the change gives "the change is done" and this form (DU12.4
+	// item 4).
+	"the folder list could not be read: {word}",
+
 	// bulk.
 	"dry run: nothing changed",
 	"the set stops at max = {n}",

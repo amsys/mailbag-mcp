@@ -5,8 +5,10 @@ package tools
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -369,5 +371,110 @@ func TestSaveTools_NFKCRootPasses(t *testing.T) {
 	exp.setFence(f.Nonce())
 	if err := checkOut(f, exp); err != nil {
 		t.Errorf("gate refused the export result: %v", err)
+	}
+}
+
+// jmapPartProvider is a readProvider whose Attachment acts as the JMAP
+// provider does: it finds the part by its partId and fails for any
+// other ref. It records each ref it got.
+type jmapPartProvider struct {
+	*readProvider
+	partID string
+	got    []string
+}
+
+func (p *jmapPartProvider) Attachment(ctx context.Context, id, ref string) (io.ReadCloser, mail.AttachmentInfo, error) {
+	p.got = append(p.got, ref)
+	if ref != p.partID {
+		return nil, mail.AttachmentInfo{}, errors.New("jmap: the message has no attachment with this ref; read the message for the list")
+	}
+	return p.readProvider.Attachment(ctx, id, ref)
+}
+
+// jmapPartMail opens a jmapPartProvider for a JMAP account.
+type jmapPartMail struct {
+	*readMail
+	prov *jmapPartProvider
+}
+
+func (f *jmapPartMail) Open(context.Context, string) (Reader, config.Account, error) {
+	return f.prov, config.Account{Alias: f.alias, Provider: "jmap"}, nil
+}
+
+// TestAttachment_ReadRefRoundTrip holds DU12.4 item 3 (audit B M3). A
+// JMAP part id may be any string (RFC 8621), for example "f_abc123".
+// read gives it as "=" and hex, and attachment takes that ref from the
+// read result: the provider must get the part id itself, and the file
+// must be saved. A ref of digits and dots reaches the provider as it
+// is. A ref that starts with "=" and is not "=" and hex is refused with
+// invalid_input before any provider call and with no echo of the value.
+//
+// arch: DU12.4, DU5.3, DU3.1
+func TestAttachment_ReadRefRoundTrip(t *testing.T) {
+	const partID = "f_abc123"
+	m := &mail.Message{ID: "Mabc123", Folder: "INBOX", Date: internalDate,
+		From: mail.Address{Address: "ann@example.test"}, Subject: "invoice", Body: "body",
+		Attachments: []mail.Attachment{{Ref: partID, Filename: "invoice.pdf", ContentType: "application/pdf", Size: 5}}}
+	prov := &jmapPartProvider{
+		readProvider: &readProvider{msg: m, att: []byte("bytes"), info: mail.AttachmentInfo{Filename: "invoice.pdf"}},
+		partID:       partID,
+	}
+	fm := &jmapPartMail{readMail: &readMail{alias: "work"}, prov: prov}
+	f := testFencer(t)
+	ctx := withFencer(context.Background(), f)
+
+	rd, err := (&readTool{mail: fm}).handle(ctx, ReadIn{Account: "work", ID: m.ID})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(rd.Messages) != 1 || len(rd.Messages[0].Attachments) != 1 {
+		t.Fatalf("read gave %+v, want one message with one attachment", rd.Messages)
+	}
+	id, ref := rd.Messages[0].ID, rd.Messages[0].Attachments[0].Ref
+	if want := "=" + hex.EncodeToString([]byte(partID)); ref != want {
+		t.Fatalf("read ref = %q, want %q", ref, want)
+	}
+
+	dir := realTempDir(t)
+	out, err := (&attachmentTool{mail: fm}).handle(ctx, AttachmentIn{Account: "work", ID: id, Ref: ref, SaveDir: dir})
+	if err != nil {
+		t.Fatalf("attachment with the read ref %q: %v", ref, err)
+	}
+	if len(prov.got) != 1 || prov.got[0] != partID {
+		t.Errorf("provider got refs %q, want [%q]", prov.got, partID)
+	}
+	b, err := os.ReadFile(savedPath(t, out.Dir, out.Untrusted))
+	if err != nil || string(b) != "bytes" {
+		t.Errorf("saved file = %q, %v; want the attachment bytes", b, err)
+	}
+	out.setFence(f.Nonce())
+	if err := checkOut(f, out); err != nil {
+		t.Errorf("the output gate refused the attachment result: %v", err)
+	}
+
+	prov.partID, prov.got = "2.1", nil
+	if _, err := (&attachmentTool{mail: fm}).handle(ctx, AttachmentIn{Account: "work", ID: id, Ref: "2.1", SaveDir: dir}); err != nil {
+		t.Errorf("attachment with ref 2.1: %v", err)
+	}
+	if len(prov.got) != 1 || prov.got[0] != "2.1" {
+		t.Errorf("provider got refs %q, want [2.1] as it is", prov.got)
+	}
+
+	for _, bad := range []string{"=zz", "=", "=ABCD", "=6"} {
+		prov.got = nil
+		bdir := realTempDir(t)
+		_, err := (&attachmentTool{mail: fm}).handle(ctx, AttachmentIn{Account: "work", ID: id, Ref: bad, SaveDir: bdir})
+		if !isPublic(err, public("invalid_input", errRefText)) {
+			t.Errorf("ref %q: err = %v, want the invalid_input ref refusal", bad, err)
+		}
+		if len(bad) > 1 && strings.Contains(fmt.Sprint(err), bad[1:]) {
+			t.Errorf("ref %q: the error echoes the value: %v", bad, err)
+		}
+		if len(prov.got) != 0 {
+			t.Errorf("ref %q: the provider got %q, want no call", bad, prov.got)
+		}
+		if ents, _ := os.ReadDir(bdir); len(ents) != 0 {
+			t.Errorf("ref %q: %d files written, want none", bad, len(ents))
+		}
 	}
 }

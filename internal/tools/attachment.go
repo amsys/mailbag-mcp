@@ -106,7 +106,7 @@ type attachmentTool struct{ mail Mail }
 // caps its own fetch, but this tool must not trust a provider to have
 // done so before it writes bytes to a disk.
 //
-// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9, DU5.1, DU5.6, DU6.1
+// arch: T4.5, §3.16, §3.15, App B, G3, G6, §10.9, DU5.1, DU5.6, DU6.1, DU12.4
 func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (AttachmentOut, error) {
 	fc := fencer(ctx)
 	p, _, err := t.mail.Open(ctx, in.Account)
@@ -116,12 +116,20 @@ func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (Attachmen
 	if in.ID == "" || in.Ref == "" {
 		return AttachmentOut{}, public("invalid_input", "id and ref are required; take both from a read result")
 	}
+	// read writes a part id that is not digits and dots as "=" and
+	// hex (partRef). The provider needs the part id itself, so refArg
+	// decodes the ref before any provider call or disk write
+	// (DU12.4 item 3).
+	ref, err := refArg(in.Ref)
+	if err != nil {
+		return AttachmentOut{}, err
+	}
 	dir, roots, err := saveTarget(in.SaveDir, t.mail.DownloadDirs()...)
 	if err != nil {
 		return AttachmentOut{}, err
 	}
 
-	rc, info, err := p.Attachment(ctx, in.ID, in.Ref)
+	rc, info, err := p.Attachment(ctx, in.ID, ref)
 	if err != nil {
 		// A provider error can quote sender text. WrapReq puts the
 		// text of an error of unknown origin in a fence (DU6.1).

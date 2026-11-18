@@ -72,10 +72,25 @@ type FolderUntrusted struct {
 // name that a caller sent is often not the name the folder has
 // (C11). And a list after the change is the proof that the change
 // happened, in the shape the caller already knows.
+//
+// When the change is done but the list after it fails, the result is
+// still a success: Folders is empty, Note says that the change is done
+// and names the class word of the list error, and Untrusted.Detail
+// holds the error text in one fence (DU12.4 item 4). An error here
+// would tell the model that nothing changed, and a retry could then
+// fail or make a second folder.
+//
+// arch: DU5.5, DU12.4, DU3.5, DU6.2
 type FoldersOut struct {
 	Head
 	Account string      `json:"account" strict:"alias"`
 	Folders []FolderRow `json:"folders"`
+	// Note is a text of the note registry (DU3.5). Only a change whose
+	// list read failed sets it.
+	Note string `json:"note,omitempty" strict:"note"`
+	// Untrusted holds the error text of the failed list read that the
+	// note names by its class word (DU3.5, DU6.2).
+	Untrusted *Detail `json:"untrusted,omitempty"`
 }
 
 // AddFolders adds the "folders" tool to srv (§3.16): one account,
@@ -150,9 +165,27 @@ func (t *foldersTool) handle(ctx context.Context, in FoldersIn) (FoldersOut, err
 		return FoldersOut{}, err
 	}
 	// The list after the change carries the name the server gave the
-	// folder, which the provider may have changed (C11).
-	return t.list(ctx, f, w, acct, in.Account)
+	// folder, which the provider may have changed (C11). The change is
+	// done at this point, so a failed list is a note, not an error
+	// (DU12.4 item 4).
+	out, err := t.list(ctx, f, w, acct, in.Account)
+	if err != nil {
+		return FoldersOut{
+			Account:   in.Account,
+			Folders:   []FolderRow{},
+			Note:      folderListFailedNote + classOf(err),
+			Untrusted: errDetail(f, err),
+		}, nil
+	}
+	return out, nil
 }
+
+// folderListFailedNote is the note of a create, rename or delete whose
+// list read failed after the change. The class word of the list error
+// follows it (DU12.4 item 4, DU6.2).
+//
+// arch: DU12.4, DU3.5
+const folderListFailedNote = "the change is done" + noteSep + "the folder list could not be read: "
 
 // checkFolderArgs holds the arguments each action needs, so a call
 // that names no folder fails before it opens an account.

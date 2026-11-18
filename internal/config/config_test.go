@@ -17,12 +17,12 @@ import (
 
 // TestAlias_Pattern checks the rule of B17: an alias becomes a keyring
 // key, a file name and a part of a printed command, so it must match
-// ^[a-zA-Z0-9_-]+$.
+// ^[a-zA-Z0-9_-]+$ and have at most 64 characters.
 //
-// arch: T1.2, §3.3, B17
+// arch: T1.2, §3.3, B17, DU12.4
 func TestAlias_Pattern(t *testing.T) {
 	valid := []string{"work", "home2", "hot-mail_alias", "A"}
-	invalid := []string{"", "../../x", "a.b", "a b", "a/b", "a:b", "über"}
+	invalid := []string{"", "../../x", "a.b", "a b", "a/b", "a:b", "über", strings.Repeat("a", 65)}
 
 	for _, a := range valid {
 		if !ValidAlias(a) {
@@ -91,6 +91,40 @@ email    = "me@example.com"
 	_, err := Load(path)
 	if !errors.Is(err, ErrInvalidAlias) {
 		t.Fatalf("Load: err = %v, want ErrInvalidAlias", err)
+	}
+}
+
+// TestConfig_Load_AliasLengthLimit checks the length limit of an alias
+// at load: 64 characters pass, 65 fail with ErrInvalidAlias and a text
+// that names the limit. A tool result carries the alias outside every
+// fence as the strict kind alias, which takes at most 64; a longer
+// alias made every write tool report output_refused after the write
+// (audit B M1).
+//
+// arch: DU12.4, B17
+func TestConfig_Load_AliasLengthLimit(t *testing.T) {
+	const block = `
+[accounts.%s]
+provider = "imap"
+email    = "me@example.com"
+`
+	at := strings.Repeat("a", MaxAliasLen)
+	if _, err := Load(writeTemp(t, fmt.Sprintf(block, at))); err != nil {
+		t.Fatalf("Load with an alias of %d characters: %v", MaxAliasLen, err)
+	}
+	over := at + "b"
+	_, err := Load(writeTemp(t, fmt.Sprintf(block, over)))
+	if !errors.Is(err, ErrInvalidAlias) {
+		t.Fatalf("Load with an alias of %d characters: err = %v, want ErrInvalidAlias", len(over), err)
+	}
+	if !strings.Contains(err.Error(), "more than 64 characters") {
+		t.Errorf("Load error = %q, want the limit named", err)
+	}
+	if MaxAliasLen != 64 {
+		t.Errorf("MaxAliasLen = %d, want 64 (the strict kind alias)", MaxAliasLen)
+	}
+	if ValidAlias(over) || !AliasTooLong(over) || AliasTooLong(at) || AliasTooLong(over+".") {
+		t.Errorf("ValidAlias/AliasTooLong disagree with the limit")
 	}
 }
 

@@ -157,6 +157,7 @@ var noteTexts = []string{
 	// templates.
 	"{n} of {n} templates shown.",
 	"{n} templates could not be read: each is not a regular file in the templates directory.",
+	"{n} templates are not shown: each name has more than {n} characters.",
 
 	// accounts: the add hint (addAccountHint) is two forms.
 	"no account yet",

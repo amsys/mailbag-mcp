@@ -69,16 +69,34 @@ var knownSaveSent = map[string]bool{
 	"never":  true,
 }
 
-// aliasPattern is the rule of B17: the alias becomes a keyring key, a
-// file name and a part of a printed shell command.
+// aliasPattern is the character rule of B17: the alias becomes a
+// keyring key, a file name and a part of a printed shell command.
 var aliasPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// MaxAliasLen is the longest alias, in characters. A tool result
+// carries the alias outside every fence, and the strict kind alias
+// takes at most this length, so the input has the same limit
+// (DU12.4 item 2). An alias holds ASCII only, so a character is a
+// byte.
+const MaxAliasLen = 64
+
 // ValidAlias reports whether alias is safe to use as a keyring key, a
-// file name and a part of a printed command (B17).
+// file name and a part of a printed command (B17), and has at most
+// MaxAliasLen characters.
 //
-// arch: T1.2, B17
+// arch: T1.2, B17, DU12.4
 func ValidAlias(alias string) bool {
-	return aliasPattern.MatchString(alias)
+	return len(alias) <= MaxAliasLen && aliasPattern.MatchString(alias)
+}
+
+// AliasTooLong reports whether alias holds only the characters of
+// B17 but has more than MaxAliasLen of them. A caller uses it to name
+// the limit in its error text, and to find a name that an older
+// version accepted.
+//
+// arch: DU12.4
+func AliasTooLong(alias string) bool {
+	return len(alias) > MaxAliasLen && aliasPattern.MatchString(alias)
 }
 
 // ValidEmail reports whether email is one bare mail address with no
@@ -556,6 +574,9 @@ func validateIn(raw rawFile, modTime time.Time, dir string) (*snapshot, error) {
 
 	accounts := make(map[string]Account, len(raw.Accounts))
 	for alias, ra := range raw.Accounts {
+		if AliasTooLong(alias) {
+			return nil, fmt.Errorf("config: account alias %q: more than %d characters: %w", alias, MaxAliasLen, ErrInvalidAlias)
+		}
 		if !ValidAlias(alias) {
 			return nil, fmt.Errorf("config: account alias %q: %w", alias, ErrInvalidAlias)
 		}

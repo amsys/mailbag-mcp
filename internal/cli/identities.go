@@ -121,7 +121,7 @@ func identitiesDetect(args []string, env Env) int {
 		return usageErrf(env, "--sample must be 1 to %d", detectMaxSample)
 	}
 	if err := guard.ValidateAlias(alias); err != nil {
-		return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+		return aliasUsage(env, alias)
 	}
 	path, err := config.AccountsPath()
 	if err != nil {

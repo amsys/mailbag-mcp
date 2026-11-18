@@ -434,6 +434,88 @@ func TestCLI_AddListRemoveRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCLI_AliasLengthLimit holds the alias limit of DU12.4 item 2 in
+// the CLI. "account add" refuses an alias of 65 characters with exit 2
+// and a text that names the limit, before any prompt and with no file
+// or secret written; 64 characters still work. "account remove" still
+// takes a 65-character alias that an older version wrote, because the
+// strict load now refuses the whole file (B18).
+//
+// arch: DU12.4, B5, B17, B18
+func TestCLI_AliasLengthLimit(t *testing.T) {
+	over := strings.Repeat("a", 65)
+	t.Run("add refuses 65", func(t *testing.T) {
+		dir := sandbox(t)
+		var out, errOut bytes.Buffer
+		code := Run(addArgs(over), Env{
+			Stdout: &out, Stderr: &errOut,
+			ReadSecret: func(string) (string, error) {
+				t.Error("the CLI asked for a password for an alias that is too long")
+				return "", nil
+			},
+			Login: func(context.Context, string) (string, error) {
+				t.Error("login ran for an alias that is too long")
+				return "", nil
+			},
+		})
+		if code != exitUsage {
+			t.Fatalf("exit code = %d, want %d\nstderr: %s", code, exitUsage, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "use at most 64 characters") {
+			t.Errorf("stderr = %q, want the limit named", errOut.String())
+		}
+		if _, err := os.Stat(filepath.Join(dir, "accounts.toml")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("a refused add wrote accounts.toml: %v", err)
+		}
+		if hasSecret(t, dir, over) {
+			t.Error("a refused add wrote a secret")
+		}
+	})
+	t.Run("add takes 64", func(t *testing.T) {
+		dir := sandbox(t)
+		at := strings.Repeat("a", 64)
+		var out, errOut bytes.Buffer
+		code := Run(addArgs(at), Env{
+			Stdout: &out, Stderr: &errOut,
+			ReadSecret: func(string) (string, error) { return "pw", nil },
+			Login:      func(context.Context, string) (string, error) { return "ok", nil },
+		})
+		if code != exitOK || !hasAlias(t, dir, at) {
+			t.Fatalf("add of 64 characters: exit code = %d\nstderr: %s", code, errOut.String())
+		}
+	})
+	t.Run("remove takes 65", func(t *testing.T) {
+		dir := sandbox(t)
+		seedAccount(t, dir, over)
+		store := secrets.NewFileStore(dir)
+		if err := store.Set(over, `{"v":1,"kind":"password","password":"pw"}`); err != nil {
+			t.Fatalf("seed the secret: %v", err)
+		}
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"account", "remove", over}, Env{Stdout: &out, Stderr: &errOut}); code != exitOK {
+			t.Fatalf("remove: exit code = %d, want 0\nstderr: %s", code, errOut.String())
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "accounts.toml")) //nolint:gosec // G304: the test reads a path it built in its own temp dir
+		if err != nil {
+			t.Fatalf("read accounts.toml: %v", err)
+		}
+		if strings.Contains(string(data), "[accounts."+over) {
+			t.Errorf("remove left the block:\n%s", data)
+		}
+		if hasSecret(t, dir, over) {
+			t.Error("remove left the secret")
+		}
+	})
+	t.Run("test refuses 65", func(t *testing.T) {
+		sandbox(t)
+		var out, errOut bytes.Buffer
+		code := Run([]string{"account", "test", over}, Env{Stdout: &out, Stderr: &errOut})
+		if code != exitUsage || !strings.Contains(errOut.String(), "use at most 64 characters") {
+			t.Errorf("test: exit code = %d, stderr = %q; want 2 and the limit named", code, errOut.String())
+		}
+	})
+}
+
 // TestCLI_RemoveBrokenAccount checks that "account remove" works when
 // the strict load fails: the account to remove names a missing
 // signature_file, or another account block is bad. The command finds

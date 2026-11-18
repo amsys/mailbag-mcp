@@ -145,6 +145,8 @@ func TestStrictNote_TodayTexts(t *testing.T) {
 		"the draft is not sent; send it with the send tool",
 		// templates.
 		"50 of 61 templates shown.; 2 templates could not be read: each is not a regular file in the templates directory.",
+		"50 of 61 templates shown.; 2 templates could not be read: each is not a regular file in the templates directory.; 3 templates are not shown: each name has more than 64 characters.",
+		"1 templates are not shown: each name has more than 64 characters.",
 		// accounts: the add hint of a config with no account.
 		addAccountHint,
 		// gmail_settings.

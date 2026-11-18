@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/amsys/mailbag-mcp/internal/config"
 	"github.com/amsys/mailbag-mcp/internal/guard"
 )
 
@@ -544,5 +545,107 @@ func TestTemplates_SaveStripsMarkers(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "hi") || !strings.Contains(string(data), "b") {
 		t.Errorf("file = %q, want the surrounding text kept", data)
+	}
+}
+
+// TestTemplates_NameLengthLimit holds DU12.4 item 2 for templates. A
+// list row carries the name outside every fence as kind alias, which
+// takes at most 64 characters. So save refuses a name of 65 with
+// invalid_input and writes nothing, and save of 64 works. A list that
+// meets a 65-character file of an older version leaves that row out,
+// sets a registered note and passes the output gate (audit B M2:
+// before, every later list gave output_refused). delete still takes
+// the long name, so the file can go.
+//
+// arch: DU12.4, DS9.6, DU4.1
+func TestTemplates_NameLengthLimit(t *testing.T) {
+	h, _, dir := templatesFixture(t)
+	f := testFencer(t)
+	ctx := withFencer(context.Background(), f)
+	at := strings.Repeat("a", config.MaxAliasLen)
+	over := strings.Repeat("b", config.MaxAliasLen+1)
+
+	_, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: over, Subject: "s", Body: "b"})
+	if err == nil {
+		t.Fatalf("save of %d characters: no error, want invalid_input", len(over))
+	}
+	if pub, detail := errParts(err); classOf(err) != "invalid_input" || pub != templateNameLongText || detail != "save" {
+		t.Fatalf("save of %d characters: err = %v (%q, %q), want invalid_input and the limit text", len(over), err, pub, detail)
+	}
+	if !strings.Contains(templateNameLongText, fmt.Sprint(config.MaxAliasLen)) {
+		t.Errorf("templateNameLongText = %q, want the limit %d named", templateNameLongText, config.MaxAliasLen)
+	}
+	if _, err := os.Stat(filepath.Join(dir, over+templateSuffix)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused save left a file: %v", err)
+	}
+	if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "save", Name: at, Subject: "s", Body: "b"}); err != nil {
+		t.Fatalf("save of %d characters: %v", len(at), err)
+	}
+
+	// A file that an older version saved under the long name.
+	if err := os.WriteFile(filepath.Join(dir, over+templateSuffix), []byte("Subject: old\n\nb"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out.Templates) != 1 || out.Templates[0].Name != at {
+		t.Errorf("list rows = %+v, want only the 64-character name", out.Templates)
+	}
+	if want := "1 templates are not shown: each name has more than 64 characters."; out.Note != want {
+		t.Errorf("note = %q, want %q", out.Note, want)
+	}
+	out.Head = Head{Fence: f.Nonce()}
+	if err := checkOut(f, out); err != nil {
+		t.Errorf("checkOut of the list: %v", err)
+	}
+
+	if _, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "delete", Name: over}); err != nil {
+		t.Fatalf("delete of the long name: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, over+templateSuffix)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("delete left the long file: %v", err)
+	}
+}
+
+// TestTemplates_ListNotesJoined holds DU12.4 item 5 (audit B low L1).
+// When the list is cut, one entry is not a regular file and one name
+// is too long, the three notes are joined with "; " as the registry
+// needs, never with a line feed, and the list passes the output gate.
+//
+// arch: DU12.4, DU3.5, DU4.1
+func TestTemplates_ListNotesJoined(t *testing.T) {
+	h, _, dir := templatesFixture(t)
+	f := testFencer(t)
+	ctx := withFencer(context.Background(), f)
+	// Sorted first, so it is inside the first templatesListMax names.
+	if err := os.MkdirAll(filepath.Join(dir, "a-dir"+templateSuffix), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range templatesListMax {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("n%03d%s", i, templateSuffix)), []byte("Subject: n\n\nb"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, strings.Repeat("c", config.MaxAliasLen+1)+templateSuffix), []byte("Subject: c\n\nb"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.handle(ctx, TemplatesIn{Account: "work", Action: "list"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := "200 of 201 templates shown." + noteSep +
+		"1 templates could not be read: each is not a regular file in the templates directory." + noteSep +
+		"1 templates are not shown: each name has more than 64 characters."
+	if out.Note != want {
+		t.Errorf("note = %q, want %q", out.Note, want)
+	}
+	if got, ok := strictNote(out.Note); !ok || got != out.Note {
+		t.Errorf("strictNote(%q) = %q, %v; want the note unchanged", out.Note, got, ok)
+	}
+	out.Head = Head{Fence: f.Nonce()}
+	if err := checkOut(f, out); err != nil {
+		t.Errorf("checkOut of the list: %v", err)
 	}
 }

@@ -55,7 +55,7 @@ var strictFlags = map[string]bool{
 func Strict(kind, s string) bool {
 	switch kind {
 	case "alias":
-		return len(s) <= 64 && config.ValidAlias(s)
+		return config.ValidAlias(s)
 	case "flags":
 		return strictFlagList(s)
 	case "cursor":
@@ -78,30 +78,54 @@ const ownerMaxBytes = 1024
 // free text that only the owner config and the save roots feed. The
 // value must be valid UTF-8 of 1 to ownerMaxBytes bytes. It must have
 // no control character (Cc, so no line feed and no tab), no rune of
-// Cf, Co or Cs, no Hangul filler, no fence marker and no chat template
-// token. It does not need NFC or NFKC, so "ACME\u2122 Support" and a
-// combining mark pass. The template check also reads the NFKC form,
-// because the DeepSeek token has a full-width bar that only NFKC
-// folds. The value itself stays as it is.
+// Cf, Co, Cs, Zl or Zp (so no U+2028 and no U+2029), no Hangul
+// filler, no glyphless rune of ownerGlyphless, no fence marker and no
+// chat template token. It does not need NFC or NFKC, so
+// "ACME\u2122 Support" and a combining mark pass. The template check
+// also reads the NFKC form, because the DeepSeek token has a
+// full-width bar that only NFKC folds. The value itself stays as it
+// is.
 //
-// arch: DU12.3, DU3.1
+// arch: DU12.4, DU12.3, DU3.1
 func strictOwner(s string) bool {
 	if s == "" || len(s) > ownerMaxBytes || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs) {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs, unicode.Zl, unicode.Zp) {
 			return false
 		}
-		switch r {
-		case 0x115F, 0x1160, 0x3164, 0xFFA0:
-			return false // Hangul fillers
+		if ownerGlyphless(r) {
+			return false
 		}
 	}
 	if StripFenceMarkers(s) != s {
 		return false
 	}
 	return !templateTokenRe.MatchString(s) && !templateTokenRe.MatchString(norm.NFKC.String(s))
+}
+
+// ownerGlyphless reports whether r shows no glyph of its own, so a
+// reader cannot see it in an owner value: a Hangul filler, the
+// combining grapheme joiner U+034F, the Khmer inherent vowels U+17B4
+// and U+17B5, a Mongolian free variation selector, the braille blank
+// U+2800 and a variation selector. The re-review found U+034F, U+180B,
+// U+17B4, U+FE0F and U+2800; the other runes are of the same group.
+// Other combining marks show on their base letter and pass.
+//
+// arch: DU12.4
+func ownerGlyphless(r rune) bool {
+	switch {
+	case r == 0x115F, r == 0x1160, r == 0x3164, r == 0xFFA0:
+		return true // Hangul fillers
+	case r == 0x034F, r == 0x17B4, r == 0x17B5, r == 0x2800:
+		return true
+	case r >= 0x180B && r <= 0x180F:
+		return true // Mongolian free variation selectors (U+180E is Cf)
+	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF:
+		return true // variation selectors
+	}
+	return false
 }
 
 // strictFlagList accepts words of strictFlags, separated by single

@@ -146,8 +146,13 @@ func (t *templatesTool) handle(ctx context.Context, in TemplatesIn) (TemplatesOu
 	if in.Action == "list" {
 		return listTemplates(fencer(ctx), dir)
 	}
-	if !config.ValidAlias(in.Name) {
+	// A name over the length limit came from an older version: delete
+	// and draft still take it, save refuses it (DU12.4 item 2).
+	if !config.ValidAlias(in.Name) && !config.AliasTooLong(in.Name) {
 		return TemplatesOut{}, publicDetail("invalid_input", "templates: this action needs a name of letters, digits, '-' and '_' only", in.Action)
+	}
+	if in.Action == "save" && config.AliasTooLong(in.Name) {
+		return TemplatesOut{}, publicDetail("invalid_input", templateNameLongText, in.Action)
 	}
 	switch in.Action {
 	case "save":
@@ -166,6 +171,12 @@ func templatesDir() (string, error) {
 	}
 	return filepath.Join(base, templatesDirName), nil
 }
+
+// templateNameLongText is the public text of a save with a name of
+// more than config.MaxAliasLen characters. A list row carries the name
+// outside every fence as kind alias, so a longer name cannot be
+// listed (DU12.4 item 2).
+const templateNameLongText = "templates: a name has at most 64 characters"
 
 // errTemplateMissing names a template that does not exist. The name
 // is the detail.
@@ -214,10 +225,14 @@ func listTemplates(f guard.Fencer, dir string) (TemplatesOut, error) {
 		return TemplatesOut{}, fmt.Errorf("templates: %w", err)
 	}
 	var names []string
+	long := 0
 	for _, e := range entries {
 		name, ok := strings.CutSuffix(e, templateSuffix)
-		if ok && config.ValidAlias(name) {
+		switch {
+		case ok && config.ValidAlias(name):
 			names = append(names, name)
+		case ok && config.AliasTooLong(name):
+			long++ // saved by an older version; the row cannot pass kind alias
 		}
 	}
 	slices.Sort(names)
@@ -244,7 +259,10 @@ func listTemplates(f guard.Fencer, dir string) (TemplatesOut, error) {
 		out.Note = fmt.Sprintf("%d of %d templates shown.", templatesListMax, total)
 	}
 	if skipped > 0 {
-		out.Note = addNote(out.Note, fmt.Sprintf("%d templates could not be read: each is not a regular file in the templates directory.", skipped))
+		out.Note = joinNote(out.Note, fmt.Sprintf("%d templates could not be read: each is not a regular file in the templates directory.", skipped))
+	}
+	if long > 0 {
+		out.Note = joinNote(out.Note, fmt.Sprintf("%d templates are not shown: each name has more than %d characters.", long, config.MaxAliasLen))
 	}
 	return out, nil
 }

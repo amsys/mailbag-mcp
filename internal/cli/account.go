@@ -116,7 +116,7 @@ func accountAdd(args []string, env Env) int {
 	// The alias is a keyring key, a file name and a part of a printed
 	// command (B17). Check it before anything else happens.
 	if err := guard.ValidateAlias(alias); err != nil {
-		return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+		return aliasUsage(env, alias)
 	}
 
 	// DS13.5: with --answers-stdin the prompts read one strict JSON
@@ -737,6 +737,18 @@ func accountList(args []string, env Env) int {
 	return exitOK
 }
 
+// aliasUsage gives the usage error for an alias that fails B17. An
+// alias of the right characters that is too long gets a text that
+// names the limit (DU12.4 item 2).
+//
+// arch: B17, DU12.4
+func aliasUsage(env Env, alias string) int {
+	if config.AliasTooLong(alias) {
+		return usageErrf(env, "alias %q: use at most %d characters", alias, config.MaxAliasLen)
+	}
+	return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+}
+
 // accountRemove cuts the account block and deletes the secret.
 //
 // arch: T4.6, §3.5, §3.3, B18
@@ -745,8 +757,11 @@ func accountRemove(args []string, env Env) int {
 		return usageErrf(env, "account remove needs exactly one alias")
 	}
 	alias := args[0]
-	if err := guard.ValidateAlias(alias); err != nil {
-		return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+	// An alias over the length limit came from an older version. The
+	// strict load refuses it now, so remove must still take it (B18,
+	// DU12.4 item 2). It holds alias characters only.
+	if err := guard.ValidateAlias(alias); err != nil && !config.AliasTooLong(alias) {
+		return aliasUsage(env, alias)
 	}
 	path, err := config.AccountsPath()
 	if err != nil {
@@ -788,7 +803,7 @@ func accountTest(args []string, env Env) int {
 	}
 	alias := args[0]
 	if err := guard.ValidateAlias(alias); err != nil {
-		return usageErrf(env, "alias %q: use letters, digits, - and _ only", alias)
+		return aliasUsage(env, alias)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 	defer cancel()

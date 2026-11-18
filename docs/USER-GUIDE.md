@@ -651,8 +651,8 @@ List folders, or create, rename or delete one (draft level). The server delimite
 |---|---|---|---|
 | `account` | string | yes | The alias of the account. |
 | `action` | string | no | The action: list (the default), create, rename or delete. |
-| `name` | string | no | The folder to create, rename or delete, as a name or a folder_ref. |
-| `new_name` | string | no | The new name of the folder for rename, as a name or a folder_ref. |
+| `name` | string | no | The folder to create, as a name, or the folder to rename or delete, as a name or a folder_ref. A new name must not start with =. |
+| `new_name` | string | no | The new name of the folder for rename, as a name. It must not start with =. |
 
 #### read
 
@@ -1131,6 +1131,12 @@ not act.
 Folder names are text from the server and are in `untrusted`. A result
 gives each folder also as a `folder_ref`: the `=` sign and the hex of
 the name. Give a name or a `folder_ref` where a tool takes a folder.
+A new folder name is a name only: the `name` of a create and the
+`new_name` of a rename take no `folder_ref` and must not start with
+`=`. A `folder_ref` in `move_to` (of `modify` and `bulk`) must name a
+folder that exists when its name holds fence marker text, a hidden
+character or a control character, so a move cannot make such a Gmail
+label.
 The IMAP message id changed: it is now
 `<uidvalidity>-<uid>-<hex of the folder name>`. The old form with dots
 stays valid as input.

@@ -186,6 +186,7 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 	if err != nil {
 		return ModifyOut{}, err
 	}
+	rawMoveTo := in.MoveTo
 	if in, err = in.folderInput(); err != nil {
 		return ModifyOut{}, err
 	}
@@ -198,6 +199,12 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 
 	token := strings.TrimSpace(in.Undo)
 	if token == "" {
+		// DU12.3 item 7: a move_to ref cannot make a label whose name
+		// folders create refuses. This is after the level check, because
+		// it can read the folder list.
+		if err := checkRefTarget(ctx, p, rawMoveTo, in.MoveTo); err != nil {
+			return ModifyOut{}, err
+		}
 		return t.applyChange(ctx, f, p, acct, in)
 	}
 	if in.hasChange() {

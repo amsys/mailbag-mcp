@@ -18,7 +18,12 @@ import (
 // in the new form. The kinds gmail and jmap keep the id when it
 // matches the strict grammar "id". Any other kind gives false.
 //
-// arch: DU3.2, DU12.1
+// An imap or outlook id must also match the strict grammar "id" after
+// the format. A folder name of more than 512 bytes gives a hex part
+// that the grammar refuses. The caller then drops that one row, not
+// the whole result (DU12.3 item 6).
+//
+// arch: DU3.2, DU12.1, DU12.3
 func normalizeID(kind, id string) (string, bool) {
 	switch kind {
 	case "imap", "outlook":
@@ -26,7 +31,11 @@ func normalizeID(kind, id string) (string, bool) {
 		if err != nil {
 			return "", false
 		}
-		return mail.FormatIMAPID(v, u, folder), true
+		out := mail.FormatIMAPID(v, u, folder)
+		if !guard.Strict("id", out) {
+			return "", false
+		}
+		return out, true
 	case "gmail", "jmap":
 		if guard.Strict("id", id) {
 			return id, true

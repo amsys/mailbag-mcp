@@ -83,6 +83,17 @@ type modProvider struct {
 	// stateReads holds the id count of each state read, so a test
 	// can see the chunks of undo (S9-GAP5).
 	stateReads []int
+
+	// list is the folder list that Folders gives, and listReads counts
+	// the calls of Folders (DU12.3 item 7).
+	list      []mail.Folder
+	listReads int
+}
+
+// Folders gives the folder list of the fixture and counts the read.
+func (p *modProvider) Folders(context.Context) ([]mail.Folder, error) {
+	p.listReads++
+	return p.list, nil
 }
 
 // ModifyDetail with a change runs Modify and records the result in
@@ -1690,9 +1701,12 @@ func TestModify_FolderAndLabelInput(t *testing.T) {
 		moveTo string
 		add    []string
 		remove []string
+		// list is the folder list of the account (DU12.3 item 7).
+		list []mail.Folder
 	}{
 		{name: "ref", in: ModifyIn{MoveTo: "=41726368697665"}, moveTo: "Archive"},
-		{name: "ref of a name with markers", in: ModifyIn{MoveTo: "=5b2f554e545255535445445f454d41494c5d2050"}, moveTo: "[/UNTRUSTED_EMAIL] P"},
+		{name: "ref of an existing folder with markers", in: ModifyIn{MoveTo: "=5b2f554e545255535445445f454d41494c5d2050"}, moveTo: "[/UNTRUSTED_EMAIL] P",
+			list: []mail.Folder{{Name: "INBOX"}, {Name: "[/UNTRUSTED_EMAIL] P"}}},
 		{name: "fenced name", in: ModifyIn{MoveTo: f.Wrap("Receipts")}, moveTo: "Receipts"},
 		{name: "plain name", in: ModifyIn{MoveTo: "Receipts"}, moveTo: "Receipts"},
 		{name: "fenced labels", in: ModifyIn{AddLabels: []string{f.Wrap("work")}, RemoveLabels: []string{f.Wrap("old")}},
@@ -1701,6 +1715,7 @@ func TestModify_FolderAndLabelInput(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, prov, _ := modifyFixture(t)
+			prov.list = c.list
 			in := c.in
 			in.Account, in.IDs = "work", []string{"1.10.INBOX"}
 			if c.moveTo != "" {

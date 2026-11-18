@@ -246,11 +246,11 @@
           "type": "string"
         },
         "name": {
-          "description": "name or folder_ref",
+          "description": "name (create); name or folder_ref (rename, delete)",
           "type": "string"
         },
         "new_name": {
-          "description": "name or folder_ref",
+          "description": "name",
           "type": "string"
         }
       },

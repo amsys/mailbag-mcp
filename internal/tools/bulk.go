@@ -559,6 +559,12 @@ func (t *bulkTool) runSet(ctx context.Context, in BulkIn, claim claimFunc, ask c
 	if err != nil {
 		return BulkOut{}, err
 	}
+	// DU12.3 item 7: a move_to ref cannot make a label whose name
+	// folders create refuses. The check comes before the search and
+	// the question, so the human is never asked about such a move.
+	if err := checkRefTarget(ctx, p, strings.TrimSpace(in.MoveTo), ch.MoveTo); err != nil {
+		return BulkOut{}, err
+	}
 	// sel is in with the folder name that a ref holds. The pending
 	// record keeps in as the call gave it, so the retry compares the
 	// same input (DS14.7).

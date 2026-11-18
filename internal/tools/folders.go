@@ -37,8 +37,8 @@ const (
 type FoldersIn struct {
 	Account string `json:"account"`
 	Action  string `json:"action,omitempty"`
-	Name    string `json:"name,omitempty" jsonschema:"name or folder_ref"`
-	NewName string `json:"new_name,omitempty" jsonschema:"name or folder_ref"`
+	Name    string `json:"name,omitempty" jsonschema:"name (create); name or folder_ref (rename, delete)"`
+	NewName string `json:"new_name,omitempty" jsonschema:"name"`
 }
 
 // FolderRow is one line of the folders result (§3.16, DU5.5). The
@@ -177,10 +177,13 @@ func checkFolderArgs(action string, in FoldersIn) error {
 // name for the existing folder. A name that create or rename makes is
 // refused when the strip of a fence marker or of a hidden character
 // changes it, or when it holds a control character: the folder would
-// carry text that looks like a fence or an instruction. The error
-// text echoes no part of the name.
+// carry text that looks like a fence or an instruction. It is also
+// refused when it starts with "=": the create name and new_name take
+// no folder_ref, and a folder with such a name could be given only by
+// its ref (DU12.3 item 4). Each refusal comes before any provider
+// call. The error text echoes no part of the name.
 //
-// arch: DU8.1, DU3.3
+// arch: DU8.1, DU3.3, DU12.3
 func folderNames(action string, in FoldersIn) (name, newName string, err error) {
 	switch action {
 	case folderActionCreate:
@@ -211,12 +214,19 @@ var errFolderName = public("invalid_input", "the folder name holds fence marker 
 // errFolderRefInput is the refusal of a bad folder_ref in an input.
 var errFolderRefInput = public("invalid_input", "a folder value that starts with \"=\" must be a folder_ref: \"=\" and 2 to 1024 lowercase hex digits")
 
-// checkNewFolderName refuses a name that changes under
-// guard.StripFenceMarkers or guard.StripInvisible, or that holds a
-// control character.
+// errFolderNameRef is the refusal of a new folder name that starts
+// with "=" (DU12.3 item 4).
+var errFolderNameRef = public("invalid_input", "a new folder name must not start with \"=\"; give the plain name, because a folder_ref names an existing folder only")
+
+// checkNewFolderName refuses a name that starts with "=", that changes
+// under guard.StripFenceMarkers or guard.StripInvisible, or that holds
+// a control character.
 //
-// arch: DU8.1
+// arch: DU8.1, DU12.3
 func checkNewFolderName(s string) error {
+	if strings.HasPrefix(s, folderRefPrefix) {
+		return errFolderNameRef
+	}
 	if guard.StripFenceMarkers(s) != s {
 		return errFolderName
 	}

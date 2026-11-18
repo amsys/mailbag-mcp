@@ -9,6 +9,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -85,4 +86,38 @@ func decodeFolderRef(ref string) (string, error) {
 		return "", errFolderRef
 	}
 	return string(b), nil
+}
+
+// errRefTarget is the refusal of a folder_ref that would make a new
+// folder or label with a name that create refuses (DU12.3 item 7). The
+// text echoes no part of the name.
+var errRefTarget = public("invalid_input", "the folder_ref names no folder of the account, and its name is not a plain folder name; give an existing folder, or a plain name for a new one")
+
+// checkRefTarget holds DU12.3 item 7 for an input field that can make a
+// folder or a label: move_to of modify and of bulk (a Gmail label that
+// the account does not have is made by the change, E4). raw is the
+// field as the call gave it, and name is the value that folderArg gave
+// for it. A plain name passes. A ref whose name passes
+// checkNewFolderName passes. Only for any other ref, checkRefTarget
+// reads the folder list of p, and the ref passes when a folder with
+// exactly that raw name exists. Else it gives errRefTarget. A ref
+// thus cannot make a folder whose name holds fence marker text, a
+// hidden character or a control character, which folders create
+// refuses (DU8.1).
+//
+// arch: DU12.3, DU8.1, DU3.3
+func checkRefTarget(ctx context.Context, p Reader, raw, name string) error {
+	if !strings.HasPrefix(raw, folderRefPrefix) || checkNewFolderName(name) == nil {
+		return nil
+	}
+	list, err := p.Folders(ctx)
+	if err != nil {
+		return err
+	}
+	for _, fo := range list {
+		if fo.Name == name {
+			return nil
+		}
+	}
+	return errRefTarget
 }

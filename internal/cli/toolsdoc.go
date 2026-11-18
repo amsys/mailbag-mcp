@@ -67,8 +67,8 @@ var fieldText = map[string]string{
 
 	"folders.account":  "The alias of the account.",
 	"folders.action":   "The action: list (the default), create, rename or delete.",
-	"folders.name":     "The folder to create, rename or delete, as a name or a folder_ref.",
-	"folders.new_name": "The new name of the folder for rename, as a name or a folder_ref.",
+	"folders.name":     "The folder to create, as a name, or the folder to rename or delete, as a name or a folder_ref. A new name must not start with =.",
+	"folders.new_name": "The new name of the folder for rename, as a name. It must not start with =.",
 
 	"gmail_settings.account":        "The alias of a Gmail account.",
 	"gmail_settings.action":         "The action: list_filters, create_filter, delete_filter, get_vacation, set_vacation, get_signature or set_signature.",

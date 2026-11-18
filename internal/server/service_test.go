@@ -106,8 +106,9 @@ func listFolders(ctx context.Context, t *testing.T, cs *mcp.ClientSession, who s
 	var out tools.FoldersOut
 	decodeStructured(t, res, &out)
 	for _, f := range out.Folders {
-		// The name is one fence; the ref holds the raw name (DU5.5).
-		if strings.Contains(f.Untrusted.Name, "\nINBOX\n") {
+		// The name is one fence whose body is exactly INBOX; the ref
+		// holds the raw name (DU5.5, DU12.3 item 11).
+		if f.Untrusted.Name == "[UNTRUSTED_"+out.Fence+"]\nINBOX\n[/UNTRUSTED_"+out.Fence+"]" {
 			return
 		}
 	}

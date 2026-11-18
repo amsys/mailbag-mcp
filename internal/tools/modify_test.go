@@ -787,8 +787,62 @@ func TestModify_ResultCarriesNoSenderText(t *testing.T) {
 	out.Note = part.Note
 	out.Untrusted = part.Untrusted
 	out.Skipped = []string{out.Applied[0].NewID}
+	for _, p := range modifyFixtureGaps(out) {
+		t.Error(p)
+	}
 	for _, p := range gatedProblems(testFencer(t), reflect.ValueOf(out)) {
 		t.Error(p)
+	}
+}
+
+// modifyFixtureGaps names each field outside untrusted that the joined
+// result of TestModify_ResultCarriesNoSenderText must fill. The walk
+// of fillProblems asks for a value only under untrusted and in lists,
+// so an empty Note, Undo, NewID or Summary would pass it and the
+// check of that field would never run.
+//
+// arch: DU12.3, INV-11
+func modifyFixtureGaps(out ModifyOut) []string {
+	var gaps []string
+	if out.Note == "" {
+		gaps = append(gaps, "Note is empty; fill it in the fixture (DU12.3)")
+	}
+	if out.Undo == "" {
+		gaps = append(gaps, "Undo is empty; fill it in the fixture (DU12.3)")
+	}
+	if len(out.Applied) == 0 || out.Applied[0].NewID == "" {
+		gaps = append(gaps, "Applied[0].NewID is empty; fill it in the fixture (DU12.3)")
+	}
+	if len(out.Operations) == 0 || out.Operations[0].Summary == "" {
+		gaps = append(gaps, "Operations[0].Summary is empty; fill it in the fixture (DU12.3)")
+	}
+	return gaps
+}
+
+// TestModify_FixtureGapsSeen pins that modifyFixtureGaps fails on an
+// empty field, so the guard of the fence walk stays exact.
+//
+// arch: DU12.3, INV-11
+func TestModify_FixtureGapsSeen(t *testing.T) {
+	full := ModifyOut{
+		Note: "n", Undo: "u",
+		Applied:    []ModifyRow{{NewID: "7.3.X"}},
+		Operations: []UndoRow{{Summary: "s"}},
+	}
+	if g := modifyFixtureGaps(full); len(g) != 0 {
+		t.Fatalf("full fixture reports gaps: %v", g)
+	}
+	for name, mut := range map[string]func(*ModifyOut){
+		"Note":    func(o *ModifyOut) { o.Note = "" },
+		"Undo":    func(o *ModifyOut) { o.Undo = "" },
+		"NewID":   func(o *ModifyOut) { o.Applied = []ModifyRow{{}} },
+		"Summary": func(o *ModifyOut) { o.Operations = []UndoRow{{}} },
+	} {
+		o := full
+		mut(&o)
+		if g := modifyFixtureGaps(o); len(g) != 1 {
+			t.Errorf("empty %s: gaps = %v, want one", name, g)
+		}
 	}
 }
 

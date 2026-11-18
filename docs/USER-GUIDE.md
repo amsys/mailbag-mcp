@@ -947,7 +947,8 @@ changes:
 - `move_to` INBOX, or `move_to` the junk folder. The server compares
   the name you give with the name `INBOX` and with the name of the junk
   folder, with no regard to case. It does not compare folder roles.
-  A name with a space at the start or the end is not a match.
+  It first removes the spaces at the start and the end of the name, as
+  `bulk` does.
 - `read` and `starred`.
 - `add_labels` and `remove_labels`, when no label is TRASH, SPAM or
   DRAFT (in any case), and `remove_labels` does not name INBOX.
@@ -1135,10 +1136,17 @@ gives each folder also as a `folder_ref`: the `=` sign and the hex of
 the name. Give a name or a `folder_ref` where a tool takes a folder.
 A new folder name is a name only: the `name` of a create and the
 `new_name` of a rename take no `folder_ref` and must not start with
-`=`. A `folder_ref` in `move_to` (of `modify` and `bulk`) must name a
-folder that exists when its name holds fence marker text, a hidden
-character or a control character, so a move cannot make such a Gmail
-label.
+`=`, also after spaces. On Gmail, `move_to` (of `modify` and `bulk`)
+and each name of `add_labels` (of `modify`) make a label that the
+account does not have. Each of these values must name a folder or
+label that exists when its name starts with `=`, or holds fence marker
+text, a hidden character or a control character. This applies to a
+plain name, a fenced name and a `folder_ref`. If no such folder or
+label exists, the call fails with the class `invalid_input` before it
+changes a message. So a move or a label cannot make a Gmail label that
+`folders` refuses to create. The rule applies on every provider: on
+IMAP and JMAP, a label of `add_labels` is a keyword, and such a
+keyword is refused unless a folder has the same name.
 The IMAP message id changed: it is now
 `<uidvalidity>-<uid>-<hex of the folder name>`. The old form with dots
 stays valid as input.

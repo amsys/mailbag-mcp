@@ -87,36 +87,44 @@ func decodeFolderRef(ref string) (string, error) {
 	return string(b), nil
 }
 
-// errRefTarget is the refusal of a folder_ref that would make a new
-// folder or label with a name that create refuses (DU12.3 item 7). The
-// text echoes no part of the name.
-var errRefTarget = public("invalid_input", "the folder_ref names no folder of the account, and its name is not a plain folder name; give an existing folder, or a plain name for a new one")
+// errRefTarget is the refusal of a move_to or add_labels value that
+// would make a new folder or label with a name that folders create
+// refuses (DU12.4 item 1). The text echoes no part of the name.
+var errRefTarget = public("invalid_input", "no folder or label of the account has this name, and it is not a plain name for a new one: it starts with \"=\", or holds fence marker text, a hidden character or a control character; give an existing folder or label, or a plain name")
 
-// checkRefTarget holds DU12.3 item 7 for an input field that can make a
-// folder or a label: move_to of modify and of bulk (a Gmail label that
-// the account does not have is made by the change, E4). raw is the
-// field as the call gave it, and name is the value that folderArg gave
-// for it. A plain name passes. A ref whose name passes
-// checkNewFolderName passes. Only for any other ref, checkRefTarget
-// reads the folder list of p, and the ref passes when a folder with
-// exactly that raw name exists. Else it gives errRefTarget. A ref
-// thus cannot make a folder whose name holds fence marker text, a
-// hidden character or a control character, which folders create
-// refuses (DU8.1).
+// checkRefTarget holds DU12.4 item 1 for the input fields that can
+// make a folder or a label: move_to of modify and of bulk, and each
+// add_labels name of modify (a Gmail label that the account does not
+// have is made by the change, E4). names are the values that the
+// provider gets, after the trim, the decode of a folder_ref and the
+// strip of the fence markers. A name that passes checkNewFolderName
+// passes with no folder read. For any other name, checkRefTarget reads
+// the folder list of p, once for the call, and the name passes only
+// when a folder or label with exactly that raw name exists. Else it
+// gives errRefTarget. It does not matter whether the call gave the
+// name plain, fenced or as a folder_ref. A call thus cannot make a
+// folder or label whose name folders create refuses (DU8.1).
 //
-// arch: DU12.3, DU8.1, DU3.3
-func checkRefTarget(ctx context.Context, p Reader, raw, name string) error {
-	if !strings.HasPrefix(raw, folderRefPrefix) || checkNewFolderName(name) == nil {
-		return nil
-	}
-	list, err := p.Folders(ctx)
-	if err != nil {
-		return err
-	}
-	for _, fo := range list {
-		if fo.Name == name {
-			return nil
+// arch: DU12.4, DU12.3, DU8.1, DU3.3
+func checkRefTarget(ctx context.Context, p Reader, names ...string) error {
+	var have map[string]bool
+	for _, name := range names {
+		if checkNewFolderName(name) == nil {
+			continue
+		}
+		if have == nil {
+			list, err := p.Folders(ctx)
+			if err != nil {
+				return err
+			}
+			have = make(map[string]bool, len(list))
+			for _, fo := range list {
+				have[fo.Name] = true
+			}
+		}
+		if !have[name] {
+			return errRefTarget
 		}
 	}
-	return errRefTarget
+	return nil
 }

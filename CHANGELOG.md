@@ -37,13 +37,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A new folder name must not start with `=`: `folders` refuses such a
   create `name` or rename `new_name` with the class `invalid_input`.
   These two fields take no `folder_ref`.
-- A `folder_ref` in `move_to` of `modify` or `bulk` must name a folder
-  that exists when its name starts with `=`, or holds fence marker
-  text, a hidden character or a control character. So a move cannot
-  make such a Gmail label.
+- `move_to` of `modify` and `bulk`, and each name of `add_labels` of
+  `modify`, must name a folder or label that exists when the name
+  starts with `=`, or holds fence marker text, a hidden character or a
+  control character. This applies to a plain name, a fenced name and a
+  `folder_ref`. Else the call fails with the class `invalid_input`
+  before it changes a message. So a move or a label cannot make such a
+  Gmail label. On IMAP and JMAP such a keyword in `add_labels` is
+  refused unless a folder has the same name.
 
 ### Changed
 
+- `modify` removes the spaces at the start and the end of `move_to`,
+  as `bulk` does. A `move_to` of ` INBOX` now moves to INBOX, also at
+  the `classify` level. A new folder name that starts with `=` after
+  spaces is refused.
 - The output shape of every tool changed. Sender text moved under
   `untrusted`. A model that reads a result must read both zones.
 - The IMAP and Outlook message id is now

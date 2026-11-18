@@ -630,7 +630,9 @@ func TestModify_ClassifyLevel(t *testing.T) {
 		{name: "gmail move_to SPAM", provider: "gmail", in: ModifyIn{IDs: id, MoveTo: "SPAM"}, need: guard.LevelClassify},
 		{name: "gmail move_to Junk", provider: "gmail", in: ModifyIn{IDs: id, MoveTo: "Junk"}, need: guard.LevelDraft},
 		{name: "gmail ignores folders table", provider: "gmail", folders: map[string]string{"junk": "Receipts"}, in: ModifyIn{IDs: id, MoveTo: "Receipts"}, need: guard.LevelDraft},
-		{name: "move_to padded INBOX", in: ModifyIn{IDs: id, MoveTo: " INBOX"}, need: guard.LevelDraft},
+		// DU12.4 item 1: modify trims move_to as bulk does, so the
+		// provider gets INBOX.
+		{name: "move_to padded INBOX is trimmed", in: ModifyIn{IDs: id, MoveTo: " INBOX "}, need: guard.LevelClassify},
 		{name: "move_to Trash", in: ModifyIn{IDs: id, MoveTo: "Trash"}, need: guard.LevelDraft},
 		{name: "move_to other folder", in: ModifyIn{IDs: id, MoveTo: "Projects"}, need: guard.LevelDraft},
 		{name: "trash", in: ModifyIn{IDs: id, Trash: true}, need: guard.LevelDraft},

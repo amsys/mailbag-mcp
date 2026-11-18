@@ -217,13 +217,14 @@ var errFolderRefInput = public("invalid_input", "a folder value that starts with
 // with "=" (DU12.3 item 4).
 var errFolderNameRef = public("invalid_input", "a new folder name must not start with \"=\"; give the plain name, because a folder_ref names an existing folder only")
 
-// checkNewFolderName refuses a name that starts with "=", that changes
-// under guard.StripFenceMarkers or guard.StripInvisible, or that holds
-// a control character.
+// checkNewFolderName refuses a name that starts with "=" after the trim
+// of its outer spaces, that changes under guard.StripFenceMarkers or
+// guard.StripInvisible, or that holds a control character. The trim
+// matters because a server can trim a new name (DU12.4 item 1).
 //
-// arch: DU8.1, DU12.3
+// arch: DU8.1, DU12.3, DU12.4
 func checkNewFolderName(s string) error {
-	if strings.HasPrefix(s, folderRefPrefix) {
+	if strings.HasPrefix(strings.TrimSpace(s), folderRefPrefix) {
 		return errFolderNameRef
 	}
 	if guard.StripFenceMarkers(s) != s {

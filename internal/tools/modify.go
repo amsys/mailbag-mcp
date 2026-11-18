@@ -186,7 +186,6 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 	if err != nil {
 		return ModifyOut{}, err
 	}
-	rawMoveTo := in.MoveTo
 	if in, err = in.folderInput(); err != nil {
 		return ModifyOut{}, err
 	}
@@ -199,10 +198,10 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 
 	token := strings.TrimSpace(in.Undo)
 	if token == "" {
-		// DU12.3 item 7: a move_to ref cannot make a label whose name
-		// folders create refuses. This is after the level check, because
-		// it can read the folder list.
-		if err := checkRefTarget(ctx, p, rawMoveTo, in.MoveTo); err != nil {
+		// DU12.4 item 1: move_to and add_labels cannot make a folder or
+		// a label whose name folders create refuses. This is after the
+		// level check, because it can read the folder list.
+		if err := checkRefTarget(ctx, p, in.makeNames()...); err != nil {
 			return ModifyOut{}, err
 		}
 		return t.applyChange(ctx, f, p, acct, in)
@@ -225,15 +224,16 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 }
 
 // folderInput gives a copy of in with the folder and label input read
-// (DU3.3). move_to passes folderArg: a folder_ref decodes to the raw
-// name, and a name loses its fence markers. Each label name of
-// add_labels and remove_labels passes guard.StripFenceMarkers, so a
-// fenced name that the model copies back from a result loses its
-// markers. mapPseudoLabels trims the line feeds that the fence leaves.
+// (DU3.3). move_to loses its outer spaces, as in bulk (DU12.4 item 1),
+// and then passes folderArg: a folder_ref decodes to the raw name, and
+// a name loses its fence markers. Each label name of add_labels and
+// remove_labels passes guard.StripFenceMarkers, so a fenced name that
+// the model copies back from a result loses its markers.
+// mapPseudoLabels trims the line feeds that the fence leaves.
 //
-// arch: DU3.3, INV-10
+// arch: DU3.3, DU12.4, INV-10
 func (in ModifyIn) folderInput() (ModifyIn, error) {
-	moveTo, err := folderArg(in.MoveTo)
+	moveTo, err := folderArg(strings.TrimSpace(in.MoveTo))
 	if err != nil {
 		return ModifyIn{}, err
 	}
@@ -241,6 +241,21 @@ func (in ModifyIn) folderInput() (ModifyIn, error) {
 	in.AddLabels = stripLabels(in.AddLabels)
 	in.RemoveLabels = stripLabels(in.RemoveLabels)
 	return in, nil
+}
+
+// makeNames gives the values of in that can make a folder or a label
+// (DU12.4 item 1): move_to, and each add_labels name with its outer
+// spaces trimmed, as mapPseudoLabels gives it to the provider. in has
+// passed folderInput.
+//
+// arch: DU12.4
+func (in ModifyIn) makeNames() []string {
+	names := make([]string, 0, 1+len(in.AddLabels))
+	names = append(names, in.MoveTo)
+	for _, l := range in.AddLabels {
+		names = append(names, strings.TrimSpace(l))
+	}
+	return names
 }
 
 // stripLabels gives a copy of labels in which each name passed

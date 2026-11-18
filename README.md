@@ -4,7 +4,7 @@
   <a href="https://github.com/amsys/mailbag-mcp/actions/workflows/test.yml"><img src="https://github.com/amsys/mailbag-mcp/actions/workflows/test.yml/badge.svg" alt="test"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/go-1.27.1-00ADD8" alt="Go 1.27.1">
-  <img src="https://img.shields.io/badge/status-beta-orange" alt="Status: beta">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha">
 </p>
 
 Most mail MCP servers serve one mailbox for each server entry. A person

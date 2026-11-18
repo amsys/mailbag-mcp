@@ -6,6 +6,115 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+These changes break a client of 0.2.0-alpha.1 that reads a result by
+its keys, or that sends a value that the server now refuses. The input
+fields of the tools did not change. Every result has the new first key
+`_fence`. Each text that a sender, a mail server or the model controls
+is now under a key `untrusted`, in a fence.
+
+Output keys that were removed or moved, by tool:
+
+- `search`: each row lost `email` and `folder`. The sender, the
+  subject and the preview are `untrusted.from`, `untrusted.subject`
+  and `untrusted.preview`. The folder is `folder_ref` and
+  `untrusted.folder`. Labels and keywords left `flags` and are in
+  `untrusted.labels`. `flags` holds only the words `unread`,
+  `starred`, `answered`, `draft`, `flagged`, `forwarded`, `junk` and
+  `important`. `errors[].error` is a class word, not the error text.
+  The text is in `errors[].untrusted.detail`.
+- `read`: each message lost `headers`, `body` and `folder`. The
+  headers are `untrusted.from`, `untrusted.to`, `untrusted.cc`,
+  `untrusted.reply_to` and `untrusted.subject`, and a thread row of a
+  message that the call did not name has `untrusted.preview`. The body
+  is `untrusted.body`. The folder is `folder_ref` and
+  `untrusted.folder`. Labels left `flags` and are in
+  `untrusted.labels`. Each attachment lost `file`: the file name and
+  the media type are `untrusted.name` and `untrusted.type`. An
+  attachment `ref` that is not digits and dots is now `=` and the hex
+  of the part id.
+- `decrypt`: `body` is now `untrusted.body`. Each attachment lost
+  `file` and `type`: they are `untrusted.name` and `untrusted.type`.
+- `attachment`: `path` is gone. `dir` is the save root only,
+  `untrusted.subdir` is the path below the root (absent when the file
+  is in the root), and `untrusted.name` is the file name.
+- `export`: each item of `files` lost `path`. It has `dir`,
+  `untrusted.subdir` and `untrusted.name`, as in `attachment`.
+- `folders`: each row lost `name`. The folder is `folder_ref` and
+  `untrusted.name`.
+- `gmail_settings`: each filter lost `from`, `to`, `subject`,
+  `query`, `add_labels` and `remove_labels`. They are under the
+  `untrusted` key of the filter. `vacation` lost `subject` and `body`.
+  They are under `vacation.untrusted`. `signature` is now
+  `untrusted.signature`.
+- `bulk`: each `sample` row lost `from` and `subject`. They are under
+  the `untrusted` key of the row.
+- `modify` and `bulk`, the undo list (`operations` and `records`):
+  `summary` is a fixed text with action words and a count. The folder
+  and label names of the operation are in `untrusted.detail` of the
+  row. A record of an earlier version has no `summary`, and its whole
+  line is in `untrusted.detail`.
+- `templates`: each row lost `subject`. It is `untrusted.subject`.
+- `unsubscribe`: each row lost `url`. It is `untrusted.url`. Each row
+  has the new key `index`, the place of its id in `ids`.
+- `draft`: the identity sentence of `note` no longer holds the From
+  address. It gives the number of the rule that picked the address,
+  and the address is in `untrusted.detail`.
+- `read` and `decrypt`: a `signature.fingerprint` of fewer than 8 hex
+  digits is left out.
+- Every tool: `note` holds only texts from a fixed set, and the parts
+  join with `"; "`. A provider text that matches no such text becomes
+  `note withheld`. Provider text that a note names by its class word
+  is in `untrusted.detail`.
+- Every tool: an IMAP or Outlook message id has the new form
+  `<uidvalidity>-<uid>-<hex of the folder name>`. The old form still
+  works as input.
+- Every tool: an error result is no longer the plain error text. Its
+  first line is `_fence: <nonce>` and its second line is
+  `error: <class>`. The class is one of `timeout`, `canceled`,
+  `unknown_account`, `needs_auth`, `invalid_input`, `not_found`,
+  `refused`, `limit`, `unavailable`, `output_refused`, `internal` and
+  `error`. A fixed text of the server can come next. All other error
+  text is in one fence after it.
+
+Values that the server now refuses:
+
+- A result with a string that breaks its rule: `output_refused`, and
+  no part of the result is sent.
+- A folder value that starts with `=` and is not a valid `folder_ref`
+  (`=` and 2 to 1024 lowercase hex digits), in `folder` of `search`
+  and `bulk`, `move_to` of `modify` and `bulk`, and the `name` of a
+  `folders` rename or delete: `invalid_input`. Before, the value was a
+  folder name.
+- A new folder name (the `name` of a `folders` create, `new_name` of a
+  rename) that starts with `=`, also after spaces, or that holds fence
+  marker text, a hidden character or a control character:
+  `invalid_input`.
+- `move_to` of `modify` and `bulk`, and a name of `add_labels` of
+  `modify`, that would make a folder or label with such a name:
+  `invalid_input`, unless a folder or label with that name exists.
+- An `attachment` `ref` that starts with `=` and is not `=` and 2 to
+  512 lowercase hex digits: `invalid_input`.
+- An account alias of more than 64 characters: the server refuses
+  `accounts.toml`, and `account add`, `account test` and
+  `identities detect` refuse the alias. `account remove` still takes
+  it.
+- A `templates` save with a name of more than 64 characters:
+  `invalid_input`. Delete and draft still take such a name. A list
+  leaves it out and says so in `note`.
+- A one-click `unsubscribe` in a client that cannot ask the human:
+  `refused`, unless `[unsubscribe] allow_without_elicitation` is true.
+- A Gmail `delete_filter` in a client that cannot ask the human:
+  `refused`, unless `[bulk] allow_without_elicitation` is true. A
+  `filter_id` that names no filter: `not_found`.
+- A `draft` that the mail server saves with an id in a form that the
+  server does not accept: an error with the class `error`. The draft
+  is saved.
+- An address, identity name, `reply_match` entry or save root from
+  your own setup that holds a character that the check refuses:
+  `output_refused` on the result that shows it.
+
 ### Security
 
 - Every tool result has two zones. The first field `_fence` holds a
@@ -67,14 +176,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fixed refusals of the server (send, idempotency key, Gmail
   settings, templates, unsubscribe, folders, an unknown account) give
   their guidance outside the fence, with a class word: `refused`,
-  `invalid_input`, `limit`, `not_found` or `unknown_account`. Model
+  `invalid_input`, `limit`, `not_found`, `unknown_account` or
+  `internal` (a send that stopped before it is known if the mail
+  left). Model
   input that a refusal names, such as an alias or a template name, is
   in a fence after the text. Some texts changed: the send limit gives
   the account and the wait in the fenced part.
 - Text from your own setup (the addresses, identity names and
   `reply_match` entries of `accounts.toml`, and the save roots) is
   checked free text, not a closed grammar. It must have no control
-  character, no hidden character, no fence marker and no chat template
+  character, no line or paragraph separator (U+2028, U+2029), no
+  hidden character, no character that shows no glyph (such as a
+  variation selector or U+2800), no fence marker and no chat template
   token, and it need not be in NFKC form, so a name such as
   `ACME™ Support` passes. A value that fails gives `output_refused`.
 - The byte budgets are larger, because the new form is longer: the

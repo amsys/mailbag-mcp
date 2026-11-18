@@ -249,6 +249,20 @@ two files differ.
   alias under case folding: on APFS and NTFS `Work` and `work` are one
   secret file. `TestAlias_Pattern`, `TestCLI_AliasBeforePrompt`,
   `TestTools_UnknownAccount`, `TestCLI_AddRefusesAliasCaseFold`.
+  An alias has at most 64 characters (`config.MaxAliasLen`, DU12.4
+  item 2), because a result carries it outside every fence as the
+  strict kind `alias`, and that kind is `config.ValidAlias`, which
+  holds the length. The strict load refuses a longer alias with a text
+  that names the limit. `account add`, `account test` and `identities
+  detect` refuse it through `aliasUsage`. `account remove` still takes
+  an alias of the pattern that is too long (`config.AliasTooLong`), so
+  an account that an older version wrote can go. A template name
+  follows the same rule: `templates save` refuses a longer name
+  (`templateNameLongText`), delete and draft still take one, and a
+  list leaves each such file out with a registered note. Never let an
+  input take an alias or a template name that the output gate then
+  refuses. `TestConfig_Load_AliasLengthLimit`,
+  `TestCLI_AliasLengthLimit`, `TestTemplates_NameLengthLimit`.
 - B18 Never re-encode `accounts.toml`: append and cut text blocks, then
   parse and compare. `account remove` finds the alias and the store
   kind with the lenient decode (`config.PeekFile`), never the strict
@@ -543,9 +557,13 @@ two files differ.
   is not a closed grammar (DU12.3 item 3). `strictOwner` checks free
   text that only the owner config and the save roots feed: valid UTF-8
   of 1 to 1024 B; no rune of category Cc (so no line feed and no tab),
-  Cf, Co or Cs; no Hangul filler; unchanged by `StripFenceMarkers`; no
-  template token in the text or in its NFKC copy. It needs no NFC or
-  NFKC, so `ACME™ Support`, a no-break space and a combining mark pass.
+  Cf, Co, Cs, Zl or Zp (so no U+2028 and no U+2029: a line separator
+  can start a forged `System:` line); no rune that `ownerGlyphless`
+  names (the Hangul fillers, U+034F, U+17B4, U+17B5, U+180B-U+180F,
+  U+2800 and the variation selectors; DU12.4 item 6); unchanged by
+  `StripFenceMarkers`; no template token in the text or in its NFKC
+  copy. It needs no NFC or NFKC, so `ACME™ Support`, a no-break space
+  and a combining mark pass. `TestStrict_OwnerRefusesLineSeparatorsAndGlyphless`.
   Never give the kind `owner` to a value that a model or a sender can
   choose. No check runs at config load, so a bad identity name gives
   `output_refused` on `accounts`. `TestStrict_OwnerFreeText`,
@@ -673,8 +691,12 @@ two files differ.
   `modify` only for read, starred, labels without TRASH, SPAM or DRAFT
   (any case, outer spaces trimmed), and a move to INBOX or to the junk
   folder. The move rule compares names, not roles: `move_to` equals
-  "INBOX" or `junkFolder(acct)` with `strings.EqualFold`, with no trim
-  (" INBOX" needs draft). `junkFolder` is the `junk` key of the
+  "INBOX" or `junkFolder(acct)` with `strings.EqualFold`.
+  `folderInput` trims the outer spaces of `move_to` before `needLevel`
+  reads it, as `bulk` does (DU12.4 item 1), so " INBOX " is classify
+  and the provider gets "INBOX". Keep `folderInput` before the level
+  check: the level must come from the value that the provider gets.
+  `TestModify_MoveToTrimmedAsBulk`. `junkFolder` is the `junk` key of the
   existing `folders` table, else "Junk"; Gmail is always "SPAM" and
   ignores the table, because a Gmail move to an unknown label creates
   it. Do not add a `junk_folder` key. Undo, trash, archive, INBOX in
@@ -825,13 +847,30 @@ two files differ.
   an `unsubscribe` row stays with no `id`. Known limit: a Gmail or JMAP
   id from a hostile mail server (not a sender) is checked for its
   character set only.
+  An attachment `ref` of `read` is the part id when it is 1 to 64
+  digits and dots (an IMAP section), else `=` and the lowercase hex of
+  the id bytes (`partRef`, kind `ref`), so a Gmail or JMAP part id
+  never shows outside a fence. `attachment` decodes its `ref` with
+  `refArg` before the provider call and before any disk write (DU12.4
+  item 3); a ref that starts with `=` and is not `=` and 2 to 512
+  lowercase hex digits is `invalid_input`. A new tool that takes a ref
+  from a result needs the same decode. `TestAttachment_ReadRefRoundTrip`.
   A `note` matches the closed registry of `notes.go`; parts join with
-  `"; "`, and no form holds that separator. A provider note that
+  `"; "` through `joinNote` in every tool, and no form holds that
+  separator. `addNote` (a line feed join) is deleted (DU12.4 item 5).
+  A provider note that
   matches no form becomes `note withheld`; a send warning keeps its
   registry text, and the provider text goes to `untrusted.detail`
-  (`SendResult.WarningDetail`). `guard.CleanServerName` has no caller
-  now; do not use it for a field outside the fence. `errNote` is gone:
-  `errDetail` replaced it.
+  (`SendResult.WarningDetail`). `guard.CleanServerName` is deleted
+  (DU12.4 item 7): a cleaned copy outside the fence is never enough.
+  `errNote` is gone: `errDetail` replaced it.
+  `folders` create, rename and delete give the folder list after the
+  change. When that list read fails, the change is done, so the result
+  is a success, not an error (DU12.4 item 4): `folders` is empty,
+  `note` is `folderListFailedNote` plus the class word of the list
+  error, and the error text is in `untrusted.detail`. An error there
+  would make the model retry a write that is done.
+  `TestFolders_DoneWriteListFails`, `TestTemplates_ListNotesJoined`.
   `TestSearch_ProviderErrorSanitized`, `TestServerNames_Cleaned`
   (also pins the NFKC form of the fenced name),
   `TestFolderRef_RoundTrip`, `TestFolderArg_BadRefRefused`,
@@ -855,22 +894,32 @@ two files differ.
   setting, a template file or the text shown to the human (INV-7).
   `templates` save strips the subject and body before the file write.
   `folders` create and rename refuse, with `invalid_input` and before
-  any provider call, a new name that starts with `=`, that changes under
+  any provider call, a new name that starts with `=` after the trim of
+  its outer spaces (a server can trim a new name), that changes under
   `StripFenceMarkers` or `StripInvisible`, or that holds a control
   character (`checkNewFolderName`). The `=` rule (DU12.3 item 4) exists
   because a create `name` and a `new_name` take no folder_ref: a ref
   there would pass a hostile name around the check, and a folder whose
   name starts with `=` can be given only by its ref. Only the existing
-  folder of rename and delete goes through `folderArg`. A folder_ref in
-  `move_to` of `modify` and `bulk` can make a Gmail label (E4), so
-  `checkRefTarget` refuses it with `errRefTarget` (`invalid_input`, no
-  echo) when its decoded name fails `checkNewFolderName` and no folder
-  has exactly that raw name. It reads the folder list only in that
-  case; `bulk` checks before the search and the question, `modify`
-  after the level check (DU12.3 item 7). A new field that can make a
-  folder or a label needs the same check.
-  `TestFolders_NewNameRefRefused`, `TestCheckRefTarget`,
-  `TestModify_RefTargetMustExist`, `TestBulk_RefTargetMustExist`.
+  folder of rename and delete goes through `folderArg`. `move_to` of
+  `modify` and `bulk`, and each `add_labels` name of `modify`, can make
+  a Gmail label (E4). So `checkRefTarget` (DU12.4 item 1) takes the
+  values that the provider gets: `move_to` after the trim, the decode
+  of a folder_ref and the strip of the markers, and each `add_labels`
+  name after the strip and the trim (`ModifyIn.makeNames`). A value
+  that passes `checkNewFolderName` passes with no folder read. For
+  any other value it reads the folder list once for the call, and the
+  value passes only when a folder or label has exactly that raw name.
+  Else the call fails with `errRefTarget` (`invalid_input`, no echo)
+  before any write. The form of the input (plain, fenced or ref) does
+  not matter. On IMAP and JMAP an `add_labels` name is a keyword, and
+  the same rule applies to it. `bulk` checks before the search and the
+  question, `modify` after the level check. A new field that can make
+  a folder or a label needs the same check.
+  `TestFolders_NewNameRefRefused`, `TestFolders_NewNameRefAfterSpaceRefused`,
+  `TestCheckRefTarget`, `TestModify_RefTargetMustExist`,
+  `TestBulk_RefTargetMustExist`, `TestModify_MakeNameMustExist`,
+  `TestBulk_MakeNameMustExist`.
   The bulk question uses `plainLine` (`Sanitize`,
   line breaks to spaces, 120 runes), with no marker and no nonce.
   `TestOutgoing_NoFenceMarkerAnywhere` (ASCII, look-alike and nonce

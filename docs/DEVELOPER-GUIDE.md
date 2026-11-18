@@ -189,8 +189,14 @@ Every tool result has two zones (`arch: DU10.1`).
   and `Fencer.Holds` tests that a string is one such fence.
 - Each string that a sender controls goes under the `untrusted` key,
   inside a fence.
-- Each other string has a `strict` tag and must match a closed grammar
-  in `guard.Strict`. The `note` field must match the note registry.
+- Each other string has a `strict` tag and must pass `guard.Strict`
+  for its kind. Each kind is a closed grammar, except `owner`. The kind
+  `owner` is checked free text from the owner config and the save
+  roots: it has no control character, no hidden or glyphless
+  character, no line or paragraph separator, no fence marker and no
+  chat template token. Never give the kind `owner` to a value that a
+  model or a sender can choose. The `note` field must match the note
+  registry.
 - A folder name is outside the strict zone as a name. The result shows
   `folder_ref` (`=` and the hex of the name bytes) and the name in
   `untrusted.folder`. An input field that takes a folder accepts a

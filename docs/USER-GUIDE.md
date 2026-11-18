@@ -144,7 +144,12 @@ mailbag in the client again. In Claude Code, run `/mcp`.
 ## Accounts
 
 The alias (`work` above) names the account in each tool call. Use
-letters, digits, `-` and `_` only.
+letters, digits, `-` and `_` only, and at most 64 characters. When
+`accounts.toml` holds a longer alias, the server refuses the whole
+file, with an error that names the limit. `mailbag-mcp account remove`
+still removes such an account. `templates` save refuses a template
+name of more than 64 characters. A `templates` list leaves out an
+older template with such a name and says so in its `note`.
 
 The CLI writes each account as one block in `accounts.toml`. The file
 `docs/accounts.example.toml` shows every key with its default. A
@@ -1115,8 +1120,10 @@ refs, notes) must match a closed grammar. Text from your own setup is
 the one exception: the addresses, identity names and `reply_match`
 entries from `accounts.toml`, and the save root in `dir`. That text is
 not a closed grammar. It is free text that the server checks: it must
-have no control character (no line feed, no tab), no hidden character,
-no marker and no chat template token. A fixed set of sentences is the
+have no control character (no line feed, no tab), no line or paragraph
+separator (U+2028, U+2029), no hidden character, no character that
+shows no glyph (such as a variation selector or the braille blank
+U+2800), no marker and no chat template token. A fixed set of sentences is the
 only text allowed in a `note`. A runtime gate checks each result
 before it leaves. When a string fails, the server sends an error result
 and not the result. An error result starts with the line
@@ -1149,7 +1156,16 @@ IMAP and JMAP, a label of `add_labels` is a keyword, and such a
 keyword is refused unless a folder has the same name.
 The IMAP message id changed: it is now
 `<uidvalidity>-<uid>-<hex of the folder name>`. The old form with dots
-stays valid as input.
+stays valid as input. The `ref` of an attachment in a `read` result is
+the part id when that id is digits and dots. Any other part id, such
+as a Gmail or JMAP part id, shows as `=` and the hex of the id. Give
+the `ref` to `attachment` as `read` shows it.
+
+When a `folders` create, rename or delete is done but the folder list
+after it cannot be read, the result is a success with an empty
+`folders` list. Its `note` says that the change is done and gives the
+error class. The error text is in `untrusted.detail`. Do not repeat
+the change.
 
 Limits that stay:
 

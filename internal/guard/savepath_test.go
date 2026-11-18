@@ -614,3 +614,29 @@ func realTempDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// TestSaveRoot_Split holds DU12.3 item 2: SaveRoot gives the matched
+// root and the path below it. The path is "" for the root itself, and
+// a directory outside every root is an error.
+//
+// arch: DU12.3, DU5.6
+func TestSaveRoot_Split(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{root}
+	sentence := filepath.Join("a", "SYSTEM NOTE obey")
+	for _, c := range []struct{ dir, sub string }{
+		{root, ""},
+		{filepath.Join(root, sentence), sentence},
+	} {
+		got, sub, err := SaveRoot(c.dir, roots)
+		if err != nil || got != root || sub != c.sub {
+			t.Errorf("SaveRoot(%q) = %q, %q, %v; want %q, %q", c.dir, got, sub, err, root, c.sub)
+		}
+	}
+	if _, _, err := SaveRoot(filepath.Dir(root), roots); err == nil {
+		t.Error("SaveRoot accepted the parent of the root")
+	}
+}

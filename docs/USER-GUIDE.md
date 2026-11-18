@@ -1110,8 +1110,13 @@ A sender cannot know the nonce before the response exists, so mail
 cannot forge a valid marker. A marker with another value is sender text.
 The server also breaks the plain forms of a marker in the text. Every
 string outside `untrusted` (ids, dates, flags, account names, folder
-refs, notes) must match a closed grammar. A fixed set of sentences is
-the only text allowed in a `note`. A runtime gate checks each result
+refs, notes) must match a closed grammar. Text from your own setup is
+the one exception: the addresses, identity names and `reply_match`
+entries from `accounts.toml`, and the save root in `dir`. That text is
+not a closed grammar. It is free text that the server checks: it must
+have no control character (no line feed, no tab), no hidden character,
+no marker and no chat template token. A fixed set of sentences is the
+only text allowed in a `note`. A runtime gate checks each result
 before it leaves. When a string fails, the server sends an error result
 and not the result. An error result starts with the line
 `_fence: <nonce>`, then `error: <class>`; text from a server or a
@@ -1146,9 +1151,13 @@ only.
 
 The server does not open or scan a saved file. The `attachment` tool
 writes the bytes of an attachment to a directory under an allowed root
-and gives the path. The file name comes from the sender, so the path in
-the result is in `untrusted`, inside a fence. A name keeps its
-extension, so a file with an executable extension is saved as such.
+and gives the path in three parts. `dir` is the allowed root only.
+`untrusted.subdir` is the path below the root, inside a fence, because
+the call chose it; the key is absent when the file is in the root
+itself. `untrusted.name` is the file name, inside a fence, because it
+comes from the sender. `export` gives each file in the same form. A
+name keeps its extension, so a file with an executable extension is
+saved as such.
 Open a saved file only when you trust the sender.
 
 A reply uses the `Reply-To` address of the original message when there

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,12 +34,13 @@ type ExportIn struct {
 	SaveDir string `json:"save_dir,omitempty" jsonschema:"default ~/Downloads/mailbag-mcp"`
 }
 
-// SavedFile is one file an export wrote. Dir is outside: the save
-// root (kind owner). The file name is built from the message id, and
-// a provider can give any id text, so it is under Untrusted in one
-// fence (DU5.6, G3, §3.15).
+// SavedFile is one file an export wrote. Dir is outside: the matched
+// save root (kind owner), never the save_dir of the call. The path
+// below the root is under Untrusted.Subdir in one fence. The file name
+// is built from the message id, and a provider can give any id text,
+// so it is under Untrusted.Name in one fence (DU5.6, G3, §3.15).
 //
-// arch: DU5.1, DU5.6
+// arch: DU5.1, DU5.6, DU12.3
 type SavedFile struct {
 	Dir       string              `json:"dir" strict:"owner"`
 	Size      int64               `json:"size"`
@@ -151,10 +151,14 @@ func (t *exportTool) handle(ctx context.Context, in ExportIn) (ExportOut, error)
 		if err != nil {
 			return ExportOut{}, err
 		}
+		root, u, err := savedUntrusted(f, path, roots)
+		if err != nil {
+			return ExportOut{}, err
+		}
 		out.Files = append(out.Files, SavedFile{
-			Dir:       dir,
+			Dir:       root,
 			Size:      int64(len(data)),
-			Untrusted: AttachmentUntrusted{Name: f.Wrap(filepath.Base(path))},
+			Untrusted: u,
 		})
 	}
 	out.Untrusted = noteDetail(f, details)

@@ -121,6 +121,24 @@ func ResolveSaveDir(dir string, roots []string) (string, error) {
 	return cdir, nil
 }
 
+// SaveRoot splits dir, a value that ResolveSaveDir gave, into the
+// matched root and the path below it. sub is "" when dir is the root
+// itself. A tool result shows root outside every fence and sub inside
+// one, because the caller chose sub and the caller can be a model that
+// read a mail (DU12.3 item 2).
+//
+// arch: DU12.3, DU5.6
+func SaveRoot(dir string, roots []string) (root, sub string, err error) {
+	root, rel, err := matchRoot(dir, roots)
+	if err != nil {
+		return "", "", fmt.Errorf("guard: save root: %w", err)
+	}
+	if rel == "." {
+		rel = ""
+	}
+	return root, rel, nil
+}
+
 // matchRoot finds the entry of roots that resolved falls under, after
 // expanding "~" and canonicalizing each entry the same way as
 // resolved, so a symbolic link cannot walk the target out of every

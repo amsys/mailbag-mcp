@@ -246,3 +246,38 @@ func TestAccountsOut_PassesGate(t *testing.T) {
 		t.Error("checkOut accepted a fence marker in an identity name")
 	}
 }
+
+// TestAccountsOut_OwnerNamesPass holds DU12.3 item 3 (review finding
+// M4) through the output gate. An identity name that NFKC would change
+// passes, so the accounts tool does not fail closed for such an owner.
+// A line feed or a tab in the name is refused.
+//
+// arch: DU12.3, DU3.1, DU5.6
+func TestAccountsOut_OwnerNamesPass(t *testing.T) {
+	f := testFencer(t)
+	out := AccountsOut{
+		Head:    Head{Fence: f.Nonce()},
+		Secrets: "file",
+		Accounts: []AccountRow{{
+			Alias: "work", Email: "me@work.example", Provider: "imap", Access: "read",
+			Identities: []string{"me@work.example"}, State: AuthNeedsSignIn,
+			IdentitySettings: []IdentityRow{{Email: "me@work.example", Default: true}},
+		}},
+	}
+	names := []string{
+		"ACME™ Support", "Dupont & Fils…", "Bureau №1", "Ann Example",
+		"株式会社（東京）", "Zoë",
+	}
+	for _, name := range names {
+		out.Accounts[0].IdentitySettings[0].Name = name
+		if err := checkOut(f, out); err != nil {
+			t.Errorf("identity name %q: checkOut: %v", name, err)
+		}
+	}
+	for _, name := range []string{"Ann\nExample", "Ann\tExample"} {
+		out.Accounts[0].IdentitySettings[0].Name = name
+		if err := checkOut(f, out); err == nil {
+			t.Errorf("checkOut accepted the identity name %q", name)
+		}
+	}
+}

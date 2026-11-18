@@ -27,12 +27,14 @@ type AttachmentIn struct {
 // AttachmentOut is the attachment tool result: the save directory,
 // the file name and the size, never the content (§3.15).
 //
-// Dir is outside: it is the save root that the owner config or the
-// caller chose, checked by guard.ResolveSaveDir (kind owner). The file
-// name comes from the sender, so it is under Untrusted in one fence
-// (DU5.6, G3). Account and Size are outside.
+// Dir is outside: it is the matched save root, a default root or a
+// download_dirs entry of the owner config (kind owner), never the
+// save_dir of the call. The caller chose the path below the root, so
+// it is under Untrusted.Subdir in one fence. The file name comes from
+// the sender, so it is under Untrusted.Name in one fence (DU5.6, G3).
+// Account and Size are outside.
 //
-// arch: DU5.1, DU5.6
+// arch: DU5.1, DU5.6, DU12.3
 type AttachmentOut struct {
 	Head
 	Account   string              `json:"account" strict:"alias"`
@@ -41,10 +43,30 @@ type AttachmentOut struct {
 	Untrusted AttachmentUntrusted `json:"untrusted"`
 }
 
-// AttachmentUntrusted is the untrusted zone of [AttachmentOut]: the
-// name of the saved file inside Dir, as one fence (DU5.6).
+// AttachmentUntrusted is the untrusted zone of [AttachmentOut] and
+// [SavedFile]: the path below Dir and the name of the saved file, each
+// as one fence. Subdir is absent when the file is in Dir itself.
+//
+// arch: DU5.6, DU12.3
 type AttachmentUntrusted struct {
-	Name string `json:"name"`
+	Subdir string `json:"subdir,omitempty"`
+	Name   string `json:"name"`
+}
+
+// savedUntrusted fences the path below the save root and the file name
+// of path, a file that guard.CreateSaveFile made under one of roots.
+//
+// arch: DU12.3, DU5.6
+func savedUntrusted(fc guard.Fencer, path string, roots []string) (root string, u AttachmentUntrusted, err error) {
+	root, sub, err := guard.SaveRoot(filepath.Dir(path), roots)
+	if err != nil {
+		return "", AttachmentUntrusted{}, err
+	}
+	u.Name = fc.Wrap(filepath.Base(path))
+	if sub != "" {
+		u.Subdir = fc.Wrap(sub)
+	}
+	return root, u, nil
 }
 
 // AddAttachment adds the "attachment" tool to srv (§3.16): read
@@ -135,11 +157,15 @@ func (t *attachmentTool) handle(ctx context.Context, in AttachmentIn) (Attachmen
 		_ = os.Remove(path)
 		return AttachmentOut{}, public("limit", "this attachment is larger than the limit of 25 MB")
 	}
+	root, u, err := savedUntrusted(fc, path, roots)
+	if err != nil {
+		return AttachmentOut{}, err
+	}
 	return AttachmentOut{
 		Account:   in.Account,
-		Dir:       dir,
+		Dir:       root,
 		Size:      n,
-		Untrusted: AttachmentUntrusted{Name: fc.Wrap(filepath.Base(path))},
+		Untrusted: u,
 	}, nil
 }
 

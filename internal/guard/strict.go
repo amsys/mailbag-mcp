@@ -2,13 +2,18 @@
 // SPDX-License-Identifier: MIT
 
 // Strict grammars for the outside zone of a tool result. Every string
-// that is not under `untrusted` must match one closed grammar.
+// that is not under `untrusted` must match one closed grammar, or the
+// checked free text of the kind owner.
 
 package guard
 
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/amsys/mailbag-mcp/internal/config"
 )
@@ -56,7 +61,7 @@ func Strict(kind, s string) bool {
 	case "cursor":
 		return len(s) <= 4096 && strictMatch(kind, strictRes[kind][0], s)
 	case "owner":
-		return s != "" && s == Sanitize(s) && StripFenceMarkers(s) == s
+		return strictOwner(s)
 	}
 	for _, re := range strictRes[kind] {
 		if strictMatch(kind, re, s) {
@@ -64,6 +69,39 @@ func Strict(kind, s string) bool {
 		}
 	}
 	return false
+}
+
+// ownerMaxBytes is the longest value of the kind owner.
+const ownerMaxBytes = 1024
+
+// strictOwner checks the kind owner. It is not a closed grammar: it is
+// free text that only the owner config and the save roots feed. The
+// value must be valid UTF-8 of 1 to ownerMaxBytes bytes. It must have
+// no control character (Cc, so no line feed and no tab), no rune of
+// Cf, Co or Cs, no Hangul filler, no fence marker and no chat template
+// token. It does not need NFC or NFKC, so "ACME\u2122 Support" and a
+// combining mark pass. The template check also reads the NFKC form,
+// because the DeepSeek token has a full-width bar that only NFKC
+// folds. The value itself stays as it is.
+//
+// arch: DU12.3, DU3.1
+func strictOwner(s string) bool {
+	if s == "" || len(s) > ownerMaxBytes || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs) {
+			return false
+		}
+		switch r {
+		case 0x115F, 0x1160, 0x3164, 0xFFA0:
+			return false // Hangul fillers
+		}
+	}
+	if StripFenceMarkers(s) != s {
+		return false
+	}
+	return !templateTokenRe.MatchString(s) && !templateTokenRe.MatchString(norm.NFKC.String(s))
 }
 
 // strictFlagList accepts words of strictFlags, separated by single

@@ -376,6 +376,68 @@ func TestGmailSettings_HidingFilterAsks(t *testing.T) {
 	}
 }
 
+// TestGmailSettings_AcceptedFilterKeepsFencer holds DU12.3 item 1: an
+// accepted create_filter runs on a detached context that still has the
+// Fencer of the call. The fake gives the filter back with its criteria,
+// as Gmail does, so the result row fences them. On each protocol there
+// is one CreateFilter call, and the result passes the output gate with
+// the criteria in fences of the nonce of the result.
+//
+// arch: DU12.3, DU2.2, DS11.9, DH3.4, DH3.5
+func TestGmailSettings_AcceptedFilterKeepsFencer(t *testing.T) {
+	args := func() map[string]any {
+		return map[string]any{"account": "work", "action": "create_filter", "from": "news@example.test", "remove_labels": []string{"INBOX"}}
+	}
+	fixture := func() (*gmailSettingsTool, *settingsWriter) {
+		h, w := settingsFixture("draft")
+		w.created = gmail.Filter{ID: "f1", From: "news@example.test", RemoveLabels: []string{"INBOX"}}
+		return h, w
+	}
+	check := func(t *testing.T, w *settingsWriter, out GmailSettingsOut) {
+		t.Helper()
+		if got := strings.Join(w.calls, ","); got != "CreateFilter" {
+			t.Errorf("calls = %s, want one CreateFilter", got)
+		}
+		f := fencerOfNonce(t, out.Fence)
+		if err := checkOut(f, &out); err != nil {
+			t.Errorf("the output gate refused the result: %v", err)
+		}
+		if out.Note != "filter created" || len(out.Filters) != 1 {
+			t.Fatalf("result = %+v, want one created filter", out)
+		}
+		row := out.Filters[0]
+		if row.ID != "f1" {
+			t.Errorf("filter id = %q, want f1", row.ID)
+		}
+		if row.Untrusted.From != f.Wrap("news@example.test") {
+			t.Errorf("untrusted.from = %q, want news@example.test in one fence of the nonce %s", row.Untrusted.From, out.Fence)
+		}
+		if len(row.Untrusted.RemoveLabels) != 1 || row.Untrusted.RemoveLabels[0] != f.Wrap("INBOX") {
+			t.Errorf("untrusted.remove_labels = %q, want INBOX in one fence of the nonce %s", row.Untrusted.RemoveLabels, out.Fence)
+		}
+	}
+
+	t.Run("old protocol", func(t *testing.T) {
+		h, w := fixture()
+		var prompts []*mcp.ElicitParams
+		res, asked := settingsDial(t, h, true).run("gmail_settings", args(), settingAccept(&prompts))
+		if asked != 1 {
+			t.Fatalf("asked %d times, want 1", asked)
+		}
+		check(t, w, settingsOutOf(t, res))
+	})
+
+	t.Run("MRTR", func(t *testing.T) {
+		h, w := fixture()
+		cs := settingsMRTR(t, h)(noAutoElicit(t))
+		state, _ := settingsFirst(t, cs, args())
+		if len(w.calls) != 0 {
+			t.Fatalf("calls after the first call = %v, want none", w.calls)
+		}
+		check(t, w, settingsOutOf(t, settingsCall(t, cs, args(), state, settingApply)))
+	})
+}
+
 // TestGmailSettings_PlainFilterDoesNotAsk holds DH3.2: a filter that
 // does not hide mail, vacation off and the reads run with no question,
 // on a client that cannot ask. A filter delete asks since DU8.1, so

@@ -470,7 +470,7 @@ func runSetting(ctx context.Context, s gmail.Settings, in GmailSettingsIn, ask c
 // config key lets a client that cannot ask make the change. Any other
 // outcome changes nothing and gives the declined note (I10).
 //
-// arch: DH3.4, DH3.5, DH3.6, DS11.9
+// arch: DH3.4, DH3.5, DH3.6, DS11.9, DU12.3
 func applyAfter(ctx context.Context, s gmail.Settings, c settingChange, outcome string) (GmailSettingsOut, error) {
 	// DS11.9: an accept is the point of no return of the change. The
 	// wait for the human does not count against the tool deadline, so
@@ -478,9 +478,14 @@ func applyAfter(ctx context.Context, s gmail.Settings, c settingChange, outcome 
 	switch outcome {
 	case confirmAccept, confirmAcceptSession:
 		if wait, timeout, ok := untimed(ctx); ok {
+			// DU12.3: wait has no Fencer, so the Fencer of the call
+			// goes back on the detached context before apply builds
+			// the result.
+			f := fencer(ctx)
 			var cancel context.CancelFunc
 			ctx, cancel = detach(wait, timeout)
 			defer cancel()
+			ctx = withFencer(ctx, f)
 		}
 	case confirmNoElicitAllowed:
 		// No wait for the human came first, so the change keeps the

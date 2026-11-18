@@ -26,7 +26,12 @@ import (
 //
 // The caller must call the returned CancelFunc when the write ends.
 //
-// arch: D11.1, DS11.9
+// The parent context that [untimed] gives has no Fencer. When ctx is
+// that parent, the caller puts the Fencer of the call back on the
+// result with withFencer before any code that builds output runs
+// (DU12.3).
+//
+// arch: D11.1, DS11.9, DU12.3
 func detach(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	free := context.WithoutCancel(ctx)
 	if deadline, ok := ctx.Deadline(); ok {

@@ -9,3 +9,9 @@ memory/
 /docs/features/
 /.state/
 /PLAN.md
+
+# Build leftovers.
+/cover.out
+/dist-notes.md
+/mailbag-setup
+*.test

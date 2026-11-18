@@ -579,16 +579,6 @@ func noteDetail(f guard.Fencer, lines []string) *Detail {
 	return &Detail{Detail: f.Wrap(guard.Redact(strings.Join(lines, "\n")))}
 }
 
-// addNote joins two note lines. export and templates use it; read and
-// decrypt use joinNote (bulk.go), which joins with noteSep so the note
-// registry can check each part (DU12.1 item 3).
-func addNote(have, add string) string {
-	if have == "" {
-		return add
-	}
-	return have + "\n" + add
-}
-
 // encryptedNote is the fixed note read gives for an encrypted
 // message. It holds no sender text (I11). read fetches nothing for
 // it: the decrypt tool reads the source itself (D7.3).

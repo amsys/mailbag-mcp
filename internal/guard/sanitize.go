@@ -90,15 +90,3 @@ func Sanitize(s string) string {
 	s = escapeMarkers(s)
 	return escapeTemplateTokens(s)
 }
-
-// CleanServerName makes a folder name or a label word safe to show
-// outside a fence. The marker strip comes first, because a field
-// outside a fence must not hold the bare word UNTRUSTED_, and Sanitize
-// keeps that word when it escapes a marker. Sanitize runs NFKC, so a
-// full-width name comes back in its plain form, and a later call with
-// that name can fail. The owner accepted this.
-//
-// arch: DH2.5
-func CleanServerName(s string) string {
-	return Sanitize(StripFenceMarkers(s))
-}

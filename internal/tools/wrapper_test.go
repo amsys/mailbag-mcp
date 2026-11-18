@@ -104,13 +104,6 @@ func isErrForm(text, class, public, detail string) bool {
 	return ok && p == errFormParts{nonce: p.nonce, class: class, public: public, detail: detail}
 }
 
-// isErrFormPrefix is [isErrForm] with no public text and a fence body
-// that starts with prefix.
-func isErrFormPrefix(text, class, prefix string) bool {
-	p, ok := parseErrForm(text)
-	return ok && p.class == class && p.public == "" && strings.HasPrefix(p.detail, prefix)
-}
-
 // errMsg checks that res is an error result in the form of DU6.1 and
 // gives its message as publicError.Error() gives it (DU12.1 item 4):
 // the public text, the fence body, or the two joined with ": ". A test

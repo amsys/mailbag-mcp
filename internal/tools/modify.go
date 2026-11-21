@@ -227,8 +227,8 @@ func (t *modifyTool) handle(ctx context.Context, in ModifyIn) (ModifyOut, error)
 // (DU3.3). move_to loses its outer spaces, as in bulk (DU12.4 item 1),
 // and then passes folderArg: a folder_ref decodes to the raw name, and
 // a name loses its fence markers. Each label name of add_labels and
-// remove_labels passes guard.StripFenceMarkers, so a fenced name that
-// the model copies back from a result loses its markers.
+// remove_labels passes stripNameMarkers, so a fenced name that the
+// model copies back from a result loses its markers.
 // mapPseudoLabels trims the line feeds that the fence leaves.
 //
 // arch: DU3.3, DU12.4, INV-10
@@ -259,14 +259,14 @@ func (in ModifyIn) makeNames() []string {
 }
 
 // stripLabels gives a copy of labels in which each name passed
-// guard.StripFenceMarkers (DU3.3). A nil list stays nil.
+// stripNameMarkers (DU3.3). A nil list stays nil.
 func stripLabels(labels []string) []string {
 	if labels == nil {
 		return nil
 	}
 	out := make([]string, len(labels))
 	for i, l := range labels {
-		out[i] = guard.StripFenceMarkers(l)
+		out[i] = stripNameMarkers(l)
 	}
 	return out
 }

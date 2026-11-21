@@ -118,7 +118,10 @@ func TestFolderArg_BadRefRefused(t *testing.T) {
 }
 
 // TestFolderArg_NameKept checks that a plain name and an empty value
-// pass with no change: no trim, no case change, no NFKC form.
+// pass with no change: no trim, no case change, no NFKC form, and no
+// loss of a hidden character. A name with a zero width non-joiner, a
+// zero width joiner or a CR LF pair is a real name of another client.
+// stripLabels follows the same rule for a label name.
 //
 // arch: DU3.3, DU12.1
 func TestFolderArg_NameKept(t *testing.T) {
@@ -131,6 +134,10 @@ func TestFolderArg_NameKept(t *testing.T) {
 		"[Gmail]/All Mail",
 		"Ünïcode",
 		"\uFF29\uFF2E\uFF22\uFF2F\uFF38",
+		"\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645",
+		"A\u200DB",
+		"A\u200BB",
+		"A\r\nB",
 	} {
 		got, err := folderArg(in)
 		if err != nil {
@@ -139,6 +146,9 @@ func TestFolderArg_NameKept(t *testing.T) {
 		}
 		if got != in {
 			t.Errorf("folderArg(%q) = %q, want it unchanged", in, got)
+		}
+		if l := stripLabels([]string{in}); l[0] != in {
+			t.Errorf("stripLabels(%q) = %q, want it unchanged", in, l[0])
 		}
 	}
 }

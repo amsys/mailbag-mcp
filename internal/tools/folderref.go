@@ -44,12 +44,12 @@ func folderRef(name string) string {
 
 // folderArg reads one folder input value (DU3.3). A value that starts
 // with "=" must be a valid ref, and folderArg gives the raw name that
-// the ref holds. Any other value is a name: it passes
-// guard.StripFenceMarkers, so a fenced name that the model copies back
-// loses its markers. When the strip changed the value, the line feeds
-// at the two ends go too, because the fence puts a line feed after
-// the open marker and before the close marker (DU1.1). An empty value
-// stays empty, so the default of the field applies.
+// the ref holds. Any other value is a name: it passes stripNameMarkers,
+// so a fenced name that the model copies back loses its markers. When
+// the strip changed the value, the line feeds at the two ends go too,
+// because the fence puts a line feed after the open marker and before
+// the close marker (DU1.1). An empty value stays empty, so the default
+// of the field applies.
 //
 // A real name that starts with "=" must be given as its ref.
 //
@@ -58,11 +58,27 @@ func folderArg(s string) (string, error) {
 	if strings.HasPrefix(s, folderRefPrefix) {
 		return decodeFolderRef(s)
 	}
-	clean := guard.StripFenceMarkers(s)
+	clean := stripNameMarkers(s)
 	if clean != s {
 		clean = strings.Trim(clean, "\n")
 	}
 	return clean, nil
+}
+
+// stripNameMarkers removes the fence markers from a folder or label
+// name of the input. A name with no marker comes back byte for byte.
+// guard.StripFenceMarkers alone is wrong here: it removes the hidden
+// characters first, so a real name with a zero width non-joiner (a
+// Persian label) became another name, and the call then acted on the
+// wrong folder or made a new label.
+//
+// arch: DU3.3
+func stripNameMarkers(s string) string {
+	clean := guard.StripFenceMarkers(s)
+	if hidden, _ := guard.StripInvisible(s); clean == hidden {
+		return s
+	}
+	return clean
 }
 
 // decodeFolderRef checks ref against the grammar of the kind folder,

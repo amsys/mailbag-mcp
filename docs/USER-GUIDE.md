@@ -1127,7 +1127,9 @@ U+2800), no marker and no chat template token. A fixed set of sentences is the
 only text allowed in a `note`. A runtime gate checks each result
 before it leaves. When a string fails, the server sends an error result
 and not the result. An error result starts with the line
-`_fence: <nonce>`, then `error: <class>`. A fixed text of mailbag-mcp
+`_fence: <nonce>`, then `error: <class>`. Only when the server cannot
+make a nonce, the error is `error: internal` with no `_fence` line. A
+fixed text of mailbag-mcp
 itself, such as "use a new idempotency_key", comes next, outside the
 fence. Text from a mail server, from a sender or from the call, such as
 an alias or a template name, is in a fence after it.
@@ -1186,10 +1188,20 @@ Limits that stay:
   unknown tool name, for example. Its text holds only text of that
   library and the input of the call, never mail text.
 - The output check runs after the action. When it refuses a result of
-  `attachment`, `export`, `draft`, `modify` or `gmail_settings`, the
-  error comes after the work is done: the file is on disk or the change
-  is made. Look before you try again. `send` builds its result so that
+  a tool that writes (`attachment`, `export`, `draft`, `modify`,
+  `bulk`, `unsubscribe`, `gmail_settings`, a `folders` create, rename
+  or delete, a `templates` save, delete or draft, and `read` with
+  `mark_read`), the error comes after the work is done: the file is on
+  disk or the change is made. Look before you try again. `send` builds its result so that
   the check cannot refuse it after the mail left.
+- A template name is text that the model chose at the save. The
+  `templates` list shows it outside the fence. It has at most 64
+  letters, digits, `-` and `_`.
+- On Gmail and JMAP, an id that the call gave comes back outside the
+  fence in a `modify` row with the state `gone` and in an
+  `unsubscribe` row. It has at most 256 letters, digits, `-` and `_`.
+- On the newer protocol, a result that asks a confirmation question
+  has no `_fence`.
 - A confirmation question shows sender text with no fence. `bulk`
   shows the from line and the subject of up to 5 messages, and
   `unsubscribe` shows the host of each one-click address, each cut to

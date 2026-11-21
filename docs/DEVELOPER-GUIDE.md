@@ -205,7 +205,8 @@ Every tool result has two zones (`arch: DU10.1`).
   name>`. The old form with dots stays valid on input.
 - `checkOut` in `internal/tools/outgate.go` is the output gate. `WrapReq`
   runs it on each success result. A result that breaks a rule becomes an
-  `output_refused` error with the JSON path of the field.
+  `output_refused` error with the Go path of the field: type names,
+  field names and indexes, not JSON keys.
 - Static tests walk the Out type of each tool. A string field with no
   `strict` tag and no place under `untrusted` fails. A top-level key must
   sort after `_fence`, because the SDK sorts keys. No Out type embeds a

@@ -256,7 +256,9 @@ two files differ.
   that names the limit. `account add`, `account test` and `identities
   detect` refuse it through `aliasUsage`. `account remove` still takes
   an alias of the pattern that is too long (`config.AliasTooLong`), so
-  an account that an older version wrote can go. A template name
+  an account that an older version wrote can go. The setup page does
+  the same in `handleAccountRemove` only, and still refuses a first
+  `-` (`TestSetup_RemoveLongAlias`). A template name
   follows the same rule: `templates save` refuses a longer name
   (`templateNameLongText`), delete and draft still take one, and a
   list leaves each such file out with a registered note. Never let an
@@ -822,11 +824,19 @@ two files differ.
   the lowercase hex of the raw name bytes (`folderRef`); the name
   itself is in `untrusted.folder` or `untrusted.name`. Labels and
   keywords go to `untrusted.labels`, one fence each; `flags` holds
-  only the closed words `unread`, `starred`, `answered`, `draft`,
-  `flagged`, `forwarded`, `junk` and `important`. Each input field that
-  names a folder goes through `folderArg`: a value that starts with `=`
-  must be a valid ref and decodes to the raw name; any other value is
-  a name and loses its fence markers first. A new folder name (the
+  only the words `unread`, `starred`, `answered` and `draft`
+  (`flagWords`); the gate grammar `strictFlags` also takes `flagged`,
+  `forwarded`, `junk` and `important`, which no tool writes today. Each
+  input field that names a folder goes through `folderArg`: a value
+  that starts with `=` must be a valid ref and decodes to the raw name;
+  any other value is a name and loses its fence markers first, through
+  `stripNameMarkers`. Trap: never call `guard.StripFenceMarkers` alone
+  on a folder or label name of the input. It runs `StripInvisible`
+  first, so a real name with ZWNJ or ZWJ became another name, and the
+  call acted on the wrong folder or made a new Gmail label.
+  `stripNameMarkers` gives the name back byte for byte when it holds no
+  marker; `stripLabels` of `modify` uses it too
+  (`TestFolderArg_NameKept`). A new folder name (the
   `name` of `folders` create, `new_name`) takes no ref (G19). The ref
   gives an exact round trip; the fenced name is the NFKC form (owner
   choice, 2026-11-09), and a later call with it can fail. Known limit
@@ -846,7 +856,13 @@ two files differ.
   (DU12.3 item 8), `modify` drops the row, and a `bulk` sample row or
   an `unsubscribe` row stays with no `id`. Known limit: a Gmail or JMAP
   id from a hostile mail server (not a sender) is checked for its
-  character set only.
+  character set only. The same holds for an id that the model gave: a
+  `modify` row with the state `gone` and an `unsubscribe` row give the
+  input id back outside the fence (review 2026-11-21). A template name
+  is model text too, and the `templates` list shows it outside the
+  fence under the `alias` grammar. `SendOut.ID` takes a Message-ID
+  only (DU5.5), and no provider gives one, so `send` has no `id`
+  today.
   An attachment `ref` of `read` is the part id when it is 1 to 64
   digits and dots (an IMAP section), else `=` and the lowercase hex of
   the id bytes (`partRef`, kind `ref`), so a Gmail or JMAP part id

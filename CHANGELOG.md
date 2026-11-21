@@ -6,13 +6,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-alpha.2] - 2026-11-21
+
+This is a pre-release for tests. `go install ...@latest` and the
+"Latest" release on GitHub stay at 0.1.0. The output of every tool
+changed: a client of 0.2.0-alpha.1 that reads a result by its keys
+must change with it.
+
+Known issue: S/MIME verify needs OpenSSL 3.x. On a system with
+OpenSSL 4, the signature status of an S/MIME message is `unsupported`.
+Set `openssl_path` to an OpenSSL 3 program.
+
 ### Removed
 
 These changes break a client of 0.2.0-alpha.1 that reads a result by
 its keys, or that sends a value that the server now refuses. The input
 fields of the tools did not change. Every result has the new first key
 `_fence`. Each text that a sender, a mail server or the model controls
-is now under a key `untrusted`, in a fence.
+is now under a key `untrusted`, in a fence. The Security section gives
+the three exceptions.
 
 Output keys that were removed or moved, by tool:
 
@@ -21,16 +33,18 @@ Output keys that were removed or moved, by tool:
   and `untrusted.preview`. The folder is `folder_ref` and
   `untrusted.folder`. Labels and keywords left `flags` and are in
   `untrusted.labels`. `flags` holds only the words `unread`,
-  `starred`, `answered`, `draft`, `flagged`, `forwarded`, `junk` and
-  `important`. `errors[].error` is a class word, not the error text.
-  The text is in `errors[].untrusted.detail`.
+  `starred`, `answered` and `draft`, with a space between them.
+  `errors[].error` is a class word, not the error text. The text is in
+  `errors[].untrusted.detail`.
 - `read`: each message lost `headers`, `body` and `folder`. The
   headers are `untrusted.from`, `untrusted.to`, `untrusted.cc`,
   `untrusted.reply_to` and `untrusted.subject`, and a thread row of a
   message that the call did not name has `untrusted.preview`. The body
   is `untrusted.body`. The folder is `folder_ref` and
   `untrusted.folder`. Labels left `flags` and are in
-  `untrusted.labels`. Each attachment lost `file`: the file name and
+  `untrusted.labels`. `untrusted.to`, `untrusted.cc`,
+  `untrusted.reply_to` and `untrusted.labels` are lists with one fence
+  for each entry. Each attachment lost `file`: the file name and
   the media type are `untrusted.name` and `untrusted.type`. An
   attachment `ref` that is not digits and dots is now `=` and the hex
   of the part id.
@@ -57,7 +71,20 @@ Output keys that were removed or moved, by tool:
   line is in `untrusted.detail`.
 - `templates`: each row lost `subject`. It is `untrusted.subject`.
 - `unsubscribe`: each row lost `url`. It is `untrusted.url`. Each row
-  has the new key `index`, the place of its id in `ids`.
+  has the new key `index`, the place of its id in `ids`. The words of
+  `method` and `status` have `_` in place of `-` and of the space:
+  `one_click`, `draft_saved`, `see_link`, `not_authenticated` and
+  `no_header`.
+- `send`: `id` is present only when the provider gives a Message-ID
+  (`<...@...>`). No provider gives one today, so a Gmail or JMAP result
+  no longer has `id`.
+- `export`: the file name comes from the new form of the message id.
+  An IMAP message that was `1700000001.4211.INBOX.eml` is now
+  `1700000001-4211-494e424f58.eml`.
+- Keys that can now be absent: `date` of a `search` row and of a `read`
+  message, `id` of a `read` message, of `decrypt`, of a `bulk` sample
+  row and of an `unsubscribe` row, and `ref` of a `read` attachment
+  (absent for a part id of more than 256 bytes).
 - `draft`: the identity sentence of `note` no longer holds the From
   address. It gives the number of the rule that picked the address,
   and the address is in `untrusted.detail`.
@@ -76,7 +103,8 @@ Output keys that were removed or moved, by tool:
   `unknown_account`, `needs_auth`, `invalid_input`, `not_found`,
   `refused`, `limit`, `unavailable`, `output_refused`, `internal` and
   `error`. A fixed text of the server can come next. All other error
-  text is in one fence after it.
+  text is in one fence after it. Only when the server cannot make a
+  nonce, the error is `error: internal` with no `_fence` line.
 
 Values that the server now refuses:
 
@@ -103,6 +131,8 @@ Values that the server now refuses:
 - A `templates` save with a name of more than 64 characters:
   `invalid_input`. Delete and draft still take such a name. A list
   leaves it out and says so in `note`.
+- An `export` of an id that is not a valid message id:
+  `invalid_input`. Take the id from a `search` row.
 - A one-click `unsubscribe` in a client that cannot ask the human:
   `refused`, unless `[unsubscribe] allow_without_elicitation` is true.
 - A Gmail `delete_filter` in a client that cannot ask the human:
@@ -122,6 +152,15 @@ Values that the server now refuses:
   sender controls sits under the key `untrusted`, in a fence marked
   `[UNTRUSTED_<nonce>]`. A sender cannot guess the nonce, so a forged
   marker no longer matches.
+- Three values are outside this rule. On the newer protocol, a result
+  that asks the human a question (`send`, `bulk`, `unsubscribe`,
+  `gmail_settings`) has no `_fence`, and its question can show sender
+  text with no fence, because the human reads it. A template name is text
+  that the model chose at the save, and it shows outside the fence in
+  the `templates` list: it has at most 64 letters, digits, `-` and
+  `_`. On Gmail and JMAP, an id that the call gave comes back outside
+  the fence in a `modify` row with the state `gone` and in an
+  `unsubscribe` row: it has at most 256 letters, digits, `-` and `_`.
 - Every other string in a result must match a closed grammar. A runtime
   gate checks this on each result. A result that breaks a rule is
   refused with the error class `output_refused`.
@@ -170,9 +209,17 @@ Values that the server now refuses:
   name under `untrusted.folder`. Input fields that name an existing
   folder accept a name or a `folder_ref`.
 - An IMAP or Outlook message in a folder whose name is longer than 512
-  bytes is left out of a result, as a message whose id does not parse
-  is. `search` then sets `partial`. One such message does not make the
+  bytes has no valid id, as a message whose id does not parse.
+  `search` leaves such a message out and sets `partial`, and `modify`
+  leaves it out of `applied`. In `read`, in a `bulk` sample, in an
+  `unsubscribe` row and in `decrypt`, the message stays but has no `id`
+  (and in `read` no `folder_ref`). One such message does not make the
   whole result fail.
+- The `in:` term of a search query takes a `folder_ref` on every
+  provider. A value that starts with `=` is read as a `folder_ref`.
+- `templates` save removes fence markers from the subject and the body
+  before it writes the file. `modify` removes them from each name of
+  `add_labels` and `remove_labels`.
 - The fixed refusals of the server (send, idempotency key, Gmail
   settings, templates, unsubscribe, folders, an unknown account) give
   their guidance outside the fence, with a class word: `refused`,
@@ -213,6 +260,16 @@ Values that the server now refuses:
   and gives the error class, and the error text is in
   `untrusted.detail`. Before, the call gave an error, so a retry could
   fail or make a second folder.
+- A plain folder or label name with a hidden character (a zero width
+  non-joiner in a Persian label, for example) reaches the mail server
+  unchanged, in `folder` of `search` and `bulk`, `move_to` of `modify`
+  and `bulk`, the `name` of a `folders` rename or delete, and
+  `add_labels` and `remove_labels` of `modify`. The server removed
+  these characters, so the call acted on another folder or made a new
+  Gmail label. The fault came with the two-zone form and was in no
+  release.
+- The setup page removes an account whose alias has more than 64
+  characters, as `account remove` does.
 
 ## [0.2.0-alpha.1] - 2026-11-17
 

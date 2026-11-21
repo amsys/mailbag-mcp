@@ -402,9 +402,12 @@ func TestFoldRunes_Table(t *testing.T) {
 
 // FuzzFence checks, for arbitrary body text and nonce, that Wrap always
 // produces exactly one real open marker and one real close marker: no
-// body content can add or remove one (§3.15, G2).
+// body content can add or remove one (§3.15, G2). It also checks that
+// Holds accepts each fence that Wrap makes. The output gate refuses a
+// fenced field that Holds refuses, so a body that fails here would make
+// each result with that mail fail (DU9.1).
 //
-// arch: T2.1, §3.15, G2, G4, §10.4, DU1.1, DU10.1
+// arch: T2.1, §3.15, G2, G4, §10.4, DU1.1, DU9.1, DU10.1
 func FuzzFence(f *testing.F) {
 	seeds := []string{
 		"",
@@ -435,6 +438,9 @@ func FuzzFence(f *testing.F) {
 			t.Fatalf("body %q produced %d close-marker prefixes", body, count(out, "[/UNTRUSTED_"))
 		}
 		assertOneRealMarkerPair(t, body, out)
+		if !fc.Holds(out) {
+			t.Fatalf("Holds refuses the fence that Wrap made of body %q: %q", body, out)
+		}
 	})
 }
 

@@ -3,6 +3,7 @@
 
 // The draft tool: it builds one message and saves it in the Drafts
 // folder. Its result has two zones (DU5.1, DU5.5).
+
 package tools
 
 import (

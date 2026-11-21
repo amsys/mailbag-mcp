@@ -268,7 +268,7 @@ func f(name string) {
 		if strings.HasSuffix(p, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(p)
+		src, err := os.ReadFile(p) //nolint:gosec // G304: test code; the path is a source file of this package
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -429,7 +429,7 @@ func TestSharedErrors_NoBareText(t *testing.T) {
 	}
 	fset := token.NewFileSet()
 	for _, p := range []string{"provider.go", "pending.go", "signature.go", "size.go"} {
-		src, err := os.ReadFile(p)
+		src, err := os.ReadFile(p) //nolint:gosec // G304: test code; the path is a source file of this package
 		if err != nil {
 			t.Fatal(err)
 		}

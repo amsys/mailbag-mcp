@@ -5,6 +5,7 @@
 // it, and checks that a string is one whole fence of that nonce.
 //
 // arch: DU1.1, DU9.1
+
 package guard
 
 import (

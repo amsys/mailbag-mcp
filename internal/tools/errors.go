@@ -8,6 +8,7 @@
 // fence.
 //
 // arch: DU6.1, DU6.2, DU12.1
+
 package tools
 
 import (

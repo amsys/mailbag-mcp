@@ -579,12 +579,15 @@ func (s *server) handleAccountTest(w http.ResponseWriter, r *http.Request) {
 	s.runAsync(w, []string{"account", "test", alias}, nil, nil)
 }
 
-// handleAccountRemove runs "account remove <alias>".
+// handleAccountRemove runs "account remove <alias>". It also takes an
+// alias of more than 64 characters that an older version accepted, as
+// the CLI does (B17), so the page can remove such an account.
 //
-// arch: DS13.10, IS13.1
+// arch: DS13.10, IS13.1, DU12.4
 func (s *server) handleAccountRemove(w http.ResponseWriter, r *http.Request) {
 	alias := r.PathValue("alias")
-	if msg := checkAlias(alias); msg != "" {
+	old := config.AliasTooLong(alias) && !strings.HasPrefix(alias, "-")
+	if msg := checkAlias(alias); msg != "" && !old {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}

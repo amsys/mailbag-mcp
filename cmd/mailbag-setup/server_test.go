@@ -622,6 +622,9 @@ func TestSetup_BadInputRefused(t *testing.T) {
 		{method: http.MethodPost, path: "/api/oauth/google", body: `not json`},
 		{method: http.MethodPost, path: "/api/accounts/-x/test", body: `{}`},
 		{method: http.MethodDelete, path: "/api/accounts/a.b"},
+		{method: http.MethodDelete, path: "/api/accounts/-" + strings.Repeat("a", 70)},
+		{method: http.MethodDelete, path: "/api/accounts/" + strings.Repeat("a", 70) + ".b"},
+		{method: http.MethodPost, path: "/api/accounts/" + strings.Repeat("a", 65) + "/test", body: `{}`},
 		{method: http.MethodGet, path: "/api/jobs/1?after=-1"},
 	} {
 		code, _, body := h.do(r)
@@ -640,6 +643,24 @@ func TestSetup_BadInputRefused(t *testing.T) {
 	c := h.calls()
 	if len(c) != 1 || !slices.Equal(c[0].Args, []string{"oauth", "set", "microsoft", "--client-id=00000000-1111-2222-3333-444444444444"}) {
 		t.Errorf("calls = %v", c)
+	}
+}
+
+// TestSetup_RemoveLongAlias checks that the page can remove an account
+// whose alias has more than 64 characters. An older version accepted
+// such an alias, and "account remove" still takes it (B17).
+//
+// arch: DS13.10, DU12.4
+func TestSetup_RemoveLongAlias(t *testing.T) {
+	h := newHarness(t, "v1.0.0", "v1.0.0", time.Minute)
+	alias := strings.Repeat("a", 65)
+	code, _, body := h.do(request{method: http.MethodDelete, path: "/api/accounts/" + alias})
+	if code != http.StatusOK {
+		t.Fatalf("remove: status %d, body %s", code, body)
+	}
+	c := h.calls()
+	if len(c) != 1 || !slices.Equal(c[0].Args, []string{"account", "remove", alias}) {
+		t.Errorf("calls = %v, want one account remove of the long alias", c)
 	}
 }
 
